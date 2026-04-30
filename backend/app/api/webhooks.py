@@ -19,7 +19,6 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, BackgroundTasks, Request, Response
 
-from app.main import get_redis_state
 from app.schemas import MetricType
 from app.services import pipeline
 
@@ -67,6 +66,7 @@ async def receive_sensor_data(
         return Response(status_code=204)
 
     tenant_id = request.headers.get("Fiware-Service", "")
+    from app.main import get_redis_state
     redis_state = get_redis_state()
     now_ts = datetime.now(timezone.utc).timestamp()
 

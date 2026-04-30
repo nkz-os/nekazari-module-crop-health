@@ -212,4 +212,3 @@ async def ndvi_cwsi_correlation(
         logger.error("Correlation query failed: %s", e)
 
     return {"pairs": pairs}
-        return {"assessments": []}

@@ -181,7 +181,48 @@ async def trigger(
     else:
         logger.warning("Failed to publish assessment for parcel=%s", effective_parcel)
 
+    # ── 5. Publish to platform event bus ─────────────────────────────────
+    try:
+        import json as _json
+        event = {
+            "event_type": "crop.assessment.completed",
+            "tenant_id": tenant_id,
+            "parcel_id": effective_parcel,
+            "cwsi": assessment.cwsi.cwsi if assessment.cwsi else None,
+            "mds_severity": assessment.mds.severity.value if assessment.mds else None,
+            "overall_severity": assessment.overall_severity.value,
+            "recommended_action": assessment.recommended_action.value,
+            "phenology_source": assessment.phenology_source,
+            "timestamp": now.isoformat(),
+        }
+        await _publish_redis_event("crop:events", event)
+
+        if assessment.overall_severity.value in ("HIGH", "CRITICAL"):
+            breach = {
+                "event_type": "crop.stress.breach",
+                "tenant_id": tenant_id,
+                "parcel_id": effective_parcel,
+                "overall_severity": assessment.overall_severity.value,
+                "recommended_action": assessment.recommended_action.value,
+                "timestamp": now.isoformat(),
+            }
+            await _publish_redis_event("crop:events", breach)
+    except Exception:
+        pass  # Event bus is best-effort, never block the pipeline
+
     return assessment
+
+
+async def _publish_redis_event(stream: str, event: dict) -> None:
+    """Publish an event to Redis Streams (best-effort)."""
+    try:
+        import redis.asyncio as aioredis
+        r = aioredis.Redis.from_url("redis://redis-service:6379/0")
+        payload = __import__("json").dumps(event)
+        await r.xadd(stream, {"payload": payload}, maxlen=1000)
+        await r.aclose()
+    except Exception:
+        pass
 
 
 def _extract_parcel_from_entity(entity_id: str) -> str | None:

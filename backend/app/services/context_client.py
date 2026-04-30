@@ -174,59 +174,78 @@ async def get_weather_snapshot(
     longitude: float,
     tenant_id: str,
 ) -> WeatherSnapshot | None:
-    """Get current weather data from TimescaleDB (weather_observations table).
+    """Get current weather data from the platform Weather API.
 
-    The weather-worker is a batch cron that writes to TimescaleDB — there is
-    no REST API. This function queries the DB directly for the most recent
-    observation near the given coordinates.
-
-    If weather_db_url is not configured, returns None.
+    Queries the timeseries-reader /api/weather/current endpoint.
+    Falls back to direct DB query if weather_api_url is not configured.
     """
     settings = get_settings()
-    if not settings.weather_db_url:
-        logger.warning("WEATHER_DB_URL not configured — weather data unavailable")
-        return None
 
-    try:
-        import asyncpg  # type: ignore[import-not-found]
-
-        conn = await asyncpg.connect(settings.weather_db_url)
+    # Priority 1: Platform Weather API
+    if settings.weather_api_url:
         try:
-            row = await conn.fetchrow(
-                """
-                SELECT
-                    temp_avg AS temp_air,
-                    humidity_avg AS humidity_pct,
-                    COALESCE(precip_mm, 0) AS precip_mm,
-                    COALESCE(eto_mm, 0) AS eto_mm,
-                    shortwave_radiation_sum AS radiation_wm2
-                FROM weather_observations
-                WHERE tenant_id = $1
-                ORDER BY observation_time DESC
-                LIMIT 1
-                """,
-                tenant_id,
-            )
-            if row is None:
-                logger.info("No weather data for tenant %s", tenant_id)
-                return None
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(
+                    f"{settings.weather_api_url}/api/weather/current",
+                    params={"lat": latitude, "lon": longitude},
+                    headers={"X-Tenant-ID": tenant_id},
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    return WeatherSnapshot(
+                        temp_air=float(data.get("temp_avg", 0)),
+                        humidity_pct=float(data.get("humidity_avg", 0)),
+                        precip_mm=float(data.get("precip_mm", 0)),
+                        eto_mm=float(data.get("eto_mm", 0)),
+                        radiation_wm2=float(data["solar_rad_w_m2"]) if data.get("solar_rad_w_m2") else None,
+                    )
+                elif resp.status_code == 404:
+                    logger.info("No weather data for tenant %s at (%.2f, %.2f)", tenant_id, latitude, longitude)
+                    return None
+                else:
+                    logger.warning("Weather API returned %d — falling back", resp.status_code)
+        except (httpx.ConnectError, httpx.TimeoutException) as e:
+            logger.warning("Weather API unreachable: %s — falling back", e)
+        except Exception as e:
+            logger.error("Weather API error: %s", e)
 
-            return WeatherSnapshot(
-                temp_air=float(row["temp_air"]),
-                humidity_pct=float(row["humidity_pct"]),
-                precip_mm=float(row["precip_mm"]),
-                eto_mm=float(row["eto_mm"]),
-                radiation_wm2=float(row["radiation_wm2"]) if row["radiation_wm2"] else None,
-            )
-        finally:
-            await conn.close()
+    # Priority 2: Direct DB (legacy fallback — remove after API proven)
+    if settings.weather_db_url:
+        try:
+            import asyncpg
+            conn = await asyncpg.connect(settings.weather_db_url)
+            try:
+                row = await conn.fetchrow(
+                    """
+                    SELECT temp_avg AS temp_air,
+                           humidity_avg AS humidity_pct,
+                           COALESCE(precip_mm, 0) AS precip_mm,
+                           COALESCE(eto_mm, 0) AS eto_mm,
+                           solar_rad_w_m2 AS radiation_wm2
+                    FROM weather_observations
+                    WHERE tenant_id = $1
+                    ORDER BY observed_at DESC
+                    LIMIT 1
+                    """,
+                    tenant_id,
+                )
+                if row is None:
+                    return None
+                return WeatherSnapshot(
+                    temp_air=float(row["temp_air"]),
+                    humidity_pct=float(row["humidity_pct"]),
+                    precip_mm=float(row["precip_mm"]),
+                    eto_mm=float(row["eto_mm"]),
+                    radiation_wm2=float(row["radiation_wm2"]) if row["radiation_wm2"] else None,
+                )
+            finally:
+                await conn.close()
+        except ImportError:
+            pass
+        except Exception as exc:
+            logger.error("Weather DB fallback failed: %s", exc)
 
-    except ImportError:
-        logger.error("asyncpg not installed — cannot query weather DB")
-        return None
-    except Exception as exc:
-        logger.error("Weather DB query failed: %s", exc)
-        return None
+    return None
 
 
 def clear_phenology_cache() -> None:

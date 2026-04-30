@@ -38,7 +38,8 @@ class Settings(BaseSettings):
     orion_ld_url: str = "http://orion-ld-service:1026"
     orion_ld_context: str = "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.6.jsonld"
     bioorchestrator_url: str = "http://bioorchestrator-api-service:8420"
-    weather_db_url: str = ""  # TimescaleDB connection for weather data queries
+    weather_api_url: str = "http://timeseries-reader-service:5000"
+    weather_db_url: str = ""  # deprecated — use weather_api_url instead
 
     # ── Cache TTLs (seconds) ─────────────────────────────────────────────────
     phenology_cache_ttl: int = 3600  # 1h — phenology params change slowly

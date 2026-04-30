@@ -1,0 +1,55 @@
+# =============================================================================
+# Crop Health Engine — Local Development with Docker Compose
+# =============================================================================
+# Redis enabled for temporal state (sliding window).
+#
+# Usage:
+#   docker-compose up        # Start backend + Redis
+#   docker-compose up -d     # Background
+#   docker-compose down      # Stop
+# =============================================================================
+
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - APP_NAME=Crop Health Engine
+      - DEBUG=true
+      - LOG_LEVEL=DEBUG
+      - API_PREFIX=/api/crop-health
+      - REDIS_URL=redis://redis:6379/0
+      - REDIS_KEY_PREFIX=crophealth:
+      - SLIDING_WINDOW_HOURS=48
+      - ORION_LD_URL=http://host.docker.internal:1026
+      - BIOORCHESTRATOR_URL=http://host.docker.internal:8420
+      - KEYCLOAK_URL=https://auth.example.com/auth
+      - KEYCLOAK_REALM=nekazari
+      - JWT_AUDIENCE=account
+      - CORS_ORIGINS=["http://localhost:5003","http://localhost:5173"]
+    volumes:
+      - ./backend/app:/app/app:ro
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5

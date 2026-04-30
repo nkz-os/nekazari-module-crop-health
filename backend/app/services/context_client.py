@@ -56,6 +56,7 @@ async def get_phenology_params(
     stage: str = "vegetative",
     cultivar: str | None = None,
     management: str | None = None,
+    gdd: float | None = None,
 ) -> PhenologyParams:
     """Fetch phenology-dependent parameters from BioOrchestrator.
 
@@ -74,7 +75,7 @@ async def get_phenology_params(
         PhenologyParams with provenance when available,
         is_default=True when using fallback values.
     """
-    cache_key = (species, stage, cultivar or "", management or "")
+    cache_key = (species, stage or "", cultivar or "", management or "", str(gdd or ""))
     cached = _phenology_cache.get(cache_key)
     if cached is not None:
         return cached
@@ -92,6 +93,8 @@ async def get_phenology_params(
         params["cultivar"] = cultivar
     if management:
         params["management"] = management
+    if gdd is not None:
+        params["gdd"] = str(gdd)
 
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:

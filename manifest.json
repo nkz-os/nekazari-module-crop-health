@@ -43,10 +43,14 @@
         ]
     },
     "build_config": {
-        "type": "headless",
-        "remote_entry_url": null
+        "type": "iife",
+        "remote_entry_url": "/modules/crop-health/nkz-module.js"
     },
-    "slots": {},
+    "slots": {
+        "dashboard-widget": [
+            "CropHealthWidget"
+        ]
+    },
     "metadata": {
         "icon": "🌱",
         "color": "#16A34A",

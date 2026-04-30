@@ -2,7 +2,9 @@
 
 from fastapi import APIRouter
 
+from app.api.assessments import router as assessments_router
 from app.api.webhooks import router as webhooks_router
 
 router = APIRouter()
+router.include_router(assessments_router)
 router.include_router(webhooks_router)

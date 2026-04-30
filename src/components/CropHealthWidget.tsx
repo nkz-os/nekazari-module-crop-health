@@ -10,6 +10,7 @@ interface CropHealthAssessment {
     overallSeverity: string;
     recommendedAction: string;
     parcelId: string;
+    parcelName?: string;
     assessedAt: string;
     phenologySource: string;
 }
@@ -94,7 +95,18 @@ const CropHealthWidget: React.FC = () => {
             {assessments.map((a) => (
                 <div key={a.id} className="chw-card">
                     <div className="chw-card-header">
-                        <span className="chw-parcel">{a.parcelId}</span>
+                        <a
+                            className="chw-parcel"
+                            href={`/entities`}
+                            onClick={(e) => {
+                                e.preventDefault();
+                                const sdk = (window as any).__NKZ_SDK__;
+                                if (sdk?.navigate) sdk.navigate('/entities');
+                            }}
+                            title="Ver en el visor 3D"
+                        >
+                            {a.parcelName || a.parcelId}
+                        </a>
                         <span
                             className="chw-severity"
                             style={{ background: SEVERITY_COLORS[a.overallSeverity as Severity] || '#6b7280' }}
@@ -151,9 +163,21 @@ const CropHealthWidget: React.FC = () => {
                         <span className="chw-action" style={{ color: SEVERITY_COLORS[a.overallSeverity as Severity] || '#6b7280' }}>
                             {t(`action.${ACTION_LABELS[a.recommendedAction] || a.recommendedAction}`)}
                         </span>
-                        <span className="chw-source">
+                        <a
+                            className="chw-source"
+                            href="/bioorchestrator"
+                            onClick={(e) => {
+                                e.preventDefault();
+                                const sdk = (window as any).__NKZ_SDK__;
+                                if (sdk?.navigate) sdk.navigate('/bioorchestrator?tab=phenology');
+                            }}
+                            title="Ver parámetros en BioOrchestrator"
+                        >
                             {a.phenologySource === 'bioorchestrator' ? '📚 BioOrchestrator' : '📋 ' + t('defaultParams')}
-                        </span>
+                        </a>
+                    </div>
+                    <div className="chw-updated">
+                        {a.assessedAt ? new Date(a.assessedAt).toLocaleString() : ''}
                     </div>
                 </div>
             ))}

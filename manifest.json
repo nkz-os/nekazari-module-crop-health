@@ -49,6 +49,9 @@
     "slots": {
         "dashboard-widget": [
             "CropHealthWidget"
+        ],
+        "context-panel": [
+            "CropHealthContextPanel"
         ]
     },
     "metadata": {

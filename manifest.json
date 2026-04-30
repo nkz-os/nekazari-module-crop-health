@@ -52,6 +52,9 @@
         ],
         "context-panel": [
             "CropHealthContextPanel"
+        ],
+        "map-layer": [
+            "CropHealthLayer"
         ]
     },
     "metadata": {

@@ -1,0 +1,22 @@
+{
+  "name": "IR Canopy Sensor (CWSI)",
+  "description": "Infrared thermometer for measuring canopy temperature to calculate Crop Water Stress Index (CWSI). Publishes leafTemperature in °C via MQTT. The crop-health engine computes CWSI = (Tc - Ta) / (D2 - D1) where Ta is air temperature from weather, D1 and D2 are phenology baselines from BioOrchestrator.",
+  "sdm_entity_type": "AgriSensor",
+  "is_public": true,
+  "mappings": [
+    {
+      "incoming_key": "leaf_temp",
+      "target_attribute": "leafTemperature",
+      "type": "Number",
+      "unitCode": "CEL",
+      "transformation": "val"
+    },
+    {
+      "incoming_key": "air_temp",
+      "target_attribute": "airTemperature",
+      "type": "Number",
+      "unitCode": "CEL",
+      "transformation": "val"
+    }
+  ]
+}

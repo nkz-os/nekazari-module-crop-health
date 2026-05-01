@@ -1,0 +1,15 @@
+{
+  "name": "Dendrometer (MDS)",
+  "description": "Trunk diameter sensor for measuring Maximum Daily Shrinkage (MDS) in micrometers (µm). Publishes trunkDiameter in µm via MQTT. The crop-health engine computes MDS = max(diameter) - min(diameter) over a 24h window and compares against the reference MDS for the species and phenological stage from BioOrchestrator.",
+  "sdm_entity_type": "AgriSensor",
+  "is_public": true,
+  "mappings": [
+    {
+      "incoming_key": "diameter_um",
+      "target_attribute": "trunkDiameter",
+      "type": "Number",
+      "unitCode": "M73",
+      "transformation": "val"
+    }
+  ]
+}

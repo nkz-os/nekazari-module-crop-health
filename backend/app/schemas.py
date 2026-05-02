@@ -184,6 +184,40 @@ class VigorResult(BaseModel):
     data_fidelity: str = "modeled_opendata"
 
 
+# ── Composite Stress Result ────────────────────────────────────────────────
+
+
+class CompositeStressResult(BaseModel):
+    """Weighted stress index combining water + thermal + vigor (Ky FAO-33)."""
+    composite_index: float = Field(0.0, ge=0.0, le=100.0)
+    dominant_stressor: str = "none"
+    water_contribution: float = 0.0
+    thermal_contribution: float = 0.0
+    vigor_contribution: float = 0.0
+    stage_ky: float = 0.45
+    condition: str = "no_stress"
+
+
+# ── Yield Gap Result ───────────────────────────────────────────────────────
+
+
+class YieldGapResult(BaseModel):
+    """Yield potential utilization (FAO-33 Doorenbos-Kassam)."""
+    yield_utilization_pct: float = Field(100.0, ge=0.0, le=100.0)
+    dominant_loss_stage: str = ""
+    confidence: str = "medium"
+
+
+# ── WUE Result ─────────────────────────────────────────────────────────────
+
+
+class WUEResult(BaseModel):
+    """Water Use Efficiency (conditional on irrigation data)."""
+    wue_kg_m3: float | None = None
+    status: str = "suppressed"  # operational | advisory | suppressed
+    trend: str = "stable"
+
+
 # ── CropHealthAssessment (NGSI-LD output entity) ─────────────────────────────
 
 
@@ -196,6 +230,9 @@ class CropHealthAssessment(BaseModel):
     water_balance: WaterBalanceResult | None = None
     thermal: ThermalStressResult | None = None
     vigor: VigorResult | None = None
+    composite_stress: CompositeStressResult | None = None
+    yield_gap: YieldGapResult | None = None
+    wue: WUEResult | None = None
     overall_severity: Severity = Severity.LOW
     recommended_action: RecommendedAction = RecommendedAction.NO_ACTION
     phenology_source: str = "default"
@@ -248,5 +285,11 @@ class CropHealthAssessment(BaseModel):
             entity["vigorIndex"] = {"type": "Property", "value": round(self.vigor.vigor_index, 3)}
             entity["vigorCondition"] = {"type": "Property", "value": self.vigor.condition}
             entity["vigorIndexUsed"] = {"type": "Property", "value": self.vigor.index_used}
+        if self.composite_stress:
+            entity["compositeStressIndex"] = {"type": "Property", "value": self.composite_stress.composite_index}
+            entity["dominantStressor"] = {"type": "Property", "value": self.composite_stress.dominant_stressor}
+        if self.yield_gap:
+            entity["yieldUtilizationPct"] = {"type": "Property", "value": self.yield_gap.yield_utilization_pct}
+            entity["yieldGapConfidence"] = {"type": "Property", "value": self.yield_gap.confidence}
         entity["dataFidelity"] = {"type": "Property", "value": self.data_fidelity}
         return entity

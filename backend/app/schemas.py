@@ -160,6 +160,30 @@ class WaterBalanceResult(BaseModel):
     deficit: bool
 
 
+# ── Thermal Stress Result ─────────────────────────────────────────────────
+
+
+class ThermalStressResult(BaseModel):
+    """Heat stress and frost risk evaluation result."""
+    heat_stress_hours: float = 0.0
+    frost_hours: float = 0.0
+    condition: str = "no_stress"  # no_stress | heat_warning | heat_stress | frost_warning | frost_damage
+    severity: str = "LOW"
+    data_fidelity: str = "regional_proxy"
+
+
+# ── Vigor Result ──────────────────────────────────────────────────────────
+
+
+class VigorResult(BaseModel):
+    """Crop vigor composite index."""
+    vigor_index: float = Field(0.0, ge=0.0, le=1.0)
+    growth_anomaly: float = 0.0
+    index_used: str = "NDVI"
+    condition: str = "normal"
+    data_fidelity: str = "modeled_opendata"
+
+
 # ── CropHealthAssessment (NGSI-LD output entity) ─────────────────────────────
 
 
@@ -170,9 +194,12 @@ class CropHealthAssessment(BaseModel):
     cwsi: CWSIResult | None = None
     mds: MDSResult | None = None
     water_balance: WaterBalanceResult | None = None
+    thermal: ThermalStressResult | None = None
+    vigor: VigorResult | None = None
     overall_severity: Severity = Severity.LOW
     recommended_action: RecommendedAction = RecommendedAction.NO_ACTION
-    phenology_source: str = "default"  # "bioorchestrator" or "default"
+    phenology_source: str = "default"
+    data_fidelity: str = "regional_proxy"  # onsite_calibrated | local_proxy | regional_proxy | modeled_opendata
 
     def to_ngsi_ld(self) -> dict[str, Any]:
         """Serialise to NGSI-LD entity payload."""
@@ -214,4 +241,12 @@ class CropHealthAssessment(BaseModel):
                 "value": round(self.water_balance.balance_mm, 2),
                 "unitCode": "MMT",
             }
+        if self.thermal:
+            entity["thermalCondition"] = {"type": "Property", "value": self.thermal.condition}
+            entity["thermalSeverity"] = {"type": "Property", "value": self.thermal.severity}
+        if self.vigor:
+            entity["vigorIndex"] = {"type": "Property", "value": round(self.vigor.vigor_index, 3)}
+            entity["vigorCondition"] = {"type": "Property", "value": self.vigor.condition}
+            entity["vigorIndexUsed"] = {"type": "Property", "value": self.vigor.index_used}
+        entity["dataFidelity"] = {"type": "Property", "value": self.data_fidelity}
         return entity

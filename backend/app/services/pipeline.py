@@ -123,7 +123,19 @@ async def trigger(
     )
 
     # ── 1. Fetch context ─────────────────────────────────────────────────
-    phenology = await get_phenology_params()
+    # Calculate GDD for auto stage detection
+    gdd = None
+    species = "olive"  # TODO: resolve from parcel crop type
+    try:
+        from datetime import date
+        season_start = date(date.today().year, 3, 1).isoformat()  # March 1st default
+        gdd_data = await _fetch_gdd(tenant_id, season_start, 10.0)
+        if gdd_data and gdd_data.get("gdd_total"):
+            gdd = float(gdd_data["gdd_total"])
+    except Exception:
+        pass
+
+    phenology = await get_phenology_params(species=species, gdd=gdd)
     weather = await get_weather_snapshot(
         latitude=0.0,  # TODO: resolve from parcel geometry
         longitude=0.0,
@@ -223,6 +235,50 @@ async def _publish_redis_event(stream: str, event: dict) -> None:
         await r.aclose()
     except Exception:
         pass
+
+
+async def _fetch_gdd(tenant_id: str, season_start: str, base_temp: float = 10.0) -> dict | None:
+    """Fetch accumulated GDD from the weather API."""
+    try:
+        settings = __import__("app.config", fromlist=["get_settings"]).get_settings()
+        if not settings.weather_api_url:
+            return None
+        async with __import__("httpx").AsyncClient(timeout=10.0) as client:
+            resp = await client.get(
+                f"{settings.weather_api_url}/api/weather/gdd",
+                params={"season_start": season_start, "base_temp": base_temp},
+                headers={"X-Tenant-ID": tenant_id},
+            )
+            if resp.status_code == 200:
+                return resp.json()
+    except Exception:
+        pass
+    return None
+
+
+def _resolve_data_fidelity(assessment: CropHealthAssessment) -> str:
+    """Determine the minimum data fidelity from available inputs."""
+    levels = []
+    if assessment.cwsi:
+        levels.append("onsite_uncalibrated")  # CWSI requires IR sensor
+    if assessment.mds:
+        levels.append("onsite_uncalibrated")  # MDS requires dendrometer
+    if assessment.water_balance:
+        levels.append("regional_proxy")  # weather API
+    if assessment.thermal:
+        levels.append(assessment.thermal.data_fidelity)
+    if assessment.vigor:
+        levels.append(assessment.vigor.data_fidelity)
+
+    priority = ["onsite_calibrated", "onsite_uncalibrated", "local_proxy",
+                "regional_proxy", "modeled_opendata"]
+    if not levels:
+        return "modeled_opendata"
+    # Return the lowest fidelity (highest index in priority list)
+    for p in reversed(priority):
+        if p in levels:
+            return p
+    return "mixed"
 
 
 def _extract_parcel_from_entity(entity_id: str) -> str | None:

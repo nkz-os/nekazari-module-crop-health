@@ -212,3 +212,87 @@ async def ndvi_cwsi_correlation(
         logger.error("Correlation query failed: %s", e)
 
     return {"pairs": pairs}
+
+
+@router.get("/assessments/export")
+async def export_assessments(
+    request: Request,
+    parcelId: str = "",
+    days: int = 30,
+    format: str = "csv",
+):
+    """Export crop health indicators as CSV with source metadata and dataFidelity.
+
+    Returns a CSV file with columns:
+    date, cwsiValue, mdsValue, waterBalanceDeficit, vigorIndex,
+    compositeStressIndex, yieldUtilizationPct, overallSeverity,
+    recommendedAction, phenologySource, dataFidelity
+    """
+    import csv
+    import io
+
+    from fastapi.responses import StreamingResponse
+
+    # Query Orion-LD for historical assessments
+    tenant_id = getattr(request.state, "tenant_id", "")
+    headers = {"Accept": "application/ld+json"}
+    if tenant_id:
+        headers["NGSILD-Tenant"] = tenant_id
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow([
+        "date", "cwsiValue", "mdsValue", "mdsSeverity", "vpdKpa",
+        "waterBalanceDeficit_mm", "vigorIndex", "vigorCondition",
+        "compositeStressIndex", "dominantStressor",
+        "yieldUtilizationPct", "yieldGapConfidence",
+        "thermalCondition", "thermalSeverity",
+        "overallSeverity", "recommendedAction",
+        "phenologySource", "dataFidelity",
+    ])
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            params = {
+                "type": "CropHealthAssessment",
+                "limit": 100,
+                "options": "keyValues",
+            }
+            if parcelId:
+                params["q"] = f'refAgriParcel=="urn:ngsi-ld:AgriParcel:{parcelId}"'
+            resp = await client.get(
+                f"{ORION_URL}/ngsi-ld/v1/entities", params=params, headers=headers,
+            )
+            if resp.status_code == 200:
+                entities = resp.json()
+                for e in entities:
+                    writer.writerow([
+                        e.get("assessedAt", ""),
+                        e.get("cwsiValue", ""),
+                        e.get("mdsValue", ""),
+                        e.get("mdsSeverity", ""),
+                        e.get("vpdKpa", ""),
+                        e.get("waterBalanceDeficit", ""),
+                        e.get("vigorIndex", ""),
+                        e.get("vigorCondition", ""),
+                        e.get("compositeStressIndex", ""),
+                        e.get("dominantStressor", ""),
+                        e.get("yieldUtilizationPct", ""),
+                        e.get("yieldGapConfidence", ""),
+                        e.get("thermalCondition", ""),
+                        e.get("thermalSeverity", ""),
+                        e.get("overallSeverity", ""),
+                        e.get("recommendedAction", ""),
+                        e.get("phenologySource", ""),
+                        e.get("dataFidelity", ""),
+                    ])
+    except Exception as e:
+        logger.error("Export failed: %s", e)
+        output.write(f"Error: {e}\n")
+
+    output.seek(0)
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename=crop-health-export-{parcelId or 'all'}.csv"},
+    )

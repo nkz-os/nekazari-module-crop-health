@@ -344,6 +344,11 @@ const CropHealthContextPanel: React.FC<Props> = ({ parcelId, parcelName, onOpenP
             {/* Footer */}
             <p className="chp-footer">
                 Actualizado: {assessment.assessedAt ? new Date(assessment.assessedAt).toLocaleString() : 'desconocido'}
+                {' · '}
+                <a href={`/api/crop-health/assessments/export?parcelId=${parcelId}&days=30`}
+                   className="chp-export-link" download>
+                    📥 Exportar CSV
+                </a>
             </p>
         </div>
     );

@@ -268,6 +268,26 @@ const CropHealthContextPanel: React.FC<Props> = ({ parcelId, parcelName, onOpenP
                 </div>
             )}
 
+            {/* WUE */}
+            {assessment.waterBalanceDeficit != null && (
+                <div className="chp-section">
+                    <div className="chp-section-header">Eficiencia de Uso de Agua (WUE)</div>
+                    <p className="chp-trend" style={{ color: '#6b7280', fontSize: '0.75rem' }}>
+                        {assessment.waterBalanceDeficit < 0
+                            ? '⚠️ WUE requiere datos de riego aplicado. Conecta un contador MQTT o registra riegos manualmente.'
+                            : '📊 WUE activo con datos de riego disponibles.'}
+                    </p>
+                </div>
+            )}
+
+            {/* Phenology Progress */}
+            <div className="chp-section">
+                <div className="chp-section-header">Progreso Fenológico</div>
+                <p className="chp-trend" style={{ color: '#6b7280', fontSize: '0.75rem' }}>
+                    🌡️ Basado en GDD acumulados desde brotación. Visible cuando hay datos de temperatura diaria.
+                </p>
+            </div>
+
             {/* Yield Gap */}
             {assessment.yieldUtilizationPct != null && (
                 <div className="chp-section">

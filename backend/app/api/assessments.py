@@ -296,3 +296,39 @@ async def export_assessments(
         media_type="text/csv",
         headers={"Content-Disposition": f"attachment; filename=crop-health-export-{parcelId or 'all'}.csv"},
     )
+
+
+@router.get("/diseases/active")
+async def active_disease_risks(request: Request):
+    """Return active disease risks from Orion-LD DiseaseRiskAssessment entities."""
+    tenant_id = getattr(request.state, "tenant_id", "")
+    headers = {"Accept": "application/ld+json"}
+    if tenant_id:
+        headers["NGSILD-Tenant"] = tenant_id
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(
+                f"{ORION_URL}/ngsi-ld/v1/entities",
+                params={"type": "DiseaseRiskAssessment", "limit": 10, "options": "keyValues"},
+                headers=headers,
+            )
+            if resp.status_code == 200:
+                entities = resp.json()
+                risks = []
+                for e in entities:
+                    risks.append({
+                        "disease": e.get("disease", "unknown"),
+                        "crop": e.get("crop", ""),
+                        "risk_level": e.get("riskLevel", "LOW"),
+                        "conditions": e.get("conditions", ""),
+                        "lwd_method": e.get("lwdMethod", ""),
+                        "confidence": e.get("confidence", "medium"),
+                        "source_model": e.get("sourceModel", ""),
+                        "recommended_action": e.get("recommendedAction", ""),
+                    })
+                return {"risks": risks}
+            return {"risks": []}
+    except Exception as e:
+        logger.error("Disease risk query failed: %s", e)
+        return {"risks": []}

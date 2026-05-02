@@ -33,7 +33,7 @@ const CropHealthWidget: React.FC = () => {
     useEffect(() => {
         const fetchRisks = async () => {
             try {
-                const resp = await fetch('/api/risks/diseases/active');
+                const resp = await fetch('/api/crop-health/diseases/active');
                 if (resp.ok) {
                     const data = await resp.json();
                     setRisks(data.risks || []);

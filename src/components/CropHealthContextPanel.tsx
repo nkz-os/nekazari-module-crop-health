@@ -1,16 +1,5 @@
 import React, { useEffect, useState } from 'react';
 
-interface AssessmentData {
-    cwsiValue?: number;
-    mdsValue?: number;
-    mdsSeverity?: string;
-    waterBalanceDeficit?: number;
-    overallSeverity: string;
-    recommendedAction: string;
-    phenologySource: string;
-    assessedAt: string;
-}
-
 interface PhenologyData {
     kc?: number;
     d1?: number;
@@ -37,6 +26,26 @@ interface CorrelationData {
     date: string;
     ndvi?: number;
     cwsi?: number;
+}
+
+interface AssessmentData {
+    cwsiValue?: number;
+    mdsValue?: number;
+    mdsSeverity?: string;
+    waterBalanceDeficit?: number;
+    overallSeverity: string;
+    recommendedAction: string;
+    phenologySource: string;
+    assessedAt: string;
+    compositeStressIndex?: number;
+    dominantStressor?: string;
+    yieldUtilizationPct?: number;
+    yieldGapConfidence?: string;
+    thermalCondition?: string;
+    thermalSeverity?: string;
+    vigorIndex?: number;
+    vigorCondition?: string;
+    dataFidelity?: string;
 }
 
 type Severity = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
@@ -237,6 +246,62 @@ const CropHealthContextPanel: React.FC<Props> = ({ parcelId, parcelName, onOpenP
                         </p>
                     )}
                     <p className="chp-match">Coincidencia: <strong>{phenology.match_level?.toUpperCase()}</strong></p>
+                </div>
+            )}
+
+            {/* Composite Stress */}
+            {assessment.compositeStressIndex != null && (
+                <div className="chp-section">
+                    <div className="chp-section-header">Estrés Compuesto (ponderado FAO-33)</div>
+                    <div className="chp-gauge">
+                        <div className="chp-gauge-track">
+                            <div className="chp-gauge-fill" style={{
+                                width: `${Math.min(assessment.compositeStressIndex, 100)}%`,
+                                background: assessment.compositeStressIndex > 75 ? '#dc2626' : assessment.compositeStressIndex > 50 ? '#d97706' : '#16a34a',
+                            }} />
+                        </div>
+                        <span className="chp-gauge-value">{assessment.compositeStressIndex?.toFixed(0)}/100</span>
+                    </div>
+                    {assessment.dominantStressor && assessment.dominantStressor !== 'none' && (
+                        <p className="chp-trend">Dominante: <strong>{assessment.dominantStressor}</strong></p>
+                    )}
+                </div>
+            )}
+
+            {/* Yield Gap */}
+            {assessment.yieldUtilizationPct != null && (
+                <div className="chp-section">
+                    <div className="chp-section-header">Aprovechamiento de Potencial (Yield Gap FAO-33)</div>
+                    <div className="chp-gauge">
+                        <div className="chp-gauge-track">
+                            <div className="chp-gauge-fill" style={{
+                                width: `${Math.min(assessment.yieldUtilizationPct, 100)}%`,
+                                background: assessment.yieldUtilizationPct > 80 ? '#16a34a' : assessment.yieldUtilizationPct > 60 ? '#d97706' : '#dc2626',
+                            }} />
+                        </div>
+                        <span className="chp-gauge-value">{assessment.yieldUtilizationPct?.toFixed(0)}%</span>
+                    </div>
+                    <p className="chp-trend" style={{ color: '#6b7280', fontSize: '0.75rem' }}>
+                        {assessment.yieldGapConfidence === 'high' ? '📡 Alta confianza' :
+                         assessment.yieldGapConfidence === 'medium' ? '📡? Confianza media' :
+                         '📡? Baja confianza'} · NO es predicción de cosecha
+                    </p>
+                </div>
+            )}
+
+            {/* Data Fidelity */}
+            {assessment.dataFidelity && (
+                <div className="chp-section">
+                    <div className="chp-section-header">Fidelidad de Datos</div>
+                    <span className="chp-fidelity-badge" style={{
+                        background: assessment.dataFidelity === 'onsite_calibrated' ? '#dcfce7' :
+                                    assessment.dataFidelity === 'onsite_uncalibrated' ? '#fef3c7' : '#e0e7ff',
+                        color: assessment.dataFidelity === 'onsite_calibrated' ? '#166534' :
+                               assessment.dataFidelity === 'onsite_uncalibrated' ? '#92400e' : '#3730a3',
+                        padding: '2px 8px', borderRadius: '4px', fontSize: '0.75rem',
+                    }}>
+                        {assessment.dataFidelity}
+                    </span>
                 </div>
             )}
 

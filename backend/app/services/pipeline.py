@@ -177,6 +177,46 @@ async def trigger(
             kc=phenology.kc,
         )
 
+    # ── 2.5 Compound engines (after individual engines have results) ────
+    try:
+        from app.engines.composite import evaluate_composite_stress
+        thermal_sev = assessment.thermal.severity if assessment.thermal else None
+        vigor_idx = assessment.vigor.vigor_index if assessment.vigor else None
+        mds_ratio_val = assessment.mds.ratio if assessment.mds else None
+        wb_mm = assessment.water_balance.balance_mm if assessment.water_balance else None
+        cwsi_val = assessment.cwsi.cwsi if assessment.cwsi else None
+        stage_name = phenology.stage if phenology else "vegetative"
+        assessment.composite_stress = evaluate_composite_stress(
+            cwsi=cwsi_val, mds_ratio=mds_ratio_val, water_balance_mm=wb_mm,
+            thermal_severity=thermal_sev, vigor_index=vigor_idx,
+            stage=stage_name,
+        )
+    except Exception:
+        pass
+
+    try:
+        from app.engines.yield_gap import evaluate_yield_gap
+        if cwsi_val is not None:
+            stage_name = phenology.stage if phenology else "vegetative"
+            assessment.yield_gap = evaluate_yield_gap(
+                cwsi_by_stage={stage_name: cwsi_val},
+                ky_by_stage={stage_name: phenology.ky if phenology and hasattr(phenology, 'ky') else 0.45},
+            )
+    except Exception:
+        pass
+
+    try:
+        from app.engines.phenology_progress import evaluate_phenology_progress
+        if gdd is not None and phenology:
+            stage_name = phenology.stage if phenology else "vegetative"
+            assessment.phenology_progress = evaluate_phenology_progress(
+                gdd_accumulated=gdd, current_stage=stage_name, stage_gdd_thresholds={}
+            )
+    except Exception:
+        pass
+
+    assessment.data_fidelity = _resolve_data_fidelity(assessment)
+
     # ── 3. Fuse and classify ─────────────────────────────────────────────
     assessment.overall_severity = _determine_overall_severity(assessment)
     assessment.recommended_action = _determine_action(assessment.overall_severity)

@@ -208,6 +208,18 @@ class YieldGapResult(BaseModel):
     confidence: str = "medium"
 
 
+# ── Phenology Progress Result ─────────────────────────────────────────────
+
+
+class PhenologyProgressResult(BaseModel):
+    """GDD-based phenology progress vs expected curve."""
+    gdd_accumulated: float = 0.0
+    current_stage: str = ""
+    progress_pct: float = 0.0
+    days_to_next_stage: float | None = None
+    deviation: str = "on_track"
+
+
 # ── WUE Result ─────────────────────────────────────────────────────────────
 
 
@@ -232,6 +244,7 @@ class CropHealthAssessment(BaseModel):
     vigor: VigorResult | None = None
     composite_stress: CompositeStressResult | None = None
     yield_gap: YieldGapResult | None = None
+    phenology_progress: PhenologyProgressResult | None = None
     wue: WUEResult | None = None
     overall_severity: Severity = Severity.LOW
     recommended_action: RecommendedAction = RecommendedAction.NO_ACTION

@@ -13,6 +13,8 @@ const en = {
             HIGH: 'Stressed',
             CRITICAL: 'Critical',
         },
+        thermal: 'Thermal',
+        vigor: 'Vigor',
         action: {
             noAction: 'No action needed',
             monitor: 'Monitor closely',
@@ -37,6 +39,8 @@ const es = {
             HIGH: 'Estresado',
             CRITICAL: 'Crítico',
         },
+        thermal: 'Térmico',
+        vigor: 'Vigor',
         action: {
             noAction: 'Sin acción necesaria',
             monitor: 'Monitorizar',

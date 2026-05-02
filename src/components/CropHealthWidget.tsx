@@ -7,12 +7,17 @@ interface CropHealthAssessment {
     mdsValue?: number;
     mdsSeverity?: string;
     waterBalanceDeficit?: number;
+    thermalCondition?: string;
+    thermalSeverity?: string;
+    vigorIndex?: number;
+    vigorCondition?: string;
     overallSeverity: string;
     recommendedAction: string;
     parcelId: string;
     parcelName?: string;
     assessedAt: string;
     phenologySource: string;
+    dataFidelity?: string;
 }
 
 type Severity = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
@@ -150,11 +155,32 @@ const CropHealthWidget: React.FC = () => {
                         {a.waterBalanceDeficit !== undefined && (
                             <div className="chw-metric">
                                 <span className="chw-metric-label">{t('waterBalance')}</span>
-                                <span
-                                    className={`chw-metric-value ${a.waterBalanceDeficit < 0 ? 'chw-deficit' : 'chw-surplus'}`}
-                                >
+                                <span className={`chw-metric-value ${a.waterBalanceDeficit < 0 ? 'chw-deficit' : 'chw-surplus'}`}>
                                     {a.waterBalanceDeficit > 0 ? '+' : ''}{a.waterBalanceDeficit.toFixed(1)}mm
                                 </span>
+                            </div>
+                        )}
+                        {a.thermalCondition && a.thermalCondition !== 'no_stress' && (
+                            <div className="chw-metric">
+                                <span className="chw-metric-label">{t('thermal')}</span>
+                                <span className="chw-metric-badge" style={{
+                                    background: a.thermalSeverity === 'CRITICAL' ? '#fee2e2' : '#fef3c7',
+                                    color: a.thermalSeverity === 'CRITICAL' ? '#991b1b' : '#92400e',
+                                }}>
+                                    {a.thermalCondition?.startsWith('frost') ? '❄️' : '🔥'} {a.thermalSeverity}
+                                </span>
+                            </div>
+                        )}
+                        {a.vigorIndex !== undefined && (
+                            <div className="chw-metric">
+                                <span className="chw-metric-label">{t('vigor')}</span>
+                                <div className="chw-bar">
+                                    <div className="chw-bar-fill" style={{
+                                        width: `${a.vigorIndex * 100}%`,
+                                        background: a.vigorIndex > 0.6 ? '#16a34a' : a.vigorIndex > 0.3 ? '#d97706' : '#dc2626',
+                                    }} />
+                                </div>
+                                <span className="chw-metric-value">{a.vigorIndex.toFixed(2)}</span>
                             </div>
                         )}
                     </div>

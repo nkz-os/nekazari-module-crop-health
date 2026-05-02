@@ -1,6 +1,7 @@
 import CropHealthWidget from './components/CropHealthWidget';
 import CropHealthContextPanel from './components/CropHealthContextPanel';
 import CropHealthLayer from './components/CropHealthLayer';
+import DiseaseRiskWidget from './components/DiseaseRiskWidget';
 import './i18n';
 
 const moduleExport = {
@@ -8,6 +9,7 @@ const moduleExport = {
     slots: {
         'dashboard-widget': {
             CropHealthWidget,
+            DiseaseRisk: DiseaseRiskWidget,
         },
         'context-panel': {
             CropHealthContextPanel,

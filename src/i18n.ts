@@ -15,6 +15,7 @@ const en = {
         },
         thermal: 'Thermal',
         vigor: 'Vigor',
+        diseaseRisk: 'Disease Risk',
         action: {
             noAction: 'No action needed',
             monitor: 'Monitor closely',
@@ -41,6 +42,7 @@ const es = {
         },
         thermal: 'Térmico',
         vigor: 'Vigor',
+        diseaseRisk: 'Riesgo Fitosanitario',
         action: {
             noAction: 'Sin acción necesaria',
             monitor: 'Monitorizar',

@@ -62,10 +62,24 @@ async def latest_assessments(request: Request):
                     "mdsValue": e.get("mdsValue", {}).get("value") if isinstance(e.get("mdsValue"), dict) else e.get("mdsValue"),
                     "mdsSeverity": e.get("mdsSeverity", {}).get("value") if isinstance(e.get("mdsSeverity"), dict) else e.get("mdsSeverity"),
                     "waterBalanceDeficit": e.get("waterBalanceDeficit", {}).get("value") if isinstance(e.get("waterBalanceDeficit"), dict) else e.get("waterBalanceDeficit"),
+                    "thermalCondition": e.get("thermalCondition", {}).get("value") if isinstance(e.get("thermalCondition"), dict) else e.get("thermalCondition"),
+                    "thermalSeverity": e.get("thermalSeverity", {}).get("value") if isinstance(e.get("thermalSeverity"), dict) else e.get("thermalSeverity"),
+                    "vigorIndex": e.get("vigorIndex", {}).get("value") if isinstance(e.get("vigorIndex"), dict) else e.get("vigorIndex"),
+                    "vigorCondition": e.get("vigorCondition", {}).get("value") if isinstance(e.get("vigorCondition"), dict) else e.get("vigorCondition"),
+                    "compositeStressIndex": e.get("compositeStressIndex", {}).get("value") if isinstance(e.get("compositeStressIndex"), dict) else e.get("compositeStressIndex"),
+                    "dominantStressor": e.get("dominantStressor", {}).get("value") if isinstance(e.get("dominantStressor"), dict) else e.get("dominantStressor"),
+                    "yieldUtilizationPct": e.get("yieldUtilizationPct", {}).get("value") if isinstance(e.get("yieldUtilizationPct"), dict) else e.get("yieldUtilizationPct"),
+                    "yieldGapConfidence": e.get("yieldGapConfidence", {}).get("value") if isinstance(e.get("yieldGapConfidence"), dict) else e.get("yieldGapConfidence"),
+                    "wueStatus": e.get("wueStatus", {}).get("value") if isinstance(e.get("wueStatus"), dict) else e.get("wueStatus"),
+                    "wueKgM3": e.get("wueKgM3", {}).get("value") if isinstance(e.get("wueKgM3"), dict) else e.get("wueKgM3"),
+                    "wueBiomassKg": e.get("wueBiomassKg", {}).get("value") if isinstance(e.get("wueBiomassKg"), dict) else e.get("wueBiomassKg"),
+                    "wueWaterAppliedMm": e.get("wueWaterAppliedMm", {}).get("value") if isinstance(e.get("wueWaterAppliedMm"), dict) else e.get("wueWaterAppliedMm"),
+                    "wueTrend": e.get("wueTrend", {}).get("value") if isinstance(e.get("wueTrend"), dict) else e.get("wueTrend"),
                     "overallSeverity": e.get("overallSeverity", {}).get("value") if isinstance(e.get("overallSeverity"), dict) else e.get("overallSeverity", "LOW"),
                     "recommendedAction": e.get("recommendedAction", {}).get("value") if isinstance(e.get("recommendedAction"), dict) else e.get("recommendedAction", "NO_ACTION"),
                     "assessedAt": e.get("assessedAt", {}).get("value") if isinstance(e.get("assessedAt"), dict) else e.get("assessedAt", ""),
                     "phenologySource": e.get("phenologySource", {}).get("value") if isinstance(e.get("phenologySource"), dict) else e.get("phenologySource", "default"),
+                    "dataFidelity": e.get("dataFidelity", {}).get("value") if isinstance(e.get("dataFidelity"), dict) else e.get("dataFidelity"),
                 })
 
             return {"assessments": assessments}
@@ -299,8 +313,14 @@ async def export_assessments(
 
 
 @router.get("/diseases/active")
-async def active_disease_risks(request: Request):
-    """Return active disease risks from Orion-LD DiseaseRiskAssessment entities."""
+async def active_disease_risks(
+    request: Request,
+    parcelId: str = "",
+):
+    """Return active disease risks from Orion-LD DiseaseRiskAssessment entities.
+
+    Optionally filter by parcelId (refAgriParcel relationship).
+    """
     tenant_id = getattr(request.state, "tenant_id", "")
     headers = {"Accept": "application/ld+json"}
     if tenant_id:
@@ -310,13 +330,22 @@ async def active_disease_risks(request: Request):
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.get(
                 f"{ORION_URL}/ngsi-ld/v1/entities",
-                params={"type": "DiseaseRiskAssessment", "limit": 10, "options": "keyValues"},
+                params={"type": "DiseaseRiskAssessment", "limit": 50, "options": "keyValues"},
                 headers=headers,
             )
             if resp.status_code == 200:
                 entities = resp.json()
                 risks = []
                 for e in entities:
+                    parcel = ""
+                    if isinstance(e.get("refAgriParcel"), dict):
+                        parcel = e["refAgriParcel"].get("object", "").replace("urn:ngsi-ld:AgriParcel:", "")
+                    elif isinstance(e.get("refAgriParcel"), str):
+                        parcel = e["refAgriParcel"].replace("urn:ngsi-ld:AgriParcel:", "")
+
+                    if parcelId and parcel != parcelId:
+                        continue
+
                     risks.append({
                         "disease": e.get("disease", "unknown"),
                         "crop": e.get("crop", ""),
@@ -326,6 +355,7 @@ async def active_disease_risks(request: Request):
                         "confidence": e.get("confidence", "medium"),
                         "source_model": e.get("sourceModel", ""),
                         "recommended_action": e.get("recommendedAction", ""),
+                        "parcelId": parcel,
                     })
                 return {"risks": risks}
             return {"risks": []}

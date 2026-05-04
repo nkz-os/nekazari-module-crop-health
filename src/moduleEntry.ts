@@ -2,6 +2,7 @@ import CropHealthWidget from './components/CropHealthWidget';
 import CropHealthContextPanel from './components/CropHealthContextPanel';
 import CropHealthLayer from './components/CropHealthLayer';
 import DiseaseRiskWidget from './components/DiseaseRiskWidget';
+import DiseaseRiskContextPanel from './components/DiseaseRiskContextPanel';
 import './i18n';
 
 const moduleExport = {
@@ -13,6 +14,7 @@ const moduleExport = {
         },
         'context-panel': {
             CropHealthContextPanel,
+            DiseaseRiskContextPanel,
         },
         'map-layer': {
             CropHealthLayer,

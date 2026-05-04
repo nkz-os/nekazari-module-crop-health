@@ -1,4 +1,5 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
+import { useTranslation } from '@nekazari/sdk';
 
 interface PhenologyData {
     kc?: number;
@@ -46,6 +47,11 @@ interface AssessmentData {
     vigorIndex?: number;
     vigorCondition?: string;
     dataFidelity?: string;
+    wueStatus?: string;
+    wueKgM3?: number;
+    wueBiomassKg?: number;
+    wueWaterAppliedMm?: number;
+    wueTrend?: string;
 }
 
 type Severity = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
@@ -83,15 +89,23 @@ interface Props {
 }
 
 const CropHealthContextPanel: React.FC<Props> = ({ parcelId, parcelName, onOpenPhenology }) => {
+    const { t } = useTranslation('crop-health');
     const [assessment, setAssessment] = useState<AssessmentData | null>(null);
     const [phenology, setPhenology] = useState<PhenologyData | null>(null);
     const [trend, setTrend] = useState<TrendPoint[]>([]);
     const [correlation, setCorrelation] = useState<CorrelationData[]>([]);
     const [loading, setLoading] = useState(true);
+    const isFirstFetch = useRef(true);
+
+    useEffect(() => {
+        isFirstFetch.current = true;
+    }, [parcelId]);
 
     useEffect(() => {
         if (!parcelId) return;
-        setLoading(true);
+        if (isFirstFetch.current) {
+            setLoading(true);
+        }
 
         const fetchData = async () => {
             try {
@@ -112,7 +126,6 @@ const CropHealthContextPanel: React.FC<Props> = ({ parcelId, parcelName, onOpenP
                     setCorrelation(cRes.value.pairs);
                 }
 
-                // Fetch phenology if we have species info
                 const a = aRes.status === 'fulfilled' ? aRes.value?.assessments?.[0] : null;
                 if (a?.species) {
                     try {
@@ -123,22 +136,27 @@ const CropHealthContextPanel: React.FC<Props> = ({ parcelId, parcelName, onOpenP
                     } catch { /* phenology optional */ }
                 }
             } catch { /* handle gracefully */ }
-            finally { setLoading(false); }
+            finally {
+                setLoading(false);
+                isFirstFetch.current = false;
+            }
         };
 
         fetchData();
+        const interval = setInterval(fetchData, 5 * 60 * 1000);
+        return () => clearInterval(interval);
     }, [parcelId]);
 
     if (loading) {
-        return <div className="chp-loading">Cargando salud del cultivo...</div>;
+        return <div className="chp-loading">{t('contextPanel.loading')}</div>;
     }
 
     if (!assessment) {
         return (
             <div className="chp-empty">
                 <span>🌱</span>
-                <p>Sin datos de salud para esta parcela</p>
-                <p className="chp-hint">Conecta sensores IR o dendrómetros para ver CWSI y MDS</p>
+                <p>{t('contextPanel.noData')}</p>
+                <p className="chp-hint">{t('contextPanel.noDataHint')}</p>
             </div>
         );
     }
@@ -148,10 +166,10 @@ const CropHealthContextPanel: React.FC<Props> = ({ parcelId, parcelName, onOpenP
     const trendMDS = trend.filter(p => p.mds != null).map(p => p.mds!);
     const trendDir = trendCW.length >= 2 ? (trendCW[trendCW.length - 1] - trendCW[0]).toFixed(2) : null;
     const actionLabels: Record<string, string> = {
-        NO_ACTION: 'Sin acción necesaria',
-        MONITOR: 'Monitorizar evolución',
-        IRRIGATE_SCHEDULED: 'Programar riego',
-        IRRIGATE_IMMEDIATE: 'Regar inmediatamente',
+        NO_ACTION: t('contextPanel.noAction'),
+        MONITOR: t('contextPanel.monitorEvolution'),
+        IRRIGATE_SCHEDULED: t('contextPanel.scheduleIrrigation'),
+        IRRIGATE_IMMEDIATE: t('contextPanel.irrigateImmediately'),
     };
 
     return (
@@ -168,7 +186,7 @@ const CropHealthContextPanel: React.FC<Props> = ({ parcelId, parcelName, onOpenP
             {assessment.cwsiValue != null && (
                 <div className="chp-section">
                     <div className="chp-section-header">
-                        <span>CWSI — Índice de Estrés Hídrico</span>
+                        <span>{t('contextPanel.cwsiLabel')}</span>
                         {trendCW.length >= 2 && <Sparkline data={trendCW} color="#dc2626" />}
                     </div>
                     <div className="chp-gauge">
@@ -184,8 +202,8 @@ const CropHealthContextPanel: React.FC<Props> = ({ parcelId, parcelName, onOpenP
                     </div>
                     {trendDir && (
                         <p className="chp-trend" style={{ color: Number(trendDir) > 0 ? '#dc2626' : '#16a34a' }}>
-                            {Number(trendDir) > 0 ? '↑' : '↓'} {Math.abs(Number(trendDir))} en 7 días
-                            {Number(trendDir) > 0.05 ? ' — empeorando' : Number(trendDir) < -0.05 ? ' — mejorando' : ' — estable'}
+                            {Number(trendDir) > 0 ? '↑' : '↓'} {Math.abs(Number(trendDir))} 7d
+                            {Number(trendDir) > 0.05 ? ` — ${t('contextPanel.declining')}` : Number(trendDir) < -0.05 ? ` — ${t('contextPanel.improving')}` : ` — ${t('contextPanel.stable')}`}
                         </p>
                     )}
                 </div>
@@ -195,7 +213,7 @@ const CropHealthContextPanel: React.FC<Props> = ({ parcelId, parcelName, onOpenP
             {assessment.mdsValue != null && (
                 <div className="chp-section">
                     <div className="chp-section-header">
-                        <span>MDS — Contracción Máxima Diaria</span>
+                        <span>{t('contextPanel.mdsLabel')}</span>
                         {trendMDS.length >= 2 && <Sparkline data={trendMDS} color="#7c3aed" />}
                     </div>
                     <div className="chp-metric-row">
@@ -215,7 +233,7 @@ const CropHealthContextPanel: React.FC<Props> = ({ parcelId, parcelName, onOpenP
             {/* Water Balance */}
             {assessment.waterBalanceDeficit != null && (
                 <div className="chp-section">
-                    <div className="chp-section-header">Balance Hídrico</div>
+                    <div className="chp-section-header">{t('contextPanel.waterBalanceLabel')}</div>
                     <div className="chp-metric-row">
                         <span className={`chp-metric-value ${assessment.waterBalanceDeficit < 0 ? 'chp-deficit' : 'chp-surplus'}`}
                             style={{ color: assessment.waterBalanceDeficit < 0 ? '#dc2626' : '#16a34a' }}>
@@ -228,7 +246,7 @@ const CropHealthContextPanel: React.FC<Props> = ({ parcelId, parcelName, onOpenP
             {/* Phenology */}
             {phenology && (
                 <div className="chp-section chp-phenology">
-                    <div className="chp-section-header">Parámetros Fenológicos</div>
+                    <div className="chp-section-header">{t('contextPanel.phenologyParamsLabel')}</div>
                     <div className="chp-params-grid">
                         <div className="chp-param"><span>Kc</span><strong>{phenology.kc?.toFixed(2)}</strong></div>
                         <div className="chp-param"><span>D1</span><strong>{phenology.d1?.toFixed(1)}°C</strong></div>
@@ -245,14 +263,14 @@ const CropHealthContextPanel: React.FC<Props> = ({ parcelId, parcelName, onOpenP
                             )}
                         </p>
                     )}
-                    <p className="chp-match">Coincidencia: <strong>{phenology.match_level?.toUpperCase()}</strong></p>
+                    <p className="chp-match">{t('contextPanel.matchLevel', { level: (phenology.match_level || '').toUpperCase() })}</p>
                 </div>
             )}
 
             {/* Composite Stress */}
             {assessment.compositeStressIndex != null && (
                 <div className="chp-section">
-                    <div className="chp-section-header">Estrés Compuesto (ponderado FAO-33)</div>
+                    <div className="chp-section-header">{t('contextPanel.compositeStressLabel')}</div>
                     <div className="chp-gauge">
                         <div className="chp-gauge-track">
                             <div className="chp-gauge-fill" style={{
@@ -263,35 +281,57 @@ const CropHealthContextPanel: React.FC<Props> = ({ parcelId, parcelName, onOpenP
                         <span className="chp-gauge-value">{assessment.compositeStressIndex?.toFixed(0)}/100</span>
                     </div>
                     {assessment.dominantStressor && assessment.dominantStressor !== 'none' && (
-                        <p className="chp-trend">Dominante: <strong>{assessment.dominantStressor}</strong></p>
+                        <p className="chp-trend">{t('contextPanel.dominantStressor', { stressor: assessment.dominantStressor })}</p>
                     )}
                 </div>
             )}
 
             {/* WUE */}
-            {assessment.waterBalanceDeficit != null && (
+            {assessment.wueStatus != null && (
                 <div className="chp-section">
-                    <div className="chp-section-header">Eficiencia de Uso de Agua (WUE)</div>
-                    <p className="chp-trend" style={{ color: '#6b7280', fontSize: '0.75rem' }}>
-                        {assessment.waterBalanceDeficit < 0
-                            ? '⚠️ WUE requiere datos de riego aplicado. Conecta un contador MQTT o registra riegos manualmente.'
-                            : '📊 WUE activo con datos de riego disponibles.'}
-                    </p>
+                    <div className="chp-section-header">{t('contextPanel.wueLabel')}</div>
+                    {assessment.wueStatus === 'suppressed' ? (
+                        <p className="chp-trend" style={{ color: '#6b7280', fontSize: '0.75rem' }}>
+                            ⚠️ {t('contextPanel.wueSuppressed')}
+                        </p>
+                    ) : (
+                        <>
+                            {assessment.wueKgM3 != null && (
+                                <div className="chp-metric-row">
+                                    <span className="chp-metric-value">{assessment.wueKgM3.toFixed(2)} kg/m³</span>
+                                    <span className="chp-metric-badge" style={{
+                                        background: assessment.wueTrend === 'improving' ? '#dcfce7' :
+                                                    assessment.wueTrend === 'declining' ? '#fee2e2' : '#f3f4f6',
+                                        color: assessment.wueTrend === 'improving' ? '#166534' :
+                                               assessment.wueTrend === 'declining' ? '#991b1b' : '#374151',
+                                    }}>
+                                        {assessment.wueTrend === 'improving' ? '↑' : assessment.wueTrend === 'declining' ? '↓' : '→'}
+                                    </span>
+                                </div>
+                            )}
+                            {assessment.wueBiomassKg != null && (
+                                <p className="chp-trend">{t('contextPanel.biomassEstimated', { value: assessment.wueBiomassKg.toFixed(1) })}</p>
+                            )}
+                            {assessment.wueWaterAppliedMm != null && (
+                                <p className="chp-trend">{t('contextPanel.waterApplied', { value: assessment.wueWaterAppliedMm.toFixed(1) })}</p>
+                            )}
+                        </>
+                    )}
                 </div>
             )}
 
             {/* Phenology Progress */}
             <div className="chp-section">
-                <div className="chp-section-header">Progreso Fenológico</div>
+                <div className="chp-section-header">{t('contextPanel.phenologyProgressLabel')}</div>
                 <p className="chp-trend" style={{ color: '#6b7280', fontSize: '0.75rem' }}>
-                    🌡️ Basado en GDD acumulados desde brotación. Visible cuando hay datos de temperatura diaria.
+                    🌡️ {t('contextPanel.gddExplanation')}
                 </p>
             </div>
 
             {/* Yield Gap */}
             {assessment.yieldUtilizationPct != null && (
                 <div className="chp-section">
-                    <div className="chp-section-header">Aprovechamiento de Potencial (Yield Gap FAO-33)</div>
+                    <div className="chp-section-header">{t('contextPanel.yieldGapLabel')}</div>
                     <div className="chp-gauge">
                         <div className="chp-gauge-track">
                             <div className="chp-gauge-fill" style={{
@@ -302,9 +342,9 @@ const CropHealthContextPanel: React.FC<Props> = ({ parcelId, parcelName, onOpenP
                         <span className="chp-gauge-value">{assessment.yieldUtilizationPct?.toFixed(0)}%</span>
                     </div>
                     <p className="chp-trend" style={{ color: '#6b7280', fontSize: '0.75rem' }}>
-                        {assessment.yieldGapConfidence === 'high' ? '📡 Alta confianza' :
-                         assessment.yieldGapConfidence === 'medium' ? '📡? Confianza media' :
-                         '📡? Baja confianza'} · NO es predicción de cosecha
+                        {assessment.yieldGapConfidence === 'high' ? `📡 ${t('contextPanel.confidenceHigh')}` :
+                         assessment.yieldGapConfidence === 'medium' ? `📡? ${t('contextPanel.confidenceMedium')}` :
+                         `📡? ${t('contextPanel.confidenceLow')}`} · {t('contextPanel.notHarvestPrediction')}
                     </p>
                 </div>
             )}
@@ -312,7 +352,7 @@ const CropHealthContextPanel: React.FC<Props> = ({ parcelId, parcelName, onOpenP
             {/* Data Fidelity */}
             {assessment.dataFidelity && (
                 <div className="chp-section">
-                    <div className="chp-section-header">Fidelidad de Datos</div>
+                    <div className="chp-section-header">{t('contextPanel.dataFidelityLabel')}</div>
                     <span className="chp-fidelity-badge" style={{
                         background: assessment.dataFidelity === 'onsite_calibrated' ? '#dcfce7' :
                                     assessment.dataFidelity === 'onsite_uncalibrated' ? '#fef3c7' : '#e0e7ff',
@@ -328,7 +368,7 @@ const CropHealthContextPanel: React.FC<Props> = ({ parcelId, parcelName, onOpenP
             {/* Correlation */}
             {correlation.length >= 3 && (
                 <div className="chp-section">
-                    <div className="chp-section-header">Correlación NDVI (satélite) vs CWSI (suelo)</div>
+                    <div className="chp-section-header">{t('contextPanel.correlationLabel')}</div>
                     <div className="chp-correlation">
                         {correlation.slice(-5).map((p, i) => (
                             <div key={i} className="chp-corr-row">
@@ -356,18 +396,22 @@ const CropHealthContextPanel: React.FC<Props> = ({ parcelId, parcelName, onOpenP
                         {assessment.cwsiValue != null && assessment.cwsiValue > 0.6 && 'CWSI elevado. '}
                         {assessment.mdsSeverity === 'CRITICAL' && 'Contracción del tronco crítica. '}
                         {assessment.waterBalanceDeficit != null && assessment.waterBalanceDeficit < -5 && 'Déficit hídrico significativo. '}
-                        Basado en {assessment.phenologySource === 'bioorchestrator' ? 'parámetros fenológicos específicos' : 'parámetros genéricos'}.
+                        {t('contextPanel.basedOn', {
+                            source: assessment.phenologySource === 'bioorchestrator'
+                                ? t('contextPanel.specificParams')
+                                : t('contextPanel.genericParams')
+                        })}.
                     </p>
                 </div>
             </div>
 
             {/* Footer */}
             <p className="chp-footer">
-                Actualizado: {assessment.assessedAt ? new Date(assessment.assessedAt).toLocaleString() : 'desconocido'}
+                {t('contextPanel.updated')} {assessment.assessedAt ? new Date(assessment.assessedAt).toLocaleString() : 'desconocido'}
                 {' · '}
                 <a href={`/api/crop-health/assessments/export?parcelId=${parcelId}&days=30`}
                    className="chp-export-link" download>
-                    📥 Exportar CSV
+                    📥 {t('contextPanel.exportCsv')}
                 </a>
             </p>
         </div>

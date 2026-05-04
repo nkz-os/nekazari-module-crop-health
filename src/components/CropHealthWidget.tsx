@@ -11,6 +11,10 @@ interface CropHealthAssessment {
     thermalSeverity?: string;
     vigorIndex?: number;
     vigorCondition?: string;
+    compositeStressIndex?: number;
+    dominantStressor?: string;
+    yieldUtilizationPct?: number;
+    yieldGapConfidence?: string;
     overallSeverity: string;
     recommendedAction: string;
     parcelId: string;
@@ -90,6 +94,12 @@ const CropHealthWidget: React.FC = () => {
                 <span className="chw-empty-icon">🌱</span>
                 <p>{t('noAssessments')}</p>
                 <p className="chw-empty-hint">{t('noAssessmentsHint')}</p>
+                <div className="chw-empty-detail">
+                    <p>{t('noAssessmentsHintDetailed')}</p>
+                </div>
+                <a href="/docs/sensors/setup" className="chw-doc-link" target="_blank" rel="noopener">
+                    📖 {t('sensorDocLink')}
+                </a>
             </div>
         );
     }
@@ -181,6 +191,30 @@ const CropHealthWidget: React.FC = () => {
                                     }} />
                                 </div>
                                 <span className="chw-metric-value">{a.vigorIndex.toFixed(2)}</span>
+                            </div>
+                        )}
+                        {a.compositeStressIndex !== undefined && (
+                            <div className="chw-metric">
+                                <span className="chw-metric-label">Stress</span>
+                                <div className="chw-bar">
+                                    <div className="chw-bar-fill" style={{
+                                        width: `${Math.min(a.compositeStressIndex, 100)}%`,
+                                        background: a.compositeStressIndex > 75 ? '#dc2626' : a.compositeStressIndex > 50 ? '#d97706' : '#16a34a',
+                                    }} />
+                                </div>
+                                <span className="chw-metric-value">{a.compositeStressIndex.toFixed(0)}%</span>
+                            </div>
+                        )}
+                        {a.yieldUtilizationPct !== undefined && (
+                            <div className="chw-metric">
+                                <span className="chw-metric-label">Yield</span>
+                                <div className="chw-bar">
+                                    <div className="chw-bar-fill" style={{
+                                        width: `${Math.min(a.yieldUtilizationPct, 100)}%`,
+                                        background: a.yieldUtilizationPct > 80 ? '#16a34a' : a.yieldUtilizationPct > 60 ? '#d97706' : '#dc2626',
+                                    }} />
+                                </div>
+                                <span className="chw-metric-value">{a.yieldUtilizationPct.toFixed(0)}%</span>
                             </div>
                         )}
                     </div>

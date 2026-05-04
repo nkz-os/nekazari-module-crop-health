@@ -126,6 +126,9 @@ class PhenologyParams(BaseModel):
     match_level: str | None = None
     provenance: PhenologyProvenance | None = None
     alternatives: list[PhenologyAlternative] = Field(default_factory=list)
+    stage_gdd_min: float | None = None
+    stage_gdd_max: float | None = None
+    stage_base_temp: float | None = None
 
 
 # ── Engine Results ────────────────────────────────────────────────────────────
@@ -304,5 +307,12 @@ class CropHealthAssessment(BaseModel):
         if self.yield_gap:
             entity["yieldUtilizationPct"] = {"type": "Property", "value": self.yield_gap.yield_utilization_pct}
             entity["yieldGapConfidence"] = {"type": "Property", "value": self.yield_gap.confidence}
+        if self.wue:
+            entity["wueStatus"] = {"type": "Property", "value": self.wue.status}
+            if self.wue.wue_kg_m3 is not None:
+                entity["wueKgM3"] = {"type": "Property", "value": self.wue.wue_kg_m3}
+            entity["wueBiomassKg"] = {"type": "Property", "value": self.wue.biomass_estimated_kg}
+            entity["wueWaterAppliedMm"] = {"type": "Property", "value": self.wue.water_applied_mm}
+            entity["wueTrend"] = {"type": "Property", "value": self.wue.trend}
         entity["dataFidelity"] = {"type": "Property", "value": self.data_fidelity}
         return entity

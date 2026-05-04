@@ -129,6 +129,9 @@ async def get_phenology_params(
                     management=data.get("management"),
                     climate_zone=data.get("climate_zone"),
                     match_level=data.get("match_level"),
+                    stage_gdd_min=data.get("stage_gdd_min"),
+                    stage_gdd_max=data.get("stage_gdd_max"),
+                    stage_base_temp=data.get("stage_base_temp"),
                     provenance=PhenologyProvenance(
                         doi=prov.get("doi"),
                         short=prov.get("short"),

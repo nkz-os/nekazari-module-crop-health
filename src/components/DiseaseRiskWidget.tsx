@@ -10,6 +10,7 @@ interface DiseaseRisk {
     lwd_method?: string;
     source_model?: string;
     recommended_action: string;
+    parcelId?: string;
 }
 
 const DISEASE_LABELS: Record<string, string> = {
@@ -48,21 +49,24 @@ const CropHealthWidget: React.FC = () => {
     if (loading) return null;
     if (!risks.length) return null;
 
-    const active = risks.filter(r => r.risk_level !== 'LOW');
-    if (!active.length) return null;
-
     return (
         <div className="chw-container">
             <h3 className="chw-title">🦠 {t('diseaseRisk')}</h3>
-            {active.map((r, i) => (
+            {risks.map((r, i) => (
                 <div key={i} className="chw-card" style={{ borderLeftColor: RISK_COLORS[r.risk_level] || '#6b7280' }}>
                     <div className="chw-card-header">
                         <span className="chw-parcel">{DISEASE_LABELS[r.disease] || r.disease}</span>
                         <span className="chw-severity" style={{
-                            background: r.risk_level === 'HIGH' ? '#fee2e2' : '#fef3c7',
-                            color: r.risk_level === 'HIGH' ? '#991b1b' : '#92400e',
+                            background: r.risk_level === 'HIGH' ? '#fee2e2' : r.risk_level === 'MEDIUM' ? '#fef3c7' : '#dcfce7',
+                            color: r.risk_level === 'HIGH' ? '#991b1b' : r.risk_level === 'MEDIUM' ? '#92400e' : '#166534',
                         }}>{r.risk_level}</span>
                     </div>
+                    {(r.crop || r.parcelId) && (
+                        <div className="chw-card-subheader">
+                            {r.crop && <span className="chw-disease-crop">🌾 {r.crop}</span>}
+                            {r.parcelId && <span className="chw-disease-parcel">📋 {r.parcelId}</span>}
+                        </div>
+                    )}
                     <div className="chw-metrics">
                         <p className="chw-disease-conditions">{r.conditions}</p>
                         <p className="chw-disease-action" style={{ color: RISK_COLORS[r.risk_level] }}>

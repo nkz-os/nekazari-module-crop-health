@@ -26,6 +26,8 @@ from app.schemas import (
     MetricType,
     RecommendedAction,
     Severity,
+    ThermalStressResult,
+    VigorResult as VigorResultSchema,
 )
 from app.services.context_client import get_phenology_params, get_weather_snapshot
 from app.services.fiware_publisher import publish_assessment
@@ -177,6 +179,53 @@ async def trigger(
             kc=phenology.kc,
         )
 
+    # Thermal stress (triggered by leaf temperature or opportunistically with weather)
+    if weather:
+        try:
+            from app.engines.thermal_stress import evaluate_thermal_stress
+            leaf_temp = None
+            if metric_type == MetricType.LEAF_TEMPERATURE.value:
+                readings = await redis_state.get_window(entity_id, "leafTemperature", hours=1)
+                if readings:
+                    leaf_temp = readings[-1].value
+            tr = evaluate_thermal_stress(
+                leaf_temp=leaf_temp,
+                air_temp=weather.temp_air,
+                fidelity="onsite_uncalibrated" if leaf_temp is not None else "regional_proxy",
+            )
+            assessment.thermal = ThermalStressResult(
+                heat_stress_hours=tr.heat_stress_hours,
+                frost_hours=tr.frost_hours,
+                condition=tr.condition,
+                severity=tr.severity,
+                data_fidelity=tr.data_fidelity,
+            )
+        except Exception:
+            pass
+
+    # Vigor (opportunistic — fetches latest vegetation index for the parcel)
+    try:
+        from app.engines.vigor import evaluate_vigor
+        ndvi_val = await _fetch_parcel_ndvi(effective_parcel, tenant_id)
+        if ndvi_val is not None or assessment.cwsi is not None:
+            cwsi_val = assessment.cwsi.cwsi if assessment.cwsi else None
+            stage_name = phenology.stage if phenology else "vegetative"
+            vr = evaluate_vigor(
+                ndvi=ndvi_val,
+                cwsi=cwsi_val,
+                stage=stage_name,
+                fidelity="onsite_uncalibrated" if ndvi_val is not None else "modeled_opendata",
+            )
+            assessment.vigor = VigorResultSchema(
+                vigor_index=vr.vigor_index,
+                growth_anomaly=vr.growth_anomaly,
+                index_used=vr.index_used,
+                condition=vr.condition,
+                data_fidelity=vr.data_fidelity,
+            )
+    except Exception:
+        pass
+
     # ── 2.5 Compound engines (after individual engines have results) ────
     try:
         from app.engines.composite import evaluate_composite_stress
@@ -196,10 +245,11 @@ async def trigger(
 
     try:
         from app.engines.yield_gap import evaluate_yield_gap
-        if cwsi_val is not None:
+        _cwsi = assessment.cwsi.cwsi if assessment.cwsi else None
+        if _cwsi is not None:
             stage_name = phenology.stage if phenology else "vegetative"
             assessment.yield_gap = evaluate_yield_gap(
-                cwsi_by_stage={stage_name: cwsi_val},
+                cwsi_by_stage={stage_name: _cwsi},
                 ky_by_stage={stage_name: phenology.ky if phenology and hasattr(phenology, 'ky') else 0.45},
             )
     except Exception:
@@ -209,9 +259,43 @@ async def trigger(
         from app.engines.phenology_progress import evaluate_phenology_progress
         if gdd is not None and phenology:
             stage_name = phenology.stage if phenology else "vegetative"
+            thresholds: dict[str, tuple[float, float]] = {}
+            if phenology.stage_gdd_min is not None and phenology.stage_gdd_max is not None:
+                thresholds[stage_name] = (phenology.stage_gdd_min, phenology.stage_gdd_max)
             assessment.phenology_progress = evaluate_phenology_progress(
-                gdd_accumulated=gdd, current_stage=stage_name, stage_gdd_thresholds={}
+                gdd_accumulated=gdd, current_stage=stage_name, stage_gdd_thresholds=thresholds,
             )
+    except Exception:
+        pass
+
+    # WUE (after composite stress and yield gap, needs NDVI integral + irrigation data)
+    try:
+        from app.engines.wue import evaluate_wue
+        ndvi_val = await _fetch_parcel_ndvi(effective_parcel, tenant_id)
+        irrigation_mm = None
+        irrigation_source = "none"
+        try:
+            irr_readings = await redis_state.get_window(entity_id, "irrigationVolume", hours=24)
+            if irr_readings:
+                irrigation_mm = sum(r.value for r in irr_readings)
+                irrigation_source = "measured_flow"
+        except Exception:
+            pass
+        if irrigation_source == "none":
+            try:
+                declared = await redis_state.get_latest(entity_id, "declaredIrrigation")
+                if declared and declared.value:
+                    irrigation_mm = declared.value
+                    irrigation_source = "declared_volume"
+            except Exception:
+                pass
+        assessment.wue = evaluate_wue(
+            ndvi_integrated=ndvi_val,
+            irrigation_applied_mm=irrigation_mm,
+            irrigation_source=irrigation_source,
+            previous_wue=None,
+            fidelity="onsite_uncalibrated" if irrigation_source == "measured_flow" else "regional_proxy",
+        )
     except Exception:
         pass
 
@@ -291,6 +375,37 @@ async def _fetch_gdd(tenant_id: str, season_start: str, base_temp: float = 10.0)
             )
             if resp.status_code == 200:
                 return resp.json()
+    except Exception:
+        pass
+    return None
+
+
+async def _fetch_parcel_ndvi(parcel_id: str, tenant_id: str) -> float | None:
+    """Fetch latest NDVI value for a parcel from Orion-LD VegetationIndex entities."""
+    try:
+        settings = __import__("app.config", fromlist=["get_settings"]).get_settings()
+        orion_url = settings.orion_ld_url
+        async with __import__("httpx").AsyncClient(timeout=10.0) as client:
+            resp = await client.get(
+                f"{orion_url}/ngsi-ld/v1/entities",
+                params={
+                    "type": "VegetationIndex",
+                    "q": f'refAgriParcel==\"urn:ngsi-ld:AgriParcel:{parcel_id}\"',
+                    "limit": 1,
+                    "options": "keyValues",
+                },
+                headers={
+                    "Accept": "application/ld+json",
+                    "NGSILD-Tenant": tenant_id,
+                } if tenant_id else {"Accept": "application/ld+json"},
+            )
+            if resp.status_code == 200:
+                entities = resp.json()
+                if entities and isinstance(entities, list):
+                    e = entities[0]
+                    ndvi = e.get("ndviValue") or e.get("value")
+                    if ndvi is not None:
+                        return float(ndvi)
     except Exception:
         pass
     return None

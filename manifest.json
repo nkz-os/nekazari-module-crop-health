@@ -48,10 +48,12 @@
     },
     "slots": {
         "dashboard-widget": [
-            "CropHealthWidget"
+            "CropHealthWidget",
+            "DiseaseRiskWidget"
         ],
         "context-panel": [
-            "CropHealthContextPanel"
+            "CropHealthContextPanel",
+            "DiseaseRiskContextPanel"
         ],
         "map-layer": [
             "CropHealthLayer"
@@ -64,6 +66,10 @@
             "CWSI",
             "MDS",
             "Water Balance",
+            "Composite Stress",
+            "Yield Gap",
+            "WUE",
+            "Disease Risk",
             "FIWARE Webhook"
         ],
         "screenshots": [],

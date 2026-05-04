@@ -149,6 +149,34 @@ class RedisState:
         values = [p.value for p in points]
         return (max(values), min(values))
 
+    async def get_latest(
+        self,
+        device_id: str,
+        metric: str,
+    ) -> TimeseriesPoint | None:
+        """Retrieve the most recent reading for a metric.
+
+        Args:
+            device_id: Sensor/device NGSI-LD entity ID.
+            metric: Metric name.
+
+        Returns:
+            TimeseriesPoint if data exists, None otherwise.
+        """
+        if self._client is None:
+            raise RuntimeError("Redis client not initialised")
+
+        key = self._key(device_id, metric)
+        raw = await self._client.zrevrange(key, 0, 0)
+
+        if raw:
+            try:
+                data = json.loads(raw[0])
+                return TimeseriesPoint(ts=data["ts"], value=data["v"])
+            except (json.JSONDecodeError, KeyError) as exc:
+                logger.warning("Corrupt Redis entry in %s: %s — %s", key, raw[0], exc)
+        return None
+
     async def health_check(self) -> dict:
         """Check Redis connectivity."""
         if self._client is None:

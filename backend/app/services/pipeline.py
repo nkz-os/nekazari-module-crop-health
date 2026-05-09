@@ -306,7 +306,7 @@ async def trigger(
     assessment.recommended_action = _determine_action(assessment.overall_severity)
 
     # ── 4. Publish ───────────────────────────────────────────────────────
-    published = await publish_assessment(assessment)
+    published = await publish_assessment(assessment, tenant_id)
     if published:
         logger.info(
             "Assessment published: parcel=%s severity=%s action=%s",
@@ -397,6 +397,8 @@ async def _fetch_parcel_ndvi(parcel_id: str, tenant_id: str) -> float | None:
                 headers={
                     "Accept": "application/ld+json",
                     "NGSILD-Tenant": tenant_id,
+                    "Fiware-Service": tenant_id,
+                    "Fiware-ServicePath": "/",
                 } if tenant_id else {"Accept": "application/ld+json"},
             )
             if resp.status_code == 200:

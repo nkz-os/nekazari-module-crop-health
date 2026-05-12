@@ -1,3 +1,4 @@
+import { defineModule } from "@nekazari/module-kit";
 /**
  * IIFE entry point — called when the host injects this bundle via <script>.
  * Must call window.__NKZ__.register() to activate the module.

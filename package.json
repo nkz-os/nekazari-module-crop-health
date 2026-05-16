@@ -3,6 +3,10 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
+  "main": "./src/Module.tsx",
+  "nkz": {
+    "moduleId": "crop-health"
+  },
   "scripts": {
     "dev": "vite",
     "build": "vite build",
@@ -14,9 +18,10 @@
     "@nekazari/sdk": "^1.0.3"
   },
   "devDependencies": {
-    "@nekazari/module-builder": "^1.0.0",
+    "@nekazari/module-builder": "^2.0.0",
+    "@nekazari/module-kit": "^0.6.0",
+    "@vitejs/plugin-react": "^4.3.1",
     "typescript": "^5.4.0",
-    "vite": "^5.4.0",
-    "@nekazari/module-kit": "^0.1.0"
+    "vite": "^5.4.0"
   }
 }

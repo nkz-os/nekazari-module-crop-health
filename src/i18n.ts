@@ -358,14 +358,16 @@ const pt = {
     },
 };
 
-const nkzSdk = (window as any).__NKZ_SDK__;
-if (nkzSdk?.i18n) {
-    nkzSdk.i18n.addResources('en', 'crop-health', en['crop-health']);
-    nkzSdk.i18n.addResources('es', 'crop-health', es['crop-health']);
-    nkzSdk.i18n.addResources('ca', 'crop-health', ca['crop-health']);
-    nkzSdk.i18n.addResources('eu', 'crop-health', eu['crop-health']);
-    nkzSdk.i18n.addResources('fr', 'crop-health', fr['crop-health']);
-    nkzSdk.i18n.addResources('pt', 'crop-health', pt['crop-health']);
+if (typeof window !== 'undefined') {
+    const nkzSdk = (window as any).__NKZ_SDK__;
+    if (nkzSdk?.i18n) {
+        nkzSdk.i18n.addResources('en', 'crop-health', en['crop-health']);
+        nkzSdk.i18n.addResources('es', 'crop-health', es['crop-health']);
+        nkzSdk.i18n.addResources('ca', 'crop-health', ca['crop-health']);
+        nkzSdk.i18n.addResources('eu', 'crop-health', eu['crop-health']);
+        nkzSdk.i18n.addResources('fr', 'crop-health', fr['crop-health']);
+        nkzSdk.i18n.addResources('pt', 'crop-health', pt['crop-health']);
+    }
 }
 
 export { en, es, ca, eu, fr, pt };

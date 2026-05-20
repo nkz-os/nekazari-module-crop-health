@@ -43,10 +43,16 @@ spec:
               value: "/api/crop-health"
             # CORS
             - name: CORS_ORIGINS
-              value: '["https://nekazari.robotika.cloud"]'
+              valueFrom:
+                configMapKeyRef:
+                  name: crop-health-config
+                  key: CORS_ORIGINS
             # Keycloak
             - name: KEYCLOAK_URL
-              value: "https://auth.robotika.cloud/auth"
+              valueFrom:
+                configMapKeyRef:
+                  name: crop-health-config
+                  key: KEYCLOAK_URL
             - name: KEYCLOAK_REALM
               value: "nekazari"
             - name: JWT_AUDIENCE

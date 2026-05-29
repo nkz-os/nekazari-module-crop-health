@@ -4,6 +4,14 @@
     "display_name": "Crop Health Engine",
     "version": "1.0.0",
     "description": "Real-time biophysical inference engine: CWSI, MDS, dynamic water balance from IoT sensor data (IR, dendrómetro, TDR)",
+    "description_i18n": {
+        "es": "Motor de inferencia biofísica en tiempo real: CWSI, MDS, balance hídrico dinámico desde datos de sensores IoT (IR, dendrómetro, TDR)",
+        "en": "Real-time biophysical inference engine: CWSI, MDS, dynamic water balance from IoT sensor data (IR, dendrometer, TDR)",
+        "eu": "Denbora errealeko inferentzia biofisikoko motorra: CWSI, MDS, ur-balantze dinamikoa IoT sentsoreen datuetatik (IR, dendrometroa, TDR)",
+        "fr": "Moteur d'inférence biophysique en temps réel : CWSI, MDS, bilan hydrique dynamique à partir des données de capteurs IoT (IR, dendromètre, TDR)",
+        "pt": "Motor de inferência biofísica em tempo real: CWSI, MDS, balanço hídrico dinâmico a partir de dados de sensores IoT (IR, dendrômetro, TDR)",
+        "ca": "Motor d'inferència biofísica en temps real: CWSI, MDS, balanç hídric dinàmic des de dades de sensors IoT (IR, dendròmetre, TDR)"
+    },
     "short_description": "Canopy-level crop health assessment from real-time sensor data",
     "icon": "leaf",
     "author": {

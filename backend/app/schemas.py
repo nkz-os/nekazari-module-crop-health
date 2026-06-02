@@ -38,6 +38,9 @@ class MetricType(str, enum.Enum):
     LEAF_TEMPERATURE = "leafTemperature"
     TRUNK_DIAMETER = "trunkDiameter"
     SOIL_MOISTURE = "soilMoisture"
+    SOIL_PH = "soilPh"
+    SOIL_EC = "soilEC"
+    SOIL_TEMPERATURE = "soilTemp"
 
 
 # ── Sensor Reading ────────────────────────────────────────────────────────────
@@ -253,6 +256,10 @@ class CropHealthAssessment(BaseModel):
     recommended_action: RecommendedAction = RecommendedAction.NO_ACTION
     phenology_source: str = "default"
     data_fidelity: str = "regional_proxy"  # onsite_calibrated | local_proxy | regional_proxy | modeled_opendata
+    soil_ph: float | None = None
+    soil_ec: float | None = None
+    soil_moisture_pct: float | None = None
+    soil_temperature_c: float | None = None
 
     def to_ngsi_ld(self) -> dict[str, Any]:
         """Serialise to NGSI-LD entity payload."""
@@ -315,4 +322,103 @@ class CropHealthAssessment(BaseModel):
             entity["wueWaterAppliedMm"] = {"type": "Property", "value": self.wue.water_applied_mm}
             entity["wueTrend"] = {"type": "Property", "value": self.wue.trend}
         entity["dataFidelity"] = {"type": "Property", "value": self.data_fidelity}
+        if self.soil_ph is not None:
+            entity["soilPh"] = {"type": "Property", "value": self.soil_ph}
+        if self.soil_ec is not None:
+            entity["soilEC"] = {"type": "Property", "value": self.soil_ec, "unitCode": "D10"}
+        if self.soil_moisture_pct is not None:
+            entity["soilMoisturePct"] = {"type": "Property", "value": self.soil_moisture_pct}
+        if self.soil_temperature_c is not None:
+            entity["soilTemperatureC"] = {"type": "Property", "value": self.soil_temperature_c}
         return entity
+
+
+# ── F4: Crop Context from BioOrchestrator ────────────────────────────────────
+
+
+class CropInfo(BaseModel):
+    eppo: str = "unknown"
+    name: str | None = None
+    scientific_name: str | None = None
+
+
+class VarietyInfo(BaseModel):
+    name: str | None = None
+    uri: str | None = None
+
+
+class SeasonInfo(BaseModel):
+    start: str | None = None
+    end: str | None = None
+    gdd_accumulated: float | None = None
+    current_stage: str | None = None
+
+
+class PhenologyInfo(BaseModel):
+    stage: str | None = None
+    stage_gdd_min: float | None = None
+    stage_gdd_max: float | None = None
+    kc: float | None = None
+    ky: float | None = None
+    d1: float | None = None
+    d2: float | None = None
+    mds_ref: float | None = None
+    base_temp: float | None = None
+
+
+class SoilActual(BaseModel):
+    ph: float | None = None
+    texture: str | None = None
+    awc_mm: float | None = None
+    organic_matter_pct: float | None = None
+    bulk_density_g_cm3: float | None = None
+    depth_cm: float | None = None
+    source: str = "unavailable"
+    data_available: bool = False
+
+
+class SoilSuitability(BaseModel):
+    ph_match: bool = True
+    texture_match: bool = True
+    awc_sufficient: bool = True
+    overall: str = "unknown"
+    warnings: list[str] = []
+
+
+class SoilRequirements(BaseModel):
+    ph_min: float | None = None
+    ph_max: float | None = None
+    textures: list[str] = []
+    drainage: str | None = None
+    depth_min_cm: float | None = None
+    salinity_max_ds_m: float | None = None
+
+
+class SoilSection(BaseModel):
+    requirements: SoilRequirements | None = None
+    actual: SoilActual | None = None
+    suitability: SoilSuitability | None = None
+
+
+class SoilSensors(BaseModel):
+    available: bool = False
+    last_reading: str | None = None
+    ph: float | None = None
+    ec_ds_m: float | None = None
+    moisture_pct: float | None = None
+    temperature_c: float | None = None
+
+
+class CropContext(BaseModel):
+    parcel_id: str
+    crop: CropInfo = CropInfo()
+    variety: VarietyInfo | None = None
+    management: str | None = None
+    season: SeasonInfo = SeasonInfo()
+    phenology: PhenologyInfo | None = None
+    thermal_limits: dict | None = None
+    soil: SoilSection = SoilSection()
+    soil_sensors: SoilSensors | None = None
+    phenology_source: str = "default"
+    match_level: str = "none"
+    provenance: dict | None = None

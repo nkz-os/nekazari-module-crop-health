@@ -254,3 +254,66 @@ async def get_weather_snapshot(
 def clear_phenology_cache() -> None:
     """Clear the phenology cache (useful for testing)."""
     _phenology_cache.clear()
+
+
+# ── F4: Crop Context from BioOrchestrator ────────────────────────────────────
+
+_crop_context_cache: TTLCache[str, "CropContext"] = TTLCache(maxsize=128, ttl=3600)
+
+
+async def get_crop_context(
+    parcel_id: str,
+    tenant_id: str = "",
+    gdd: float | None = None,
+):
+    """Fetch full crop context from BioOrchestrator.
+
+    Calls GET /api/graph/agriculture/crop-context?parcel_id=X.
+    Returns None if BioOrchestrator unreachable (circuit breaker).
+    Uses TTLCache with 1h TTL.
+    """
+    from app.schemas import CropContext
+
+    cache_key = f"{tenant_id}:{parcel_id}:{gdd or 0}"
+    cached = _crop_context_cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    settings = get_settings()
+    if not settings.bioorchestrator_url:
+        logger.warning("BIOORCHESTRATOR_URL not configured — crop context unavailable")
+        return None
+
+    url = f"{settings.bioorchestrator_url}/api/graph/agriculture/crop-context"
+    params: dict = {"parcel_id": parcel_id}
+    if gdd is not None:
+        params["gdd"] = str(gdd)
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(url, params=params)
+            if resp.status_code == 200:
+                data = resp.json()
+                ctx = CropContext(**data)
+                _crop_context_cache[cache_key] = ctx
+                logger.info(
+                    "Crop context for parcel %s: species=%s variety=%s match=%s",
+                    parcel_id,
+                    data.get("crop", {}).get("eppo"),
+                    data.get("variety", {}).get("name"),
+                    data.get("match_level"),
+                )
+                return ctx
+            elif resp.status_code == 404:
+                logger.info("No crop context for parcel %s (404 — no crop assigned)", parcel_id)
+                return None
+            else:
+                logger.warning("BioOrchestrator returned %d for crop-context", resp.status_code)
+    except httpx.TimeoutException:
+        logger.warning("BioOrchestrator timeout for crop-context")
+    except httpx.ConnectError:
+        logger.warning("BioOrchestrator unreachable for crop-context")
+    except Exception as exc:
+        logger.error("Unexpected error from bioorchestrator crop-context: %s", exc)
+
+    return None

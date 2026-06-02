@@ -125,9 +125,33 @@ async def trigger(
     )
 
     # ── 1. Fetch context ─────────────────────────────────────────────────
-    # Calculate GDD for auto stage detection
+    # Resolve crop/variety from BioOrchestrator crop-context
+    from app.services.context_client import get_crop_context as fetch_crop_context
+
+    species = "generic"
+    variety_name = None
+    management = None
+    crop_context = None
+
+    try:
+        crop_context = await fetch_crop_context(
+            parcel_id=effective_parcel,
+            tenant_id=tenant_id,
+        )
+        if crop_context:
+            if crop_context.crop and crop_context.crop.eppo != "unknown":
+                species = crop_context.crop.eppo
+            elif crop_context.crop and crop_context.crop.name:
+                species = crop_context.crop.name
+            variety_name = crop_context.variety.name if crop_context.variety else None
+            management = crop_context.management
+            if crop_context.season and crop_context.season.gdd_accumulated:
+                gdd = crop_context.season.gdd_accumulated
+    except Exception:
+        pass
+
+    # GDD fallback
     gdd = None
-    species = "olive"  # TODO: resolve from parcel crop type
     try:
         from datetime import date
         season_start = date(date.today().year, 3, 1).isoformat()  # March 1st default
@@ -148,7 +172,7 @@ async def trigger(
     assessment = CropHealthAssessment(
         parcel_id=effective_parcel,
         assessed_at=now,
-        phenology_source="bioorchestrator" if not phenology.is_default else "default",
+        phenology_source=crop_context.phenology_source if crop_context else "default",
     )
 
     # ── 2. Execute engines ───────────────────────────────────────────────
@@ -226,6 +250,30 @@ async def trigger(
     except Exception:
         pass
 
+    # ── 2.4 Soil sensor readings (pass-through, no engine) ────────────
+    soil_ph_val = None
+    soil_ec_val = None
+    soil_moisture_val = None
+    soil_temp_val = None
+
+    if metric_type in (
+        MetricType.SOIL_PH.value,
+        MetricType.SOIL_EC.value,
+        MetricType.SOIL_MOISTURE.value,
+        MetricType.SOIL_TEMPERATURE.value,
+    ):
+        readings = await redis_state.get_window(entity_id, metric_type, hours=1)
+        if readings:
+            latest = readings[-1].value
+            if metric_type == MetricType.SOIL_PH.value:
+                soil_ph_val = latest
+            elif metric_type == MetricType.SOIL_EC.value:
+                soil_ec_val = latest
+            elif metric_type == MetricType.SOIL_MOISTURE.value:
+                soil_moisture_val = latest
+            elif metric_type == MetricType.SOIL_TEMPERATURE.value:
+                soil_temp_val = latest
+
     # ── 2.5 Compound engines (after individual engines have results) ────
     try:
         from app.engines.composite import evaluate_composite_stress
@@ -235,10 +283,15 @@ async def trigger(
         wb_mm = assessment.water_balance.balance_mm if assessment.water_balance else None
         cwsi_val = assessment.cwsi.cwsi if assessment.cwsi else None
         stage_name = phenology.stage if phenology else "vegetative"
+        # Build Ky map from crop-context if available
+        ky_by_stage = None
+        if crop_context and crop_context.phenology and crop_context.phenology.stage and crop_context.phenology.ky is not None:
+            ky_by_stage = {crop_context.phenology.stage: crop_context.phenology.ky}
         assessment.composite_stress = evaluate_composite_stress(
             cwsi=cwsi_val, mds_ratio=mds_ratio_val, water_balance_mm=wb_mm,
             thermal_severity=thermal_sev, vigor_index=vigor_idx,
             stage=stage_name,
+            ky_override=ky_by_stage,
         )
     except Exception:
         pass
@@ -300,6 +353,12 @@ async def trigger(
         pass
 
     assessment.data_fidelity = _resolve_data_fidelity(assessment)
+
+    # Soil sensor pass-through values
+    assessment.soil_ph = soil_ph_val
+    assessment.soil_ec = soil_ec_val
+    assessment.soil_moisture_pct = soil_moisture_val
+    assessment.soil_temperature_c = soil_temp_val
 
     # ── 3. Fuse and classify ─────────────────────────────────────────────
     assessment.overall_severity = _determine_overall_severity(assessment)

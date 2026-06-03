@@ -538,3 +538,170 @@ async def get_soil_susceptibility(parcel_id: str, tenant_id: str) -> dict | None
         logger.error("Unexpected error from soil module: %s", exc)
 
     return None
+
+
+# ── Multi-year Vigor Anomaly (Phase 3 — Compaction Risk) ─────────────────────
+
+# Growing season months for northern hemisphere (April–October inclusive)
+_GROWING_SEASON_MONTHS = {4, 5, 6, 7, 8, 9, 10}
+
+
+def _extract_season_year(assessed_at_str: str) -> int | None:
+    """Extract the growing season year from an ISO-8601 timestamp.
+
+    Timestamps in Apr–Oct belong to the current calendar year's season.
+    Timestamps in Jan–Mar belong to the PREVIOUS calendar year's season
+    (e.g., March 2025 NDVI is part of the 2024 growing season).
+
+    Returns None if the month is outside the growing season (Nov, Dec).
+    """
+    try:
+        from datetime import datetime as dt
+        parsed = dt.fromisoformat(assessed_at_str.replace("Z", "+00:00"))
+        month = parsed.month
+        year = parsed.year
+        if month in _GROWING_SEASON_MONTHS:
+            return year
+        # Jan–Mar: belongs to previous calendar year's growing season
+        if month <= 3:
+            return year - 1
+        return None
+    except (ValueError, TypeError):
+        return None
+
+
+async def get_multiyear_vigor_anomaly(
+    parcel_id: str,
+    tenant_id: str,
+    seasons: int = 3,
+) -> dict | None:
+    """Analyze multiple growing seasons of vigor data for persistent anomalies.
+
+    Queries Orion-LD for CropHealthAssessment entities linked to this parcel,
+    groups by growing season year, computes mean vigor per season, and returns
+    the average anomaly vs. the overall multi-year mean.
+
+    Returns None if:
+    - Fewer than 2 seasons of data available
+    - Orion-LD unreachable
+    - Parcel has no assessments
+
+    Returns:
+        {
+            "avg_anomaly": float,       # -1 to +1, negative = below mean
+            "seasons_analyzed": int,    # number of distinct growing seasons
+            "seasonal_means": {year: float, ...},
+            "overall_mean_vigor": float,
+        }
+    """
+    settings = get_settings()
+    orion_url = settings.orion_ld_url
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            # Query all CropHealthAssessment entities for this parcel
+            resp = await client.get(
+                f"{orion_url}/ngsi-ld/v1/entities",
+                params={
+                    "type": "CropHealthAssessment",
+                    "q": f'refAgriParcel==\"urn:ngsi-ld:AgriParcel:{parcel_id}\"',
+                    "limit": 500,
+                    "options": "keyValues",
+                },
+                headers={
+                    "Accept": "application/ld+json",
+                    "NGSILD-Tenant": tenant_id,
+                } if tenant_id else {"Accept": "application/ld+json"},
+            )
+            if resp.status_code != 200:
+                logger.warning(
+                    "Orion-LD returned %d for multi-year vigor query (parcel %s)",
+                    resp.status_code, parcel_id,
+                )
+                return None
+
+            entities = resp.json()
+            if not isinstance(entities, list) or len(entities) < 2:
+                logger.info(
+                    "Insufficient CropHealthAssessment entities for parcel %s: %d",
+                    parcel_id, len(entities) if isinstance(entities, list) else 0,
+                )
+                return None
+
+            # ── Group by growing season year ──
+            seasonal_vigors: dict[int, list[float]] = {}
+            for e in entities:
+                # Handle both flat keyValues and nested NGSI-LD Property format
+                raw_at = e.get("assessedAt")
+                if isinstance(raw_at, dict):
+                    assessed_at = raw_at.get("value")
+                else:
+                    assessed_at = raw_at
+
+                raw_vigor = e.get("vigorIndex")
+                if isinstance(raw_vigor, dict):
+                    vigor = raw_vigor.get("value")
+                else:
+                    vigor = raw_vigor
+
+                if assessed_at is None or vigor is None:
+                    continue
+
+                season_year = _extract_season_year(str(assessed_at))
+                if season_year is None:
+                    continue
+
+                try:
+                    vigor_val = float(vigor)
+                    if 0.0 <= vigor_val <= 1.0:
+                        seasonal_vigors.setdefault(season_year, []).append(vigor_val)
+                except (ValueError, TypeError):
+                    continue
+
+            # Need at least 2 seasons per Phase 2 engine contract
+            if len(seasonal_vigors) < 2:
+                logger.info(
+                    "Only %d growing season(s) found for parcel %s (need ≥2)",
+                    len(seasonal_vigors), parcel_id,
+                )
+                return None
+
+            # Only keep the most recent N seasons
+            sorted_years = sorted(seasonal_vigors.keys(), reverse=True)[:seasons]
+            seasonal_vigors = {y: seasonal_vigors[y] for y in sorted_years}
+
+            # ── Compute per-season means ──
+            seasonal_means: dict[int, float] = {}
+            for year, vigors in seasonal_vigors.items():
+                seasonal_means[year] = round(sum(vigors) / len(vigors), 4)
+
+            # ── Overall mean across all seasons ──
+            all_vigors = [v for vigors in seasonal_vigors.values() for v in vigors]
+            overall_mean = round(sum(all_vigors) / len(all_vigors), 4) if all_vigors else 0.5
+
+            # ── Average anomaly: mean of (season_mean - overall_mean) ──
+            anomalies = [seasonal_means[y] - overall_mean for y in sorted_years]
+            avg_anomaly = round(sum(anomalies) / len(anomalies), 4) if anomalies else 0.0
+
+            seasons_count = len(seasonal_vigors)
+
+            logger.info(
+                "Multi-year vigor for parcel %s: %d seasons, mean=%.3f, anomaly=%.3f",
+                parcel_id, seasons_count, overall_mean, avg_anomaly,
+            )
+
+            return {
+                "avg_anomaly": avg_anomaly,
+                "seasons_analyzed": seasons_count,
+                "seasonal_means": seasonal_means,
+                "overall_mean_vigor": overall_mean,
+            }
+
+    except httpx.TimeoutException:
+        logger.warning("Orion-LD timeout for multi-year vigor query (parcel %s)", parcel_id)
+    except httpx.ConnectError:
+        logger.warning("Orion-LD unreachable for multi-year vigor query")
+    except Exception as exc:
+        logger.error("Unexpected error in multi-year vigor analysis: %s", exc)
+
+    return None

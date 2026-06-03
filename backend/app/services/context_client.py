@@ -15,7 +15,6 @@ Design:
 from __future__ import annotations
 
 import logging
-import os
 from typing import Any
 
 import httpx
@@ -328,7 +327,7 @@ async def get_soil_properties(parcel_id: str, tenant_id: str = "") -> "SoilPrope
         return SoilProperties(**cached)
 
     settings = get_settings()
-    soil_url = os.getenv("SOIL_MODULE_URL", "http://nkz-soil-service:5000")
+    soil_url = settings.soil_module_url
 
     soil_data = None
 

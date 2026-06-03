@@ -191,6 +191,43 @@ const CropHealthDetail: React.FC<CropHealthDetailProps> = ({ parcelId }) => {
         </div>
       )}
 
+      {/* Soil Properties Section */}
+      {assessment.soilProperties?.hasData && (
+        <div className="mb-3 bg-nkz-surface-raised rounded p-2">
+          <span className="text-nkz-text-secondary text-xs block mb-1">🌱 {t('detail.soilProperties')}</span>
+          <div className="grid grid-cols-3 gap-1 text-xs">
+            <div className="text-nkz-text-muted">FC: <span className="text-nkz-text-primary">{assessment.soilProperties.fieldCapacity.toFixed(2)}</span></div>
+            <div className="text-nkz-text-muted">WP: <span className="text-nkz-text-primary">{assessment.soilProperties.wiltingPoint.toFixed(2)}</span></div>
+            <div className="text-nkz-text-muted">Ksat: <span className="text-nkz-text-primary">{assessment.soilProperties.ksatMmH.toFixed(0)} mm/h</span></div>
+          </div>
+          <p className="text-nkz-text-muted text-xs mt-1">
+            {assessment.soilProperties.usdaTextureClass} · Grupo SCS {assessment.soilProperties.scsHydrologicGroup} · {assessment.soilProperties.source}
+          </p>
+          {assessment.soilWaterRatio != null && assessment.soilAWCmm != null && (
+            <div className="mt-2">
+              <div className="flex items-center justify-between mb-0.5">
+                <span className="text-nkz-text-muted text-xs">Reserva de agua</span>
+                <span className="text-nkz-text-muted text-xs">{assessment.soilWaterMm?.toFixed(0)}/{assessment.soilAWCmm.toFixed(0)} mm</span>
+              </div>
+              <div className="h-2 bg-nkz-border rounded-full overflow-hidden">
+                <div
+                  className="h-full rounded-full transition-all"
+                  style={{
+                    width: `${Math.min((assessment.soilWaterRatio || 0) * 100, 100)}%`,
+                    background: (assessment.soilWaterRatio || 0) > 0.5 ? '#16a34a' : (assessment.soilWaterRatio || 0) > 0.3 ? '#d97706' : '#dc2626',
+                  }}
+                />
+              </div>
+            </div>
+          )}
+          {assessment.waterloggingRiskLevel && assessment.waterloggingRiskLevel !== 'LOW' && (
+            <p className="text-xs mt-1" style={{ color: '#1e40af' }}>
+              💦 Riesgo de encharcamiento: {assessment.waterloggingRiskLevel} ({assessment.waterloggingSaturationHours?.toFixed(0)}h)
+            </p>
+          )}
+        </div>
+      )}
+
       {/* Phenology Params */}
       {phenology && (
         <div className="mb-3 bg-nkz-surface-raised rounded p-2">

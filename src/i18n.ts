@@ -121,6 +121,21 @@ const en = {
             },
         },
         retry: 'Retry',
+        soil: {
+            reservoir: {
+                moderate: 'Soil water at {{ratio}}% ({{current}}/{{capacity}} mm) — schedule irrigation',
+                high: 'Soil water low at {{ratio}}% ({{current}}/{{capacity}} mm) — irrigate soon',
+                critical: 'Soil water critical at {{ratio}}% ({{current}}/{{capacity}} mm) — irrigate immediately',
+            },
+        },
+        waterlogging: {
+            MEDIUM: 'Waterlogging risk ({{hours}}h) — monitor low areas',
+            HIGH: 'High waterlogging risk ({{hours}}h) — root zone saturation likely',
+            CRITICAL: 'Critical waterlogging risk ({{hours}}h) — anoxia danger',
+        },
+        detail: {
+            soilProperties: 'Soil Properties',
+        },
     },
 };
 
@@ -247,6 +262,21 @@ const es = {
             },
         },
         retry: 'Reintentar',
+        soil: {
+            reservoir: {
+                moderate: 'Reserva de agua al {{ratio}}% ({{current}}/{{capacity}} mm) — programar riego',
+                high: 'Reserva de agua baja al {{ratio}}% ({{current}}/{{capacity}} mm) — regar pronto',
+                critical: 'Reserva de agua crítica al {{ratio}}% ({{current}}/{{capacity}} mm) — regar inmediatamente',
+            },
+        },
+        waterlogging: {
+            MEDIUM: 'Riesgo de encharcamiento ({{hours}}h) — vigilar zonas bajas',
+            HIGH: 'Riesgo alto de encharcamiento ({{hours}}h) — saturación probable',
+            CRITICAL: 'Riesgo crítico de encharcamiento ({{hours}}h) — peligro de anoxia',
+        },
+        detail: {
+            soilProperties: 'Propiedades del Suelo',
+        },
     },
 };
 
@@ -373,6 +403,21 @@ const ca = {
             },
         },
         retry: 'Reintentar',
+        soil: {
+            reservoir: {
+                moderate: 'Reserva d\'aigua al {{ratio}}% ({{current}}/{{capacity}} mm) — programar reg',
+                high: 'Reserva d\'aigua baixa al {{ratio}}% ({{current}}/{{capacity}} mm) — regar aviat',
+                critical: 'Reserva d\'aigua crítica al {{ratio}}% ({{current}}/{{capacity}} mm) — regar immediatament',
+            },
+        },
+        waterlogging: {
+            MEDIUM: 'Risc d\'embassament ({{hours}}h) — vigilar zones baixes',
+            HIGH: 'Risc alt d\'embassament ({{hours}}h) — saturació probable',
+            CRITICAL: 'Risc crític d\'embassament ({{hours}}h) — perill d\'anòxia',
+        },
+        detail: {
+            soilProperties: 'Propietats del Sòl',
+        },
     },
 };
 
@@ -499,6 +544,21 @@ const eu = {
             },
         },
         retry: 'Berriro saiatu',
+        soil: {
+            reservoir: {
+                moderate: 'Ur-erreserba %{{ratio}}ean ({{current}}/{{capacity}} mm) — ureztatzea programatu',
+                high: 'Ur-erreserba baxua %{{ratio}}ean ({{current}}/{{capacity}} mm) — laster ureztatu',
+                critical: 'Ur-erreserba kritikoa %{{ratio}}ean ({{current}}/{{capacity}} mm) — berehala ureztatu',
+            },
+        },
+        waterlogging: {
+            MEDIUM: 'Ur-pilatze arriskua ({{hours}}h) — beheko guneak zaindu',
+            HIGH: 'Ur-pilatze arrisku altua ({{hours}}h) — saturazioa litekeena',
+            CRITICAL: 'Ur-pilatze arrisku kritikoa ({{hours}}h) — anoxia arriskua',
+        },
+        detail: {
+            soilProperties: 'Lurzoruaren Propietateak',
+        },
     },
 };
 
@@ -625,6 +685,21 @@ const fr = {
             },
         },
         retry: 'Réessayer',
+        soil: {
+            reservoir: {
+                moderate: 'Réserve en eau à {{ratio}}% ({{current}}/{{capacity}} mm) — programmer l\'irrigation',
+                high: 'Réserve en eau basse à {{ratio}}% ({{current}}/{{capacity}} mm) — irriguer bientôt',
+                critical: 'Réserve en eau critique à {{ratio}}% ({{current}}/{{capacity}} mm) — irriguer immédiatement',
+            },
+        },
+        waterlogging: {
+            MEDIUM: 'Risque d\'engorgement ({{hours}}h) — surveiller les zones basses',
+            HIGH: 'Risque élevé d\'engorgement ({{hours}}h) — saturation probable',
+            CRITICAL: 'Risque critique d\'engorgement ({{hours}}h) — danger d\'anoxie',
+        },
+        detail: {
+            soilProperties: 'Propriétés du Sol',
+        },
     },
 };
 
@@ -751,6 +826,21 @@ const pt = {
             },
         },
         retry: 'Tentar novamente',
+        soil: {
+            reservoir: {
+                moderate: 'Reserva de água a {{ratio}}% ({{current}}/{{capacity}} mm) — programar irrigação',
+                high: 'Reserva de água baixa a {{ratio}}% ({{current}}/{{capacity}} mm) — irrigar em breve',
+                critical: 'Reserva de água crítica a {{ratio}}% ({{current}}/{{capacity}} mm) — irrigar imediatamente',
+            },
+        },
+        waterlogging: {
+            MEDIUM: 'Risco de encharcamento ({{hours}}h) — vigiar zonas baixas',
+            HIGH: 'Risco alto de encharcamento ({{hours}}h) — saturação provável',
+            CRITICAL: 'Risco crítico de encharcamento ({{hours}}h) — perigo de anóxia',
+        },
+        detail: {
+            soilProperties: 'Propriedades do Solo',
+        },
     },
 };
 

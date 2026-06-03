@@ -38,6 +38,27 @@ interface Assessment {
   gddAccumulated?: number;
   kc?: number;
   management?: string;
+  soilProperties?: {
+    sandPct: number;
+    fieldCapacity: number;
+    wiltingPoint: number;
+    ksatMmH: number;
+    scsHydrologicGroup: string;
+    usdaTextureClass: string;
+    source: string;
+    hasData: boolean;
+  };
+  soilWaterBalance?: {
+    swMm: number;
+    awcMm: number;
+    swRatio: number;
+    stressLevel: string;
+    soilMoistureConfidence: string;
+  };
+  waterloggingRisk?: {
+    riskLevel: string;
+    saturationHours: number;
+  };
 }
 
 interface CropStatusSnapshotProps {
@@ -202,6 +223,40 @@ const CropStatusSnapshot: React.FC<CropStatusSnapshotProps> = ({ parcelId, parce
   if (vigor != null) {
     const vColor = vigor > 0.7 ? '#16a34a' : vigor >= 0.4 ? '#d97706' : '#dc2626';
     lines.push({ icon: '🌿', text: t(vigorPhrase(vigor), { value: vigor.toFixed(2) }), color: vColor });
+  }
+
+  // Soil properties line
+  const sp = assessment.soilProperties;
+  if (sp?.hasData) {
+    lines.push({
+      icon: '🌱',
+      text: `${sp.usdaTextureClass} · AWC ${((sp.fieldCapacity - sp.wiltingPoint) * 100).toFixed(0)}% · Drenaje ${sp.scsHydrologicGroup}`
+    });
+  }
+
+  // Soil water reservoir
+  const swb = assessment.soilWaterBalance;
+  if (swb && swb.stressLevel !== 'none') {
+    const ratioPct = (swb.swRatio * 100).toFixed(0);
+    lines.push({
+      icon: '🪣',
+      text: t('soil.reservoir.' + swb.stressLevel, {
+        current: swb.swMm.toFixed(0),
+        capacity: swb.awcMm.toFixed(0),
+        ratio: ratioPct,
+      }),
+      color: swb.stressLevel === 'critical' ? '#dc2626' : '#d97706',
+    });
+  }
+
+  // Waterlogging risk
+  const wlr = assessment.waterloggingRisk;
+  if (wlr && wlr.riskLevel !== 'LOW') {
+    lines.push({
+      icon: '💦',
+      text: t('waterlogging.' + wlr.riskLevel, { hours: wlr.saturationHours.toFixed(0) }),
+      color: '#1e40af',
+    });
   }
 
   // Fidelity

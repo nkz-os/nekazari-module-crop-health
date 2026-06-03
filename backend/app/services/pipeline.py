@@ -173,6 +173,13 @@ async def trigger(
         parcel_id=effective_parcel,
         assessed_at=now,
         phenology_source=crop_context.phenology_source if crop_context else "default",
+        crop_species=species if species != "generic" else None,
+        crop_name=crop_context.crop.name if crop_context and crop_context.crop else None,
+        variety_name=variety_name,
+        phenology_stage=phenology.stage if phenology else None,
+        gdd_accumulated=gdd,
+        kc=phenology.kc if phenology else None,
+        management=management,
     )
 
     # ── 2. Execute engines ───────────────────────────────────────────────

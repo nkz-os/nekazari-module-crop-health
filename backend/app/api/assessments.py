@@ -312,6 +312,123 @@ async def export_assessments(
     )
 
 
+@router.get("/parcels")
+async def list_parcels(request: Request):
+    """Return lightweight list of all tenant parcels with latest crop health status.
+
+    Queries Orion-LD for CropHealthAssessment entities (grouped by parcel,
+    latest per parcel) and AgriParcel entities (for name and area).
+    Parcels without assessments appear with hasData=false.
+    """
+    tenant_id = getattr(request.state, "tenant_id", "")
+    headers = {
+        "Accept": "application/ld+json",
+        "Link": f"<{CONTEXT_URL}>; rel=\"http://www.w3.org/ns/json-ld#context\"; type=\"application/ld+json\"",
+    }
+    if tenant_id:
+        headers["NGSILD-Tenant"] = tenant_id
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            # Query 1: CropHealthAssessment entities
+            resp = await client.get(
+                f"{ORION_URL}/ngsi-ld/v1/entities",
+                params={
+                    "type": "CropHealthAssessment",
+                    "limit": 100,
+                    "options": "keyValues",
+                },
+                headers=headers,
+            )
+            assessments_raw = resp.json() if resp.status_code == 200 else []
+
+            # Query 2: AgriParcel entities
+            resp2 = await client.get(
+                f"{ORION_URL}/ngsi-ld/v1/entities",
+                params={
+                    "type": "AgriParcel",
+                    "limit": 100,
+                    "options": "keyValues",
+                },
+                headers=headers,
+            )
+            parcels_raw = resp2.json() if resp2.status_code == 200 else []
+
+    except Exception as e:
+        logger.error("Failed to query Orion-LD for parcels: %s", e)
+        return {"parcels": []}
+
+    # Build assessment lookup by parcel ID (keep latest per parcel)
+    assessment_by_parcel: dict[str, dict] = {}
+    for e in assessments_raw:
+        parcel = ""
+        ref = e.get("refAgriParcel")
+        if isinstance(ref, dict):
+            parcel = ref.get("object", "").replace("urn:ngsi-ld:AgriParcel:", "")
+        elif isinstance(ref, str):
+            parcel = ref.replace("urn:ngsi-ld:AgriParcel:", "")
+        if not parcel:
+            continue
+        existing = assessment_by_parcel.get(parcel)
+        if existing is None or (e.get("assessedAt", "") > existing.get("assessedAt", "")):
+            assessment_by_parcel[parcel] = e
+
+    # Build parcel info lookup
+    parcel_info: dict[str, dict] = {}
+    for p in parcels_raw:
+        pid = p.get("id", "").replace("urn:ngsi-ld:AgriParcel:", "")
+        if not pid:
+            continue
+        parcel_info[pid] = p
+
+    # Merge: parcels with assessments first, then parcels without
+    parcels: list[dict] = []
+    seen: set[str] = set()
+
+    for pid, a in assessment_by_parcel.items():
+        seen.add(pid)
+        info = parcel_info.get(pid, {})
+        name_val = info.get("name")
+        if isinstance(name_val, dict):
+            name_val = name_val.get("value")
+        area_val = info.get("area")
+        if isinstance(area_val, dict):
+            area_val = area_val.get("value")
+        parcels.append({
+            "parcelId": pid,
+            "parcelName": name_val or pid,
+            "cropName": a.get("cropName") if not isinstance(a.get("cropName"), dict) else a.get("cropName", {}).get("value"),
+            "phenologyStage": a.get("phenologyStage") if not isinstance(a.get("phenologyStage"), dict) else a.get("phenologyStage", {}).get("value"),
+            "areaHa": area_val,
+            "overallSeverity": a.get("overallSeverity", "LOW") if not isinstance(a.get("overallSeverity"), dict) else a.get("overallSeverity", {}).get("value", "LOW"),
+            "cwsiValue": a.get("cwsiValue") if not isinstance(a.get("cwsiValue"), dict) else a.get("cwsiValue", {}).get("value"),
+            "vigorIndex": a.get("vigorIndex") if not isinstance(a.get("vigorIndex"), dict) else a.get("vigorIndex", {}).get("value"),
+            "assessedAt": a.get("assessedAt") if not isinstance(a.get("assessedAt"), dict) else a.get("assessedAt", {}).get("value"),
+            "hasData": True,
+        })
+
+    for pid, info in parcel_info.items():
+        if pid in seen:
+            continue
+        name_val = info.get("name")
+        if isinstance(name_val, dict):
+            name_val = name_val.get("value")
+        parcels.append({
+            "parcelId": pid,
+            "parcelName": name_val or pid,
+            "hasData": False,
+        })
+
+    # Sort: parcels with data first (by severity priority), then without data
+    severity_order = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
+    parcels.sort(key=lambda p: (
+        0 if p.get("hasData") else 1,
+        severity_order.get(p.get("overallSeverity", "LOW"), 3),
+    ))
+
+    return {"parcels": parcels}
+
+
 @router.get("/diseases/active")
 async def active_disease_risks(
     request: Request,

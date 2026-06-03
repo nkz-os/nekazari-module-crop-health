@@ -260,6 +260,14 @@ class CropHealthAssessment(BaseModel):
     soil_ec: float | None = None
     soil_moisture_pct: float | None = None
     soil_temperature_c: float | None = None
+    # ── Phenological context (persisted for historical queries) ──
+    crop_species: str | None = None
+    crop_name: str | None = None
+    variety_name: str | None = None
+    phenology_stage: str | None = None
+    gdd_accumulated: float | None = None
+    kc: float | None = None
+    management: str | None = None
 
     def to_ngsi_ld(self) -> dict[str, Any]:
         """Serialise to NGSI-LD entity payload."""
@@ -322,6 +330,20 @@ class CropHealthAssessment(BaseModel):
             entity["wueWaterAppliedMm"] = {"type": "Property", "value": self.wue.water_applied_mm}
             entity["wueTrend"] = {"type": "Property", "value": self.wue.trend}
         entity["dataFidelity"] = {"type": "Property", "value": self.data_fidelity}
+        if self.crop_species is not None:
+            entity["cropSpecies"] = {"type": "Property", "value": self.crop_species}
+        if self.crop_name is not None:
+            entity["cropName"] = {"type": "Property", "value": self.crop_name}
+        if self.variety_name is not None:
+            entity["varietyName"] = {"type": "Property", "value": self.variety_name}
+        if self.phenology_stage is not None:
+            entity["phenologyStage"] = {"type": "Property", "value": self.phenology_stage}
+        if self.gdd_accumulated is not None:
+            entity["gddAccumulated"] = {"type": "Property", "value": self.gdd_accumulated, "unitCode": "DD"}
+        if self.kc is not None:
+            entity["kc"] = {"type": "Property", "value": self.kc}
+        if self.management is not None:
+            entity["management"] = {"type": "Property", "value": self.management}
         if self.soil_ph is not None:
             entity["soilPh"] = {"type": "Property", "value": self.soil_ph}
         if self.soil_ec is not None:

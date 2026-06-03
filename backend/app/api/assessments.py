@@ -80,6 +80,22 @@ async def latest_assessments(request: Request):
                     "assessedAt": e.get("assessedAt", {}).get("value") if isinstance(e.get("assessedAt"), dict) else e.get("assessedAt", ""),
                     "phenologySource": e.get("phenologySource", {}).get("value") if isinstance(e.get("phenologySource"), dict) else e.get("phenologySource", "default"),
                     "dataFidelity": e.get("dataFidelity", {}).get("value") if isinstance(e.get("dataFidelity"), dict) else e.get("dataFidelity"),
+                    "cropName": e.get("cropName") if not isinstance(e.get("cropName"), dict) else e.get("cropName", {}).get("value"),
+                    "phenologyStage": e.get("phenologyStage") if not isinstance(e.get("phenologyStage"), dict) else e.get("phenologyStage", {}).get("value"),
+                    "soilProperties": {
+                        "fieldCapacity": e.get("soilFieldCapacity", {}).get("value") if isinstance(e.get("soilFieldCapacity"), dict) else e.get("soilFieldCapacity"),
+                        "wiltingPoint": e.get("soilWiltingPoint", {}).get("value") if isinstance(e.get("soilWiltingPoint"), dict) else e.get("soilWiltingPoint"),
+                        "ksatMmH": e.get("soilKsatMmH", {}).get("value") if isinstance(e.get("soilKsatMmH"), dict) else e.get("soilKsatMmH"),
+                        "scsHydrologicGroup": e.get("soilScsGroup", {}).get("value") if isinstance(e.get("soilScsGroup"), dict) else e.get("soilScsGroup"),
+                        "usdaTextureClass": e.get("soilTexture", {}).get("value") if isinstance(e.get("soilTexture"), dict) else e.get("soilTexture"),
+                        "source": e.get("soilDataSource", {}).get("value") if isinstance(e.get("soilDataSource"), dict) else e.get("soilDataSource"),
+                        "hasData": True,
+                    } if (e.get("soilTexture") or e.get("soilFieldCapacity")) else None,
+                    "soilWaterMm": e.get("soilWaterMm", {}).get("value") if isinstance(e.get("soilWaterMm"), dict) else e.get("soilWaterMm"),
+                    "soilAWCmm": e.get("soilAWCmm", {}).get("value") if isinstance(e.get("soilAWCmm"), dict) else e.get("soilAWCmm"),
+                    "soilWaterRatio": e.get("soilWaterRatio", {}).get("value") if isinstance(e.get("soilWaterRatio"), dict) else e.get("soilWaterRatio"),
+                    "waterloggingRiskLevel": e.get("waterloggingRiskLevel", {}).get("value") if isinstance(e.get("waterloggingRiskLevel"), dict) else e.get("waterloggingRiskLevel"),
+                    "waterloggingSaturationHours": e.get("waterloggingSaturationHours", {}).get("value") if isinstance(e.get("waterloggingSaturationHours"), dict) else e.get("waterloggingSaturationHours"),
                 })
 
             return {"assessments": assessments}

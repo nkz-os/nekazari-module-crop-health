@@ -488,6 +488,16 @@ async def trigger(
                 requires_field_verification=engine_result.requires_field_verification,
                 data_fidelity=engine_result.data_fidelity,
             )
+
+            # Phase 4c: check for penetrometer ground truth
+            from app.services.context_client import get_penetrometer_data
+            penetrometer = await get_penetrometer_data(effective_parcel, tenant_id)
+            if penetrometer and penetrometer.get("available"):
+                assessment.compaction_risk.requires_field_verification = False
+                assessment.compaction_risk.data_fidelity = "onsite_calibrated"
+                assessment.compaction_risk.contributing_factors.append(
+                    f"penetrometer_verified_{penetrometer['point_count']}p"
+                )
     except Exception:
         pass  # Compaction risk is advisory — never block the pipeline
 

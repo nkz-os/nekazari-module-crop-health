@@ -705,3 +705,89 @@ async def get_multiyear_vigor_anomaly(
         logger.error("Unexpected error in multi-year vigor analysis: %s", exc)
 
     return None
+
+
+# ── Penetrometer Ground Truth (Phase 4c — Compaction Risk) ──────────────────
+
+
+async def get_penetrometer_data(
+    parcel_id: str,
+    tenant_id: str,
+) -> dict | None:
+    """Check if real penetrometer measurements exist for a parcel.
+
+    Queries Orion-LD for SoilSamplingPoint entities linked to this parcel
+    that have penetrationResistance data. If found, the compaction risk
+    engine can use this as ground truth instead of modeled susceptibility.
+
+    Returns None if no penetrometer data exists.
+
+    Returns:
+        {
+            "available": True,
+            "point_count": int,
+            "mean_mpa": float,
+            "max_mpa": float,
+            "depth_range": str,
+        }
+    """
+    settings = get_settings()
+    orion_url = settings.orion_ld_url
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(
+                f"{orion_url}/ngsi-ld/v1/entities",
+                params={
+                    "type": "SoilSamplingPoint",
+                    "q": f'refAgriParcel==\"urn:ngsi-ld:AgriParcel:{parcel_id}\"',
+                    "limit": 50,
+                    "options": "keyValues",
+                },
+                headers={
+                    "Accept": "application/ld+json",
+                    "NGSILD-Tenant": tenant_id,
+                } if tenant_id else {"Accept": "application/ld+json"},
+            )
+            if resp.status_code != 200:
+                return None
+
+            entities = resp.json()
+            if not isinstance(entities, list):
+                return None
+
+            mpa_values = []
+            for e in entities:
+                pr = e.get("penetrationResistance")
+                if isinstance(pr, dict):
+                    pr = pr.get("value")
+                if pr is not None:
+                    try:
+                        val = float(pr)
+                        if val > 0:
+                            mpa_values.append(val)
+                    except (ValueError, TypeError):
+                        pass
+
+            if len(mpa_values) < 1:
+                return None
+
+            depths = set()
+            for e in entities:
+                df = e.get("depthFrom", {}).get("value") if isinstance(e.get("depthFrom"), dict) else e.get("depthFrom")
+                dt = e.get("depthTo", {}).get("value") if isinstance(e.get("depthTo"), dict) else e.get("depthTo")
+                if df is not None and dt is not None:
+                    depths.add(f"{df}-{dt}")
+
+            return {
+                "available": True,
+                "point_count": len(mpa_values),
+                "mean_mpa": round(sum(mpa_values) / len(mpa_values), 2),
+                "max_mpa": round(max(mpa_values), 2),
+                "depth_range": ", ".join(sorted(depths)) if depths else "unknown",
+            }
+
+    except Exception:
+        pass
+
+    return None

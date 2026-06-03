@@ -15,6 +15,7 @@ Design:
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any
 
 import httpx
@@ -254,6 +255,156 @@ async def get_weather_snapshot(
 def clear_phenology_cache() -> None:
     """Clear the phenology cache (useful for testing)."""
     _phenology_cache.clear()
+
+
+# ── Soil Properties Client ──────────────────────────────────────────────────
+
+_soil_cache: TTLCache[str, dict] = TTLCache(maxsize=128, ttl=3600)
+_coord_cache: TTLCache[str, tuple[float, float]] = TTLCache(maxsize=256, ttl=86400)
+
+_DEFAULT_SOIL_DICT = {
+    "sand_pct": 40, "clay_pct": 20, "silt_pct": 40,
+    "organic_carbon_pct": 1.0, "field_capacity": 0.27,
+    "wilting_point": 0.12, "ksat_mm_h": 13.0,
+    "scs_hydrologic_group": "B", "usda_texture_class": "loam",
+    "source": "default_modeled", "has_data": False,
+}
+
+
+async def _resolve_parcel_coords(parcel_id: str, tenant_id: str) -> tuple[float, float] | None:
+    """Resolve parcel centroid coordinates from Orion-LD AgriParcel."""
+    cache_key = f"{tenant_id}:{parcel_id}"
+    cached = _coord_cache.get(cache_key)
+    if cached:
+        return cached
+
+    settings = get_settings()
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            headers = {"Accept": "application/ld+json"}
+            if tenant_id:
+                headers["NGSILD-Tenant"] = tenant_id
+            resp = await client.get(
+                f"{settings.orion_ld_url}/ngsi-ld/v1/entities/urn:ngsi-ld:AgriParcel:{parcel_id}",
+                params={"options": "keyValues"},
+                headers=headers,
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                loc = data.get("location")
+                if isinstance(loc, dict) and loc.get("type") == "Point":
+                    coords = loc["coordinates"]
+                    result = (coords[1], coords[0])  # lat, lon
+                    _coord_cache[cache_key] = result
+                    return result
+                elif isinstance(loc, dict) and loc.get("type") == "Polygon":
+                    ring = loc.get("coordinates", [[[]]])[0]
+                    if ring:
+                        lats = [p[1] for p in ring]
+                        lons = [p[0] for p in ring]
+                        result = (sum(lats) / len(lats), sum(lons) / len(lons))
+                        _coord_cache[cache_key] = result
+                        return result
+    except Exception:
+        pass
+    return None
+
+
+async def get_soil_properties(parcel_id: str, tenant_id: str = "") -> "SoilProperties":
+    """Fetch soil physical properties for a parcel.
+
+    Resolution chain:
+    1. Try GET /v1/soil/parcel/{id}/summary (pre-ingested AgriSoilExtended)
+    2. Fallback: resolve coords -> GET /v1/soil/point/texture?lat=X&lon=Y
+    3. If all fail: return default loam values
+
+    Results cached with 1h TTL.
+    """
+    from app.schemas import SoilProperties
+
+    cache_key = f"{tenant_id}:{parcel_id}"
+    cached = _soil_cache.get(cache_key)
+    if cached:
+        return SoilProperties(**cached)
+
+    settings = get_settings()
+    soil_url = os.getenv("SOIL_MODULE_URL", "http://nkz-soil-service:5000")
+
+    soil_data = None
+
+    # Attempt 1: parcel/summary endpoint
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(
+                f"{soil_url}/v1/soil/parcel/{parcel_id}/summary",
+                headers={"X-Tenant-ID": tenant_id} if tenant_id else {},
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                horizons = data.get("horizons", {}).get("value", [])
+                if horizons:
+                    h = horizons[0]
+                    soil_data = {
+                        "sand_pct": h.get("sand", 40),
+                        "clay_pct": h.get("clay", 20),
+                        "silt_pct": h.get("silt", 40),
+                        "organic_carbon_pct": h.get("organicCarbon", 1.0),
+                        "field_capacity": h.get("fieldCapacity", 0.27),
+                        "wilting_point": h.get("wiltingPoint", 0.12),
+                        "ksat_mm_h": h.get("saturatedHydraulicConductivity", 13.0),
+                        "scs_hydrologic_group": h.get("hydrologicGroup", "B"),
+                        "usda_texture_class": h.get("usdaTextureClass", "loam"),
+                        "source": data.get("dataSource", {}).get("value", "lab_analysis"),
+                        "has_data": True,
+                    }
+    except Exception:
+        pass
+
+    # Attempt 2: point/texture fallback with parcel coords
+    if soil_data is None:
+        coords = await _resolve_parcel_coords(parcel_id, tenant_id)
+        if coords:
+            lat, lon = coords
+            try:
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    resp = await client.get(
+                        f"{soil_url}/v1/soil/point/texture",
+                        params={"lat": lat, "lon": lon, "depth": "0-60"},
+                        headers={"X-Tenant-ID": tenant_id} if tenant_id else {},
+                    )
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        tex = data.get("texture", {})
+                        hyd = data.get("hydraulic", {})
+                        soil_data = {
+                            "sand_pct": tex.get("sand", 40),
+                            "clay_pct": tex.get("clay", 20),
+                            "silt_pct": tex.get("silt", 40),
+                            "organic_carbon_pct": tex.get("organicCarbon", 1.0),
+                            "field_capacity": hyd.get("fieldCapacity", 0.27),
+                            "wilting_point": hyd.get("wiltingPoint", 0.12),
+                            "ksat_mm_h": hyd.get("saturatedHydraulicConductivity", 13.0),
+                            "scs_hydrologic_group": hyd.get("hydrologicGroup", "B"),
+                            "usda_texture_class": tex.get("usdaTextureClass", "loam"),
+                            "source": data.get("source", {}).get("provider", "soilgrids"),
+                            "has_data": True,
+                        }
+            except Exception:
+                pass
+
+    # Default fallback
+    if soil_data is None:
+        soil_data = dict(_DEFAULT_SOIL_DICT)
+        logger.warning("No soil data for parcel %s — using default loam", parcel_id)
+    else:
+        logger.info(
+            "Soil data for parcel %s from %s: %s, FC=%.2f WP=%.2f ksat=%.1f",
+            parcel_id, soil_data["source"], soil_data["usda_texture_class"],
+            soil_data["field_capacity"], soil_data["wilting_point"], soil_data["ksat_mm_h"],
+        )
+
+    _soil_cache[cache_key] = soil_data
+    return SoilProperties(**soil_data)
 
 
 # ── F4: Crop Context from BioOrchestrator ────────────────────────────────────

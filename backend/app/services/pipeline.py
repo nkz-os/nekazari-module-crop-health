@@ -448,6 +448,45 @@ async def trigger(
     except Exception:
         pass
 
+    # ── 2.7 Compaction Risk (cross-module, opportunistic) ────────
+    try:
+        from app.engines.compaction_risk import evaluate_compaction_risk
+        from app.services.context_client import get_soil_susceptibility
+        soil_susc = await get_soil_susceptibility(effective_parcel, tenant_id)
+        if soil_susc and soil_susc.get("overall_score", 0) > 25:
+            moisture_pct = soil_moisture_val
+            sw_stress = (
+                assessment.soil_water_balance.stress_level
+                if hasattr(assessment, 'soil_water_balance')
+                and assessment.soil_water_balance
+                else None
+            )
+            from app.schemas import CompactionRiskResult
+            engine_result = evaluate_compaction_risk(
+                soil_susceptibility_score=soil_susc["overall_score"],
+                soil_susceptibility_class=soil_susc["overall_class"],
+                soil_moisture_pct=moisture_pct,
+                soil_moisture_stress=sw_stress,
+                vigor_anomaly_multiyear=None,   # Phase 3
+                vigor_anomaly_years=0,          # Phase 3
+                traffic_intensity=None,          # Phase 4
+                fidelity=assessment.data_fidelity if hasattr(assessment, 'data_fidelity') else "regional_proxy",
+            )
+            assessment.compaction_risk = CompactionRiskResult(
+                risk_level=engine_result.risk_level,
+                risk_score=engine_result.risk_score,
+                susceptibility_score=engine_result.susceptibility_score,
+                contributing_factors=engine_result.contributing_factors,
+                moisture_warning=engine_result.moisture_warning,
+                vigor_concern=engine_result.vigor_concern,
+                traffic_exposure=engine_result.traffic_exposure,
+                advisory=engine_result.advisory,
+                requires_field_verification=engine_result.requires_field_verification,
+                data_fidelity=engine_result.data_fidelity,
+            )
+    except Exception:
+        pass  # Compaction risk is advisory — never block the pipeline
+
     assessment.data_fidelity = _resolve_data_fidelity(assessment)
 
     # Soil sensor pass-through values

@@ -279,6 +279,23 @@ class WUEResult(BaseModel):
     trend: str = "stable"
 
 
+# ── Compaction Risk Result ─────────────────────────────────────────────────
+
+
+class CompactionRiskResult(BaseModel):
+    """Compaction risk assessment — NOT a diagnosis. Field verification required."""
+    risk_level: str          # low | moderate | high | very_high
+    risk_score: float        # 0-100
+    susceptibility_score: float
+    contributing_factors: list[str] = []
+    moisture_warning: bool = False
+    vigor_concern: bool = False
+    traffic_exposure: str = "unknown"
+    advisory: str            # i18n key
+    requires_field_verification: bool = True
+    data_fidelity: str = "regional_proxy"
+
+
 # ── CropHealthAssessment (NGSI-LD output entity) ─────────────────────────────
 
 
@@ -295,6 +312,7 @@ class CropHealthAssessment(BaseModel):
     yield_gap: YieldGapResult | None = None
     phenology_progress: PhenologyProgressResult | None = None
     wue: WUEResult | None = None
+    compaction_risk: CompactionRiskResult | None = None
     overall_severity: Severity = Severity.LOW
     recommended_action: RecommendedAction = RecommendedAction.NO_ACTION
     phenology_source: str = "default"
@@ -376,6 +394,13 @@ class CropHealthAssessment(BaseModel):
             entity["wueBiomassKg"] = {"type": "Property", "value": self.wue.biomass_estimated_kg}
             entity["wueWaterAppliedMm"] = {"type": "Property", "value": self.wue.water_applied_mm}
             entity["wueTrend"] = {"type": "Property", "value": self.wue.trend}
+        if self.compaction_risk:
+            entity["compactionRiskLevel"] = {"type": "Property", "value": self.compaction_risk.risk_level}
+            entity["compactionRiskScore"] = {"type": "Property", "value": self.compaction_risk.risk_score}
+            entity["compactionRiskFactors"] = {"type": "Property", "value": self.compaction_risk.contributing_factors}
+            entity["compactionMoistureWarning"] = {"type": "Property", "value": self.compaction_risk.moisture_warning}
+            entity["compactionVigorConcern"] = {"type": "Property", "value": self.compaction_risk.vigor_concern}
+            entity["compactionRequiresVerification"] = {"type": "Property", "value": self.compaction_risk.requires_field_verification}
         entity["dataFidelity"] = {"type": "Property", "value": self.data_fidelity}
         if self.crop_species is not None:
             entity["cropSpecies"] = {"type": "Property", "value": self.crop_species}

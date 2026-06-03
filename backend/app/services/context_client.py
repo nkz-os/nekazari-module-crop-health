@@ -467,3 +467,74 @@ async def get_crop_context(
         logger.error("Unexpected error from bioorchestrator crop-context: %s", exc)
 
     return None
+
+
+# ── Soil Susceptibility (Phase 2 — Compaction Risk) ───────────────────────────
+
+_soil_susceptibility_cache: TTLCache[str, dict] = TTLCache(maxsize=128, ttl=86400)
+
+
+async def get_soil_susceptibility(parcel_id: str, tenant_id: str) -> dict | None:
+    """Fetch compaction susceptibility from the soil module.
+
+    Calls GET /v1/soil/parcel/{id}/compaction-susceptibility on the
+    soil module API. Result is cached for 24h (soil data is static).
+
+    Returns:
+        {
+            "overall_score": float,
+            "overall_class": str,
+            "worst_horizon_score": float,
+            "worst_horizon_class": str,
+            "by_horizon": [...],
+        }
+        or None if soil module is unreachable or parcel has no soil data.
+    """
+    settings = get_settings()
+    soil_url = settings.soil_module_url
+    if not soil_url:
+        logger.warning("SOIL_MODULE_URL not configured — compaction risk unavailable")
+        return None
+
+    cache_key = f"{tenant_id}:{parcel_id}"
+    cached = _soil_susceptibility_cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    url = f"{soil_url}/v1/soil/parcel/{parcel_id}/compaction-susceptibility"
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(
+                url,
+                headers={"X-Tenant-ID": tenant_id} if tenant_id else {},
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                overall = data.get("overall", {})
+                result = {
+                    "overall_score": overall.get("score"),
+                    "overall_class": overall.get("class"),
+                    "worst_horizon_score": overall.get("worstHorizonScore"),
+                    "worst_horizon_class": overall.get("worstHorizonClass"),
+                    "by_horizon": data.get("byHorizon", []),
+                }
+                _soil_susceptibility_cache[cache_key] = result
+                logger.info(
+                    "Soil susceptibility for parcel %s: score=%s class=%s",
+                    parcel_id, result["overall_score"], result["overall_class"],
+                )
+                return result
+            elif resp.status_code == 404:
+                logger.info("No soil data for parcel %s (404)", parcel_id)
+                return None
+            else:
+                logger.warning("Soil module returned %d for parcel %s", resp.status_code, parcel_id)
+    except httpx.TimeoutException:
+        logger.warning("Soil module timeout for parcel %s", parcel_id)
+    except httpx.ConnectError:
+        logger.warning("Soil module unreachable for parcel %s", parcel_id)
+    except Exception as exc:
+        logger.error("Unexpected error from soil module: %s", exc)
+
+    return None

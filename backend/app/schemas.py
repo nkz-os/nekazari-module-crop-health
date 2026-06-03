@@ -166,6 +166,49 @@ class WaterBalanceResult(BaseModel):
     deficit: bool
 
 
+# ── Soil Properties ────────────────────────────────────────────────────────
+
+
+class SoilProperties(BaseModel):
+    """Soil physical properties from the soil module."""
+    sand_pct: float = 40.0
+    clay_pct: float = 20.0
+    silt_pct: float = 40.0
+    organic_carbon_pct: float = 1.0
+    field_capacity: float = 0.27       # cm³/cm³
+    wilting_point: float = 0.12        # cm³/cm³
+    ksat_mm_h: float = 13.0            # mm/h
+    scs_hydrologic_group: str = "B"
+    usda_texture_class: str = "loam"
+    source: str = "default_modeled"
+    has_data: bool = False
+
+
+class SoilWaterBalanceResult(BaseModel):
+    """Soil-aware water balance with AWC tracking."""
+    sw_mm: float = 0.0
+    awc_mm: float = 0.0
+    sw_ratio: float = 0.0
+    deficit_mm: float = 0.0
+    excess_mm: float = 0.0
+    inflow_mm: float = 0.0
+    etc_mm: float = 0.0
+    root_depth_mm: float = 300.0
+    stress_level: str = "none"
+    soil_moisture_confidence: str = "low"
+
+
+class WaterloggingRiskResult(BaseModel):
+    """Waterlogging/anoxia risk from excess water vs drainage."""
+    excess_mm: float = 0.0
+    drainage_rate_mm_h: float = 0.0
+    saturation_hours: float = 0.0
+    risk_level: str = "LOW"
+    condition: str = "normal"
+    scs_group: str = "B"
+    ksat_mm_h: float = 13.0
+
+
 # ── Thermal Stress Result ─────────────────────────────────────────────────
 
 
@@ -268,6 +311,10 @@ class CropHealthAssessment(BaseModel):
     gdd_accumulated: float | None = None
     kc: float | None = None
     management: str | None = None
+    # ── Soil integration fields ──
+    soil_water_balance: SoilWaterBalanceResult | None = None
+    waterlogging_risk: WaterloggingRiskResult | None = None
+    soil_properties: SoilProperties | None = None
 
     def to_ngsi_ld(self) -> dict[str, Any]:
         """Serialise to NGSI-LD entity payload."""
@@ -344,6 +391,26 @@ class CropHealthAssessment(BaseModel):
             entity["kc"] = {"type": "Property", "value": self.kc}
         if self.management is not None:
             entity["management"] = {"type": "Property", "value": self.management}
+        if self.soil_properties and self.soil_properties.has_data:
+            sp = self.soil_properties
+            entity["soilSandPct"] = {"type": "Property", "value": sp.sand_pct, "unitCode": "P1"}
+            entity["soilClayPct"] = {"type": "Property", "value": sp.clay_pct, "unitCode": "P1"}
+            entity["soilFieldCapacity"] = {"type": "Property", "value": sp.field_capacity}
+            entity["soilWiltingPoint"] = {"type": "Property", "value": sp.wilting_point}
+            entity["soilKsatMmH"] = {"type": "Property", "value": sp.ksat_mm_h, "unitCode": "MMH"}
+            entity["soilScsGroup"] = {"type": "Property", "value": sp.scs_hydrologic_group}
+            entity["soilTexture"] = {"type": "Property", "value": sp.usda_texture_class}
+            entity["soilDataSource"] = {"type": "Property", "value": sp.source}
+        if self.soil_water_balance:
+            swb = self.soil_water_balance
+            entity["soilWaterMm"] = {"type": "Property", "value": swb.sw_mm, "unitCode": "MMT"}
+            entity["soilAWCmm"] = {"type": "Property", "value": swb.awc_mm, "unitCode": "MMT"}
+            entity["soilWaterRatio"] = {"type": "Property", "value": round(swb.sw_ratio, 3)}
+            entity["soilWaterConfidence"] = {"type": "Property", "value": swb.soil_moisture_confidence}
+        if self.waterlogging_risk:
+            wlr = self.waterlogging_risk
+            entity["waterloggingRiskLevel"] = {"type": "Property", "value": wlr.risk_level}
+            entity["waterloggingSaturationHours"] = {"type": "Property", "value": wlr.saturation_hours, "unitCode": "HUR"}
         if self.soil_ph is not None:
             entity["soilPh"] = {"type": "Property", "value": self.soil_ph}
         if self.soil_ec is not None:

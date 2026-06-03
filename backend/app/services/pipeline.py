@@ -275,6 +275,7 @@ async def trigger(
                 soil_temp_val = latest
 
     # ── 2.5 Compound engines (after individual engines have results) ────
+    stage_name = "vegetative"  # safe default for Redis event publishing
     try:
         from app.engines.composite import evaluate_composite_stress
         thermal_sev = assessment.thermal.severity if assessment.thermal else None
@@ -383,6 +384,7 @@ async def trigger(
             "event_type": "crop.assessment.completed",
             "tenant_id": tenant_id,
             "parcel_id": effective_parcel,
+            "stage": stage_name,
             "cwsi": assessment.cwsi.cwsi if assessment.cwsi else None,
             "mds_severity": assessment.mds.severity.value if assessment.mds else None,
             "overall_severity": assessment.overall_severity.value,
@@ -397,6 +399,7 @@ async def trigger(
                 "event_type": "crop.stress.breach",
                 "tenant_id": tenant_id,
                 "parcel_id": effective_parcel,
+                "stage": stage_name,
                 "overall_severity": assessment.overall_severity.value,
                 "recommended_action": assessment.recommended_action.value,
                 "timestamp": now.isoformat(),

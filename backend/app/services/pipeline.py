@@ -451,7 +451,7 @@ async def trigger(
     # ── 2.7 Compaction Risk (cross-module, opportunistic) ────────
     try:
         from app.engines.compaction_risk import evaluate_compaction_risk
-        from app.services.context_client import get_soil_susceptibility
+        from app.services.context_client import get_soil_susceptibility, get_multiyear_vigor_anomaly
         soil_susc = await get_soil_susceptibility(effective_parcel, tenant_id)
         if soil_susc and soil_susc.get("overall_score", 0) > 25:
             moisture_pct = soil_moisture_val
@@ -461,14 +461,18 @@ async def trigger(
                 and assessment.soil_water_balance
                 else None
             )
+            # Phase 3: Multi-year vigor analysis
+            multiyear = await get_multiyear_vigor_anomaly(
+                effective_parcel, tenant_id, seasons=3
+            )
             from app.schemas import CompactionRiskResult
             engine_result = evaluate_compaction_risk(
                 soil_susceptibility_score=soil_susc["overall_score"],
                 soil_susceptibility_class=soil_susc["overall_class"],
                 soil_moisture_pct=moisture_pct,
                 soil_moisture_stress=sw_stress,
-                vigor_anomaly_multiyear=None,   # Phase 3
-                vigor_anomaly_years=0,          # Phase 3
+                vigor_anomaly_multiyear=multiyear["avg_anomaly"] if multiyear else None,
+                vigor_anomaly_years=multiyear["seasons_analyzed"] if multiyear else 0,
                 traffic_intensity=None,          # Phase 4
                 fidelity=assessment.data_fidelity if hasattr(assessment, 'data_fidelity') else "regional_proxy",
             )

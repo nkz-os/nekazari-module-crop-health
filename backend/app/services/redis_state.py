@@ -177,6 +177,41 @@ class RedisState:
                 logger.warning("Corrupt Redis entry in %s: %s — %s", key, raw[0], exc)
         return None
 
+    async def get_soil_water(self, parcel_id: str) -> float | None:
+        """Get stored soil water content for a parcel (mm)."""
+        if self._client is None:
+            return None
+        try:
+            val = await self._client.get(f"{self._prefix}sw:{parcel_id}")
+            return float(val) if val else None
+        except Exception:
+            return None
+
+    async def set_soil_water(self, parcel_id: str, sw_mm: float) -> None:
+        """Store soil water content for a parcel (mm). TTL 7 days."""
+        if self._client is None:
+            return
+        try:
+            await self._client.set(
+                f"{self._prefix}sw:{parcel_id}",
+                str(sw_mm),
+                ex=86400 * 7,
+            )
+        except Exception:
+            pass  # best-effort; don't block pipeline
+
+    async def get_irrigation_24h(self, entity_id: str) -> float:
+        """Total irrigation volume in last 24h from Redis sliding window."""
+        if self._client is None:
+            return 0.0
+        try:
+            readings = await self.get_window(entity_id, "irrigationVolume", hours=24)
+            if readings:
+                return sum(r.value for r in readings)
+        except Exception:
+            pass
+        return 0.0
+
     async def health_check(self) -> dict:
         """Check Redis connectivity."""
         if self._client is None:

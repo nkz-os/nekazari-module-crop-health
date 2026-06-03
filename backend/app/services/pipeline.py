@@ -19,7 +19,6 @@ import logging
 from datetime import datetime, timezone
 
 from app.engines.mds_model import calculate_mds_from_readings
-from app.engines.water_balance import dynamic_water_balance
 from app.engines.water_stress import cwsi_with_weather
 from app.schemas import (
     CropHealthAssessment,
@@ -80,6 +79,33 @@ def _determine_action(severity: Severity) -> RecommendedAction:
         Severity.HIGH: RecommendedAction.IRRIGATE_SCHEDULED,
         Severity.CRITICAL: RecommendedAction.IRRIGATE_IMMEDIATE,
     }[severity]
+
+
+# ── Root depth resolution ─────────────────────────────────────────────────
+
+_PERENNIAL_EPPO = {
+    "OLV", "OLEU", "VITIS", "PRMND", "PRMDO", "PRMPE", "CITRU",
+    "PSTCI", "JUREG", "ACTDE", "PRNAR",
+}
+_DEFAULT_ROOT_DEPTH_PERENNIAL = 800.0
+_DEFAULT_ROOT_DEPTH_ANNUAL_INITIAL = 150.0
+_DEFAULT_ROOT_DEPTH_ANNUAL_MAX = 800.0
+_ROOT_GROWTH_RATE_PER_GDD = 0.7
+
+
+def _resolve_root_depth(species: str, gdd: float | None, crop_context: any) -> float:
+    """Resolve effective root depth for the current crop and stage."""
+    if crop_context and hasattr(crop_context, 'phenology'):
+        phen = crop_context.phenology
+        if phen and hasattr(phen, 'root_depth_mm') and phen.root_depth_mm:
+            return float(phen.root_depth_mm)
+    species_upper = species.upper() if species else ""
+    for p in _PERENNIAL_EPPO:
+        if p in species_upper:
+            return _DEFAULT_ROOT_DEPTH_PERENNIAL
+    if gdd and gdd > 0:
+        return min(_DEFAULT_ROOT_DEPTH_ANNUAL_MAX, _DEFAULT_ROOT_DEPTH_ANNUAL_INITIAL + _ROOT_GROWTH_RATE_PER_GDD * gdd)
+    return 300.0
 
 
 async def trigger(
@@ -182,6 +208,32 @@ async def trigger(
         management=management,
     )
 
+    # ── Soil properties (benefits 1+2) ───────────────────────────────────
+    from app.services.context_client import get_soil_properties
+
+    soil = await get_soil_properties(
+        parcel_id=effective_parcel,
+        tenant_id=tenant_id,
+    )
+
+    root_depth_mm = _resolve_root_depth(species, gdd, crop_context)
+
+    # Read previous soil water from Redis
+    sw_yesterday = None
+    if redis_state:
+        try:
+            sw_yesterday = await redis_state.get_soil_water(effective_parcel)
+        except Exception:
+            pass
+
+    # Read irrigation volume from Redis
+    irrigation_mm = 0.0
+    if redis_state:
+        try:
+            irrigation_mm = await redis_state.get_irrigation_24h(entity_id)
+        except Exception:
+            pass
+
     # ── 2. Execute engines ───────────────────────────────────────────────
 
     # CWSI (triggered by leaf temperature sensor)
@@ -202,13 +254,49 @@ async def trigger(
         readings = await redis_state.get_window(entity_id, "trunkDiameter", hours=24)
         assessment.mds = calculate_mds_from_readings(readings, mds_ref=phenology.mds_ref)
 
-    # Water balance (triggered by soil moisture or opportunistically)
+    # Soil water balance (replaces simple water balance with AWC tracking)
     if weather:
-        assessment.water_balance = dynamic_water_balance(
-            precipitation_mm=weather.precip_mm,
-            eto_mm=weather.eto_mm,
-            kc=phenology.kc,
+        etc_mm = weather.eto_mm * phenology.kc
+        from app.engines.soil_water_balance import soil_water_balance
+
+        swb = soil_water_balance(
+            sw_yesterday=sw_yesterday,
+            precip_mm=weather.precip_mm,
+            irrigation_mm=irrigation_mm,
+            etc_mm=etc_mm,
+            fc=soil.field_capacity,
+            wp=soil.wilting_point,
+            root_depth_mm=root_depth_mm,
         )
+        assessment.soil_water_balance = swb
+        assessment.soil_properties = soil if soil.has_data else None
+
+        # Backward-compatible water_balance field
+        from app.schemas import WaterBalanceResult
+        assessment.water_balance = WaterBalanceResult(
+            balance_mm=round(swb.sw_mm - swb.awc_mm, 2),
+            precip_mm=round(weather.precip_mm, 2),
+            etc_mm=round(etc_mm, 2),
+            kc=phenology.kc,
+            deficit=swb.stress_level != "none",
+        )
+
+        # Waterlogging risk (uses excess from water balance)
+        if swb.excess_mm > 0:
+            from app.engines.waterlogging_risk import waterlogging_risk as wl_risk
+            wlr = wl_risk(
+                excess_mm=swb.excess_mm,
+                ksat_mm_h=soil.ksat_mm_h,
+                scs_group=soil.scs_hydrologic_group,
+            )
+            assessment.waterlogging_risk = wlr
+
+        # Persist current soil water to Redis for next assessment
+        if redis_state:
+            try:
+                await redis_state.set_soil_water(effective_parcel, swb.sw_mm)
+            except Exception:
+                pass
 
     # Thermal stress (triggered by leaf temperature or opportunistically with weather)
     if weather:

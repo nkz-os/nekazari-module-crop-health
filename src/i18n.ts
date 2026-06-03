@@ -136,6 +136,34 @@ const en = {
         detail: {
             soilProperties: 'Soil Properties',
         },
+        compaction: {
+            title: 'Compaction Risk',
+            riskScore: 'Risk Score',
+            verifyInField: 'Verify in field',
+            verifyHint: 'Field verification with penetrometer recommended before mechanical intervention',
+            level: {
+                low: 'Low Risk',
+                moderate: 'Moderate',
+                high: 'High Risk',
+                very_high: 'Very High',
+            },
+            advisory: {
+                compaction_advisory_normal_management: 'Normal management — no action needed.',
+                compaction_advisory_avoid_traffic_wet_soil: 'Avoid heavy machinery on wet soil. High compaction risk.',
+                compaction_advisory_verify_compaction_field: 'Persistent low vigor detected. Verify compaction with penetrometer.',
+                compaction_advisory_monitor_susceptible_soil: 'Susceptible soil. Monitor moisture before machinery traffic.',
+            },
+            factor: {
+                wet_soil_on_susceptible_ground: 'Wet soil on compaction-prone ground',
+                wet_soil: 'Elevated soil moisture',
+                moist_soil_susceptible: 'Moist soil on susceptible ground',
+                persistent_low_vigor: 'Multi-year low vigor pattern',
+                mild_persistent_low_vigor: 'Mild multi-year vigor decline',
+                high_traffic_exposure: 'High machinery traffic',
+                moderate_traffic_exposure: 'Moderate machinery traffic',
+                indicative_elevated_bd: 'Elevated bulk density (indicative)',
+            },
+        },
     },
 };
 
@@ -276,6 +304,34 @@ const es = {
         },
         detail: {
             soilProperties: 'Propiedades del Suelo',
+        },
+        compaction: {
+            title: 'Riesgo de Compactación',
+            riskScore: 'Nivel de Riesgo',
+            verifyInField: 'Verificar en campo',
+            verifyHint: 'Se recomienda verificación con penetrómetro antes de decidir labores mecánicas',
+            level: {
+                low: 'Riesgo Bajo',
+                moderate: 'Moderado',
+                high: 'Riesgo Alto',
+                very_high: 'Muy Alto',
+            },
+            advisory: {
+                compaction_advisory_normal_management: 'Manejo normal — sin acción necesaria.',
+                compaction_advisory_avoid_traffic_wet_soil: 'Evite maquinaria pesada en suelo húmedo. Alto riesgo de compactación.',
+                compaction_advisory_verify_compaction_field: 'Vigor bajo persistente detectado. Verifique compactación con penetrómetro.',
+                compaction_advisory_monitor_susceptible_soil: 'Suelo susceptible. Monitorice humedad antes del tránsito de maquinaria.',
+            },
+            factor: {
+                wet_soil_on_susceptible_ground: 'Suelo húmedo en terreno susceptible',
+                wet_soil: 'Humedad del suelo elevada',
+                moist_soil_susceptible: 'Suelo húmedo en zona susceptible',
+                persistent_low_vigor: 'Patrón de vigor bajo multi-anual',
+                mild_persistent_low_vigor: 'Ligero descenso de vigor multi-anual',
+                high_traffic_exposure: 'Tráfico alto de maquinaria',
+                moderate_traffic_exposure: 'Tráfico moderado de maquinaria',
+                indicative_elevated_bd: 'Densidad aparente elevada (indicativo)',
+            },
         },
     },
 };

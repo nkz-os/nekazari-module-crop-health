@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useTranslation } from '@nekazari/sdk';
 import ParcelList from './components/ParcelList';
+import SourceStatusPanel from './components/SourceStatusPanel';
 import CropStatusSnapshot from './components/CropStatusSnapshot';
 import CropHealthDetail from './components/CropHealthDetail';
 
@@ -59,6 +60,7 @@ const App: React.FC = () => {
                 🗺️ {t('app.viewInViewer')}
               </button>
             </div>
+            <SourceStatusPanel parcelId={selectedParcelId} />
             <CropStatusSnapshot parcelId={selectedParcelId} />
             <CropHealthDetail parcelId={selectedParcelId} />
           </>

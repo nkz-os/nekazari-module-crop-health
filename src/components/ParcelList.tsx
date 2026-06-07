@@ -1,6 +1,5 @@
 import React, { useEffect, useState } from 'react';
 import { useTranslation } from '@nekazari/sdk';
-import { SeverityBadge } from './shared/SeverityBadge';
 
 interface ParcelSummary {
   parcelId: string;
@@ -13,7 +12,27 @@ interface ParcelSummary {
   vigorIndex?: number;
   assessedAt?: string;
   hasData: boolean;
+  healthIndicator?: string;
+  sourcesActive?: number;
+  sourcesDegraded?: number;
+  sourcesDown?: number;
 }
+
+const INDICATOR_COLORS: Record<string, string> = {
+  green: '#16a34a',
+  blue: '#2563eb',
+  yellow: '#d97706',
+  red: '#dc2626',
+  grey: '#9ca3af',
+};
+
+const INDICATOR_TOOLTIPS: Record<string, string> = {
+  green: 'Datos propios OK — sensores IoT activos',
+  blue: 'Datos públicos OK — sin sensores IoT propios',
+  yellow: 'Datos escasos — pocas fuentes activas',
+  red: 'Degradado — fuentes caídas o sin datos recientes',
+  grey: 'Sin datos — parcela sin fuentes configuradas',
+};
 
 interface ParcelListProps {
   onSelectParcel: (parcelId: string) => void;
@@ -39,22 +58,37 @@ const ParcelList: React.FC<ParcelListProps> = ({ onSelectParcel, selectedParcelI
   const [search, setSearch] = useState('');
 
   useEffect(() => {
-    const fetchParcels = async () => {
+    const fetchData = async () => {
       try {
-        const resp = await fetch('/api/crop-health/parcels');
-        if (resp.ok) {
-          const data = await resp.json();
-          setParcels(data.parcels || []);
-        } else {
-          setError(`HTTP ${resp.status}`);
+        const [parcelsResp, sourcesResp] = await Promise.all([
+          fetch('/api/crop-health/parcels'),
+          fetch('/api/crop-health/sources'),
+        ]);
+
+        const parcelsData = parcelsResp.ok ? await parcelsResp.json() : { parcels: [] };
+        const sourcesData = sourcesResp.ok ? await sourcesResp.json() : { parcels: [] };
+
+        const sourceMap: Record<string, { healthIndicator: string; sourcesActive: number; sourcesDegraded: number; sourcesDown: number }> = {};
+        for (const s of sourcesData.parcels || []) {
+          sourceMap[s.parcelId] = s;
         }
+
+        const merged = (parcelsData.parcels || []).map((p: ParcelSummary) => ({
+          ...p,
+          healthIndicator: sourceMap[p.parcelId]?.healthIndicator || 'grey',
+          sourcesActive: sourceMap[p.parcelId]?.sourcesActive || 0,
+          sourcesDegraded: sourceMap[p.parcelId]?.sourcesDegraded || 0,
+          sourcesDown: sourceMap[p.parcelId]?.sourcesDown || 0,
+        }));
+
+        setParcels(merged);
       } catch (e: any) {
         setError(e.message);
       } finally {
         setLoading(false);
       }
     };
-    fetchParcels();
+    fetchData();
   }, []);
 
   const filtered = parcels.filter(p => {
@@ -117,10 +151,18 @@ const ParcelList: React.FC<ParcelListProps> = ({ onSelectParcel, selectedParcelI
             }`}
           >
             <div className="flex items-center gap-2">
-              <SeverityBadge severity={p.overallSeverity || 'LOW'} dotOnly={p.hasData} />
-              {!p.hasData && (
-                <span className="w-2 h-2 rounded-full bg-gray-300 flex-shrink-0" />
-              )}
+              <span
+                title={INDICATOR_TOOLTIPS[p.healthIndicator || 'grey']}
+                style={{
+                  display: 'inline-block',
+                  width: 10,
+                  height: 10,
+                  borderRadius: '50%',
+                  backgroundColor: INDICATOR_COLORS[p.healthIndicator || 'grey'] || '#9ca3af',
+                  flexShrink: 0,
+                  boxShadow: p.healthIndicator === 'green' ? '0 0 6px rgba(22,163,74,0.4)' : undefined,
+                }}
+              />
               <div className="min-w-0 flex-1">
                 <p className="text-nkz-text-primary text-sm font-medium truncate">
                   {p.parcelName || p.parcelId}

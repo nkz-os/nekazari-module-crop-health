@@ -203,11 +203,18 @@ async def trigger(
     except Exception:
         pass
 
-    # GDD fallback
+    # GDD with real season start from AgriCrop
     gdd = None
     try:
         from datetime import date
-        season_start = date(date.today().year, 3, 1).isoformat()  # March 1st default
+        from app.services.context_client import get_agri_crop as fetch_agri_crop
+
+        agri_crop = await fetch_agri_crop(effective_parcel, tenant_id)
+        if agri_crop and agri_crop.get("plantingDate"):
+            season_start = agri_crop["plantingDate"]
+        else:
+            season_start = date(date.today().year, 3, 1).isoformat()
+
         gdd_data = await _fetch_gdd(tenant_id, season_start, 10.0)
         if gdd_data and gdd_data.get("gdd_total"):
             gdd = float(gdd_data["gdd_total"])

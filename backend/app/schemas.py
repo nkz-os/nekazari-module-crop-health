@@ -506,6 +506,83 @@ class CropHealthAssessment(BaseModel):
         return entity
 
 
+# ── AgriCrop (FIWARE Smart Data Model) ─────────────────────────────────────
+
+
+class AgriCrop(BaseModel):
+    """AgriCrop entity — crop planted on a parcel with sowing/harvest metadata.
+
+    Maps to FIWARE Smart Data Model: dataModel.Agrifood/AgriCrop
+    """
+    parcel_id: str
+    season: str | None = None  # e.g. "2025-2026"
+    category: str = "sowing"
+    planting_date: str | None = None     # ISO date "YYYY-MM-DD"
+    harvest_date: str | None = None
+    variety: str | None = None
+    species: str | None = None
+    eppo_code: str | None = None
+    seeding_rate_kg_ha: float | None = None
+    input_method: str = "pending"        # isobus_automated | mobile_app | manual_web | pending
+
+    def to_ngsi_ld(self) -> dict[str, Any]:
+        """Serialise to NGSI-LD entity payload using FIWARE-strict hasAgriParcel."""
+        entity_id = f"urn:ngsi-ld:AgriCrop:{self.parcel_id}-{self.season or 'pending'}"
+        entity: dict[str, Any] = {
+            "id": entity_id,
+            "type": "AgriCrop",
+            "hasAgriParcel": {
+                "type": "Relationship",
+                "object": f"urn:ngsi-ld:AgriParcel:{self.parcel_id}",
+            },
+            "category": {"type": "Property", "value": self.category},
+        }
+        if self.planting_date is not None:
+            entity["plantingDate"] = {"type": "Property", "value": self.planting_date}
+        if self.harvest_date is not None:
+            entity["harvestDate"] = {"type": "Property", "value": self.harvest_date}
+        if self.variety is not None:
+            entity["variety"] = {"type": "Property", "value": self.variety}
+        if self.species is not None:
+            entity["species"] = {"type": "Property", "value": self.species}
+        if self.eppo_code is not None:
+            entity["eppoCode"] = {"type": "Property", "value": self.eppo_code}
+        if self.seeding_rate_kg_ha is not None:
+            entity["seedingRate"] = {
+                "type": "Property",
+                "value": self.seeding_rate_kg_ha,
+                "unitCode": "KGM",
+            }
+        entity["inputMethod"] = {"type": "Property", "value": self.input_method}
+        return entity
+
+    @classmethod
+    def from_ngsi_ld(cls, entity: dict) -> "AgriCrop":
+        """Parse from Orion-LD keyValues response."""
+        parcel = ""
+        has_parcel = entity.get("hasAgriParcel")
+        if isinstance(has_parcel, dict):
+            parcel = has_parcel.get("object", "").replace("urn:ngsi-ld:AgriParcel:", "")
+        elif isinstance(has_parcel, str):
+            parcel = has_parcel.replace("urn:ngsi-ld:AgriParcel:", "")
+
+        entity_id = entity.get("id", "")
+        season = entity_id.split(":")[-1] if ":" in entity_id else None
+
+        return cls(
+            parcel_id=parcel,
+            season=season,
+            category=entity.get("category", "sowing"),
+            planting_date=entity.get("plantingDate"),
+            harvest_date=entity.get("harvestDate"),
+            variety=entity.get("variety"),
+            species=entity.get("species"),
+            eppo_code=entity.get("eppoCode"),
+            seeding_rate_kg_ha=entity.get("seedingRate"),
+            input_method=entity.get("inputMethod", "pending"),
+        )
+
+
 # ── F4: Crop Context from BioOrchestrator ────────────────────────────────────
 
 

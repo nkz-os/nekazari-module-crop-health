@@ -35,6 +35,33 @@ from app.services.redis_state import RedisState
 logger = logging.getLogger(__name__)
 
 
+# FAO-56 Table 22: Depletion fraction p by crop family
+_DEPLETION_FRACTION_P: dict[str, float] = {
+    "TRZAX": 0.55,  # wheat
+    "HORVX": 0.55,  # barley
+    "ZEAMX": 0.55,  # maize
+    "OLEU": 0.65,   # olive
+    "VITIS": 0.45,  # vine
+    "ORYSA": 0.20,  # rice
+    "SOLTU": 0.30,  # potato
+    "ALLCE": 0.30,  # onion
+    "LYPES": 0.35,  # tomato
+    "MABSD": 0.50,  # apple
+    "PRUND": 0.50,  # almond
+    "CITSI": 0.50,  # citrus
+}
+
+def _resolve_depletion_fraction(crop_context) -> float:
+    """Resolve FAO-56 depletion fraction p from crop context.
+    
+    Uses EPPO code from BioOrchestrator crop context to look up species-specific
+    p values from FAO-56 Table 22. Falls back to 0.50 (generic).
+    """
+    if crop_context and crop_context.crop and crop_context.crop.eppo:
+        return _DEPLETION_FRACTION_P.get(crop_context.crop.eppo, 0.50)
+    return 0.50
+
+
 def _determine_overall_severity(assessment: CropHealthAssessment) -> Severity:
     """Determine overall severity from individual engine results.
 
@@ -259,6 +286,9 @@ async def trigger(
         etc_mm = weather.eto_mm * phenology.kc
         from app.engines.soil_water_balance import soil_water_balance
 
+        # FAO-56 depletion fraction p — species-specific, with generic fallback
+        depletion_p = _resolve_depletion_fraction(crop_context)
+
         swb = soil_water_balance(
             sw_yesterday=sw_yesterday,
             precip_mm=weather.precip_mm,
@@ -267,6 +297,9 @@ async def trigger(
             fc=soil.field_capacity,
             wp=soil.wilting_point,
             root_depth_mm=root_depth_mm,
+            depletion_fraction_p=depletion_p,
+            eto_mm=weather.eto_mm,
+            kc=phenology.kc,
         )
         assessment.soil_water_balance = swb
         assessment.soil_properties = soil if soil.has_data else None
@@ -323,6 +356,7 @@ async def trigger(
             pass
 
     # Vigor (opportunistic — fetches latest vegetation index for the parcel)
+    ndvi_val = None
     try:
         from app.engines.vigor import evaluate_vigor
         ndvi_val = await _fetch_parcel_ndvi(effective_parcel, tenant_id)
@@ -369,8 +403,91 @@ async def trigger(
             elif metric_type == MetricType.SOIL_TEMPERATURE.value:
                 soil_temp_val = latest
 
-    # ── 2.5 Compound engines (after individual engines have results) ────
+    # ── 2.5 VHI/ASIS Engine (Agricultural Drought Early Warning) ────────
+    try:
+        from app.engines.vhi_asis import evaluate_vhi
+        from app.schemas import VHIResult as VHIResultSchema
+        from app.services.landsat_lst_client import LandsatTirsClient
+
+        temp_actual = None
+        temp_source = "none"
+        fidelity = "none"
+
+        if assessment.cwsi and assessment.cwsi.temp_canopy is not None:
+            temp_actual = assessment.cwsi.temp_canopy
+            temp_source = "iot_canopy"
+            fidelity = "onsite_calibrated"
+        elif soil_temp_val is not None:
+            temp_actual = soil_temp_val
+            temp_source = "iot_soil"
+            fidelity = "onsite_calibrated"
+        elif weather and weather.temp_air is not None:
+            temp_actual = weather.temp_air
+            temp_source = "weather_proxy"
+            fidelity = "regional_proxy"
+        else:
+            tirs_client = LandsatTirsClient()
+            lst_val = await tirs_client.get_latest_lst(0.0, 0.0)
+            if lst_val is not None:
+                temp_actual = lst_val
+                temp_source = "landsat_tirs"
+                fidelity = "modeled_opendata"
+
+        # Historical min/max placeholders (to be fetched from climatology DB in future)
+        ndvi_min_hist = 0.15
+        ndvi_max_hist = 0.85
+        temp_min_hist = 10.0
+        temp_max_hist = 45.0
+
+        vr = evaluate_vhi(
+            ndvi_actual=ndvi_val,
+            ndvi_min=ndvi_min_hist,
+            ndvi_max=ndvi_max_hist,
+            temp_actual=temp_actual,
+            temp_min=temp_min_hist,
+            temp_max=temp_max_hist,
+            temp_source=temp_source,
+            fidelity=fidelity,
+        )
+        if vr.vhi is not None:
+            assessment.vhi = VHIResultSchema(
+                vci=vr.vci,
+                tci=vr.tci,
+                vhi=vr.vhi,
+                asi_pct=vr.asi_pct,
+                tci_source=vr.tci_source,
+                data_fidelity=vr.data_fidelity,
+            )
+    except Exception as e:
+        logger.error("VHI engine failed: %s", e)
+
+    # ── 2.6 Compound engines (after individual engines have results) ────
     stage_name = "vegetative"  # safe default for Redis event publishing
+    
+    # SAR Engine
+    try:
+        from app.engines.sar_moisture import evaluate_sar_moisture
+        from app.schemas import SARResult as SARResultSchema
+        
+        sar_backscatter = await _fetch_parcel_sar(effective_parcel, tenant_id)
+        if sar_backscatter is not None:
+            vv, vh = sar_backscatter
+            sar_res = evaluate_sar_moisture(
+                species_eppo=species,
+                backscatter_vv=vv,
+                backscatter_vh=vh,
+                fidelity="modeled_opendata",
+            )
+            assessment.sar = SARResultSchema(
+                is_flooded=sar_res.is_flooded,
+                flood_stage=sar_res.flood_stage,
+                surface_moisture_index=sar_res.surface_moisture_index,
+                waterlogging_risk=sar_res.waterlogging_risk,
+                data_fidelity=sar_res.data_fidelity,
+            )
+    except Exception as e:
+        logger.error("SAR engine failed: %s", e)
+
     try:
         from app.engines.composite import evaluate_composite_stress
         thermal_sev = assessment.thermal.severity if assessment.thermal else None
@@ -394,15 +511,29 @@ async def trigger(
 
     try:
         from app.engines.yield_gap import evaluate_yield_gap
+        from app.services.context_client import get_variety_yield_baseline
+
         _cwsi = assessment.cwsi.cwsi if assessment.cwsi else None
         if _cwsi is not None:
             stage_name = phenology.stage if phenology else "vegetative"
+            
+            # Fetch baseline yield
+            baseline_yield = None
+            if variety_name:
+                regime = "rainfed"
+                if crop_context and crop_context.management:
+                    mgt = crop_context.management.lower()
+                    if "irrigated" in mgt or "regadío" in mgt or "regadio" in mgt or "riego" in mgt:
+                        regime = "irrigated"
+                baseline_yield = await get_variety_yield_baseline(variety=variety_name, irrigation_regime=regime)
+
             assessment.yield_gap = evaluate_yield_gap(
                 cwsi_by_stage={stage_name: _cwsi},
                 ky_by_stage={stage_name: phenology.ky if phenology and hasattr(phenology, 'ky') else 0.45},
+                baseline_yield_kg_ha=baseline_yield,
             )
-    except Exception:
-        pass
+    except Exception as e:
+        logger.error("Yield gap evaluation failed: %s", e)
 
     try:
         from app.engines.phenology_progress import evaluate_phenology_progress
@@ -618,6 +749,43 @@ async def _fetch_parcel_ndvi(parcel_id: str, tenant_id: str) -> float | None:
                     ndvi = e.get("ndviValue") or e.get("value")
                     if ndvi is not None:
                         return float(ndvi)
+    except Exception:
+        pass
+    return None
+
+
+async def _fetch_parcel_sar(parcel_id: str, tenant_id: str) -> tuple[float, float] | None:
+    """Fetch latest SAR backscatter (VV, VH) for a parcel from Orion-LD.
+    
+    This expects a specific NGSI-LD entity holding Sentinel-1 backscatter values.
+    """
+    try:
+        settings = __import__("app.config", fromlist=["get_settings"]).get_settings()
+        orion_url = settings.orion_ld_url
+        async with __import__("httpx").AsyncClient(timeout=10.0) as client:
+            resp = await client.get(
+                f"{orion_url}/ngsi-ld/v1/entities",
+                params={
+                    "type": "RadarObservation",
+                    "q": f'refAgriParcel==\"urn:ngsi-ld:AgriParcel:{parcel_id}\"',
+                    "limit": 1,
+                    "options": "keyValues",
+                },
+                headers={
+                    "Accept": "application/ld+json",
+                    "NGSILD-Tenant": tenant_id,
+                    "Fiware-Service": tenant_id,
+                    "Fiware-ServicePath": "/",
+                } if tenant_id else {"Accept": "application/ld+json"},
+            )
+            if resp.status_code == 200:
+                entities = resp.json()
+                if entities and isinstance(entities, list):
+                    e = entities[0]
+                    vv = e.get("backscatterVV")
+                    vh = e.get("backscatterVH")
+                    if vv is not None and vh is not None:
+                        return float(vv), float(vh)
     except Exception:
         pass
     return None

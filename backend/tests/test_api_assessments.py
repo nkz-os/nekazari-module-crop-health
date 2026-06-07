@@ -6,9 +6,7 @@ from unittest.mock import AsyncMock, patch, MagicMock
 
 @pytest.fixture
 def client():
-    with patch("app.core.dependencies.init_driver", AsyncMock()), \
-         patch("app.core.dependencies.close_driver", AsyncMock()), \
-         patch("app.services.redis_state.RedisState.create", AsyncMock()), \
+    with patch("app.services.redis_state.RedisState.create", AsyncMock()), \
          patch("app.services.redis_state.RedisState.health_check", AsyncMock(return_value={"redis": "connected"})):
         from app.main import app
         return TestClient(app)

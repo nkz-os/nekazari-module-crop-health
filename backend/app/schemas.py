@@ -375,7 +375,7 @@ class CropHealthAssessment(BaseModel):
         entity: dict[str, Any] = {
             "id": f"urn:ngsi-ld:CropHealthAssessment:{self.parcel_id}-{date_str}",
             "type": "CropHealthAssessment",
-            "refAgriParcel": {
+            "hasAgriParcel": {
                 "type": "Relationship",
                 "object": f"urn:ngsi-ld:AgriParcel:{self.parcel_id}",
             },

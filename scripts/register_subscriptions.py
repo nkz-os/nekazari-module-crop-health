@@ -38,7 +38,7 @@ SUBSCRIPTIONS = [
                 "uri": f"{WEBHOOK_URL}/webhooks/fiware-sensors",
                 "accept": "application/json",
             },
-            "attributes": ["leafTemperature", "refAgriParcel"],
+            "attributes": ["leafTemperature", "hasAgriParcel"],
         },
     },
     {
@@ -52,7 +52,7 @@ SUBSCRIPTIONS = [
                 "uri": f"{WEBHOOK_URL}/webhooks/fiware-sensors",
                 "accept": "application/json",
             },
-            "attributes": ["trunkDiameter", "refAgriParcel"],
+            "attributes": ["trunkDiameter", "hasAgriParcel"],
         },
     },
     {
@@ -66,7 +66,7 @@ SUBSCRIPTIONS = [
                 "uri": f"{WEBHOOK_URL}/webhooks/fiware-sensors",
                 "accept": "application/json",
             },
-            "attributes": ["soilMoisture", "refAgriParcel"],
+            "attributes": ["soilMoisture", "hasAgriParcel"],
         },
     },
 ]

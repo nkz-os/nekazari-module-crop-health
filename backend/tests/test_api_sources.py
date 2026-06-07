@@ -35,7 +35,7 @@ async def test_sources_list_with_assessment_data():
         mock.get(url__regex=r".*type=CropHealthAssessment.*").respond(json=[
             {
                 "id": "urn:ngsi-ld:CropHealthAssessment:cha-1",
-                "refAgriParcel": {"type": "Relationship", "object": "urn:ngsi-ld:AgriParcel:Parcela-4"},
+                "hasAgriParcel": {"type": "Relationship", "object": "urn:ngsi-ld:AgriParcel:Parcela-4"},
                 "cwsiValue": 0.42,
                 "overallSeverity": "MEDIUM",
                 "assessedAt": "2026-06-07T10:00:00Z",
@@ -51,7 +51,7 @@ async def test_sources_list_with_assessment_data():
         mock.get(url__regex=r".*type=DeviceMeasurement.*").respond(json=[
             {
                 "id": "urn:ngsi-ld:DeviceMeasurement:Parcela-4-sensor1",
-                "refAgriParcel": {"type": "Relationship", "object": "urn:ngsi-ld:AgriParcel:Parcela-4"},
+                "hasAgriParcel": {"type": "Relationship", "object": "urn:ngsi-ld:AgriParcel:Parcela-4"},
                 "leafTemperature": 28.4,
             }
         ])
@@ -75,10 +75,10 @@ async def test_sources_list_with_assessment_data():
 async def test_sources_detail_returns_source_status():
     """Detail endpoint returns per-source status for a single parcel."""
     with respx.mock as mock:
-        mock.get(url__regex=r".*type=CropHealthAssessment.*refAgriParcel.*").respond(json=[
+        mock.get(url__regex=r".*type=CropHealthAssessment.*hasAgriParcel.*").respond(json=[
             {
                 "id": "urn:ngsi-ld:CropHealthAssessment:Parcela-4-20260607",
-                "refAgriParcel": {"type": "Relationship", "object": "urn:ngsi-ld:AgriParcel:Parcela-4"},
+                "hasAgriParcel": {"type": "Relationship", "object": "urn:ngsi-ld:AgriParcel:Parcela-4"},
                 "cwsiValue": 0.42,
                 "overallSeverity": "MEDIUM",
                 "assessedAt": "2026-06-07T10:00:00Z",
@@ -89,14 +89,14 @@ async def test_sources_detail_returns_source_status():
                 "phenologyStage": "flowering",
             }
         ])
-        mock.get(url__regex=r".*type=DeviceMeasurement.*refAgriParcel.*").respond(json=[
+        mock.get(url__regex=r".*type=DeviceMeasurement.*hasAgriParcel.*").respond(json=[
             {
                 "id": "urn:ngsi-ld:DeviceMeasurement:Parcela-4-sensor1",
                 "leafTemperature": 28.4,
                 "dateObserved": "2026-06-07T10:25:00Z",
             }
         ])
-        mock.get(url__regex=r".*type=VegetationIndex.*refAgriParcel.*").respond(json=[
+        mock.get(url__regex=r".*type=VegetationIndex.*hasAgriParcel.*").respond(json=[
             {
                 "id": "urn:ngsi-ld:VegetationIndex:vi-1",
                 "ndviValue": 0.72,

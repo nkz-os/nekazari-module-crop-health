@@ -738,7 +738,7 @@ async def _fetch_parcel_ndvi(parcel_id: str, tenant_id: str) -> float | None:
                 f"{orion_url}/ngsi-ld/v1/entities",
                 params={
                     "type": "VegetationIndex",
-                    "q": f'refAgriParcel==\"urn:ngsi-ld:AgriParcel:{parcel_id}\"',
+                    "q": f'hasAgriParcel==\"urn:ngsi-ld:AgriParcel:{parcel_id}\"',
                     "limit": 1,
                     "options": "keyValues",
                 },
@@ -774,7 +774,7 @@ async def _fetch_parcel_sar(parcel_id: str, tenant_id: str) -> tuple[float, floa
                 f"{orion_url}/ngsi-ld/v1/entities",
                 params={
                     "type": "RadarObservation",
-                    "q": f'refAgriParcel==\"urn:ngsi-ld:AgriParcel:{parcel_id}\"',
+                    "q": f'hasAgriParcel==\"urn:ngsi-ld:AgriParcel:{parcel_id}\"',
                     "limit": 1,
                     "options": "keyValues",
                 },
@@ -828,7 +828,7 @@ def _extract_parcel_from_entity(entity_id: str) -> str | None:
 
     Convention: device entities follow the pattern
     urn:ngsi-ld:DeviceMeasurement:{parcel}-{sensor}
-    or carry a refAgriParcel relationship.
+    or carry a hasAgriParcel relationship.
 
     For now, use a simple heuristic; the webhook handler can
     pass parcel_id directly if resolved upstream.

@@ -28,6 +28,8 @@ class StageYieldLoss:
 @dataclass
 class YieldGapResult:
     yield_utilization_pct: float = 100.0  # % of Ymax achieved
+    predicted_yield_kg_ha: float | None = None
+    baseline_yield_kg_ha: float | None = None
     stage_losses: list[StageYieldLoss] = field(default_factory=list)
     dominant_loss_stage: str = ""
     confidence: str = "medium"            # high | medium | low
@@ -39,6 +41,7 @@ def evaluate_yield_gap(
     ky_by_stage: dict[str, float],
     method: str = "derived_from_CWSI",
     fidelity: str = "regional_proxy",
+    baseline_yield_kg_ha: float | None = None,
 ) -> YieldGapResult:
     """Calculate yield gap per Doorenbos-Kassam FAO-33.
 
@@ -49,6 +52,7 @@ def evaluate_yield_gap(
         ky_by_stage: Dict of stage_name → Ky coefficient (from BioOrchestrator)
         method: How ETa was derived (derived_from_CWSI, derived_from_water_balance, measured)
         fidelity: dataFidelity level
+        baseline_yield_kg_ha: Max potential yield in kg/ha (from VarietyTrials)
 
     Returns:
         YieldGapResult with utilization % and stage-by-stage breakdown
@@ -58,6 +62,9 @@ def evaluate_yield_gap(
     if not cwsi_by_stage or not ky_by_stage:
         result.confidence = "low"
         result.yield_utilization_pct = 100.0
+        if baseline_yield_kg_ha is not None:
+            result.baseline_yield_kg_ha = baseline_yield_kg_ha
+            result.predicted_yield_kg_ha = baseline_yield_kg_ha
         return result
 
     utilization = 1.0
@@ -85,6 +92,10 @@ def evaluate_yield_gap(
             ))
 
     result.yield_utilization_pct = round(utilization * 100, 1)
+
+    if baseline_yield_kg_ha is not None:
+        result.baseline_yield_kg_ha = baseline_yield_kg_ha
+        result.predicted_yield_kg_ha = round(baseline_yield_kg_ha * utilization, 1)
 
     if result.stage_losses:
         result.dominant_loss_stage = max(result.stage_losses, key=lambda s: s.loss_pct).stage

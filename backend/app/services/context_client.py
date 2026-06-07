@@ -37,6 +37,12 @@ _phenology_cache: TTLCache[tuple[str, str], PhenologyParams] = TTLCache(
     ttl=get_settings().phenology_cache_ttl,
 )
 
+# Key: (variety, irrigation_regime), Value: float (yieldKgHa)
+_yield_baseline_cache: TTLCache[tuple[str, str], float] = TTLCache(
+    maxsize=128,
+    ttl=86400,  # 24h
+)
+
 
 # ── Default phenology parameters (fallback) ──────────────────────────────────
 # Conservative defaults for generic crop when bioorchestrator unavailable.
@@ -247,6 +253,48 @@ async def get_weather_snapshot(
             pass
         except Exception as exc:
             logger.error("Weather DB fallback failed: %s", exc)
+
+    return None
+
+
+async def get_variety_yield_baseline(
+    variety: str,
+    irrigation_regime: str = "rainfed",
+) -> float | None:
+    """Fetch potential yield from BioOrchestrator's VarietyTrial.
+    
+    Averages the yieldKgHa for the matching variety and irrigation regime.
+    """
+    if not variety:
+        return None
+        
+    cache_key = (variety, irrigation_regime)
+    if cache_key in _yield_baseline_cache:
+        return _yield_baseline_cache[cache_key]
+
+    settings = get_settings()
+    if not settings.bioorchestrator_url:
+        return None
+
+    url = f"{settings.bioorchestrator_url}/api/graph/agriculture/variety-trials"
+    
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(url, params={"variety": variety})
+            if resp.status_code == 200:
+                trials = resp.json()
+                matching_trials = [
+                    t for t in trials
+                    if t.get("variety") == variety 
+                    and t.get("irrigationRegime") == irrigation_regime
+                    and t.get("yieldKgHa") is not None
+                ]
+                if matching_trials:
+                    avg_yield = sum(t["yieldKgHa"] for t in matching_trials) / len(matching_trials)
+                    _yield_baseline_cache[cache_key] = avg_yield
+                    return avg_yield
+    except Exception as exc:
+        logger.warning("Failed to fetch variety yield baseline: %s", exc)
 
     return None
 

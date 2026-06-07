@@ -185,7 +185,7 @@ class SoilProperties(BaseModel):
 
 
 class SoilWaterBalanceResult(BaseModel):
-    """Soil-aware water balance with AWC tracking."""
+    """Soil-aware water balance with AWC tracking (FAO-56 Ks)."""
     sw_mm: float = 0.0
     awc_mm: float = 0.0
     sw_ratio: float = 0.0
@@ -196,6 +196,12 @@ class SoilWaterBalanceResult(BaseModel):
     root_depth_mm: float = 300.0
     stress_level: str = "none"
     soil_moisture_confidence: str = "low"
+    # FAO-56 extensions
+    raw_mm: float = 0.0
+    depletion_fraction_p: float = 0.50
+    stress_coefficient_ks: float = 1.0
+    actual_et_mm: float = 0.0
+    deep_percolation_mm: float = 0.0
 
 
 class WaterloggingRiskResult(BaseModel):
@@ -233,6 +239,31 @@ class VigorResult(BaseModel):
     data_fidelity: str = "modeled_opendata"
 
 
+# ── VHI / ASIS Result ──────────────────────────────────────────────────────
+
+
+class VHIResult(BaseModel):
+    """Vegetation Health Index and components (FAO Cap 6)."""
+    vci: float | None = Field(None, ge=0.0, le=100.0)
+    tci: float | None = Field(None, ge=0.0, le=100.0)
+    vhi: float | None = Field(None, ge=0.0, le=100.0)
+    asi_pct: float | None = Field(None, ge=0.0, le=100.0)
+    tci_source: str = "none"
+    data_fidelity: str = "none"
+
+
+# ── SAR Moisture & Flood ───────────────────────────────────────────────────
+
+
+class SARResult(BaseModel):
+    """SAR-derived moisture and flood (Sentinel-1)."""
+    is_flooded: bool = False
+    flood_stage: str = "none"
+    surface_moisture_index: float = Field(0.5, ge=0.0, le=1.0)
+    waterlogging_risk: str = "low"
+    data_fidelity: str = "modeled_opendata"
+
+
 # ── Composite Stress Result ────────────────────────────────────────────────
 
 
@@ -253,6 +284,8 @@ class CompositeStressResult(BaseModel):
 class YieldGapResult(BaseModel):
     """Yield potential utilization (FAO-33 Doorenbos-Kassam)."""
     yield_utilization_pct: float = Field(100.0, ge=0.0, le=100.0)
+    predicted_yield_kg_ha: float | None = None
+    baseline_yield_kg_ha: float | None = None
     dominant_loss_stage: str = ""
     confidence: str = "medium"
 
@@ -312,6 +345,8 @@ class CropHealthAssessment(BaseModel):
     yield_gap: YieldGapResult | None = None
     phenology_progress: PhenologyProgressResult | None = None
     wue: WUEResult | None = None
+    vhi: VHIResult | None = None
+    sar: SARResult | None = None
     compaction_risk: CompactionRiskResult | None = None
     overall_severity: Severity = Severity.LOW
     recommended_action: RecommendedAction = RecommendedAction.NO_ACTION
@@ -384,9 +419,23 @@ class CropHealthAssessment(BaseModel):
         if self.composite_stress:
             entity["compositeStressIndex"] = {"type": "Property", "value": self.composite_stress.composite_index}
             entity["dominantStressor"] = {"type": "Property", "value": self.composite_stress.dominant_stressor}
+        if self.vhi:
+            if self.vhi.vhi is not None:
+                entity["vhi"] = {"type": "Property", "value": self.vhi.vhi}
+            if self.vhi.vci is not None:
+                entity["vci"] = {"type": "Property", "value": self.vhi.vci}
+            if self.vhi.tci is not None:
+                entity["tci"] = {"type": "Property", "value": self.vhi.tci}
+            if self.vhi.asi_pct is not None:
+                entity["asiPct"] = {"type": "Property", "value": self.vhi.asi_pct, "unitCode": "P1"}
+            entity["tciSource"] = {"type": "Property", "value": self.vhi.tci_source}
         if self.yield_gap:
             entity["yieldUtilizationPct"] = {"type": "Property", "value": self.yield_gap.yield_utilization_pct}
             entity["yieldGapConfidence"] = {"type": "Property", "value": self.yield_gap.confidence}
+            if self.yield_gap.predicted_yield_kg_ha is not None:
+                entity["predictedYieldKgHa"] = {"type": "Property", "value": self.yield_gap.predicted_yield_kg_ha}
+            if self.yield_gap.baseline_yield_kg_ha is not None:
+                entity["baselineYieldKgHa"] = {"type": "Property", "value": self.yield_gap.baseline_yield_kg_ha}
         if self.wue:
             entity["wueStatus"] = {"type": "Property", "value": self.wue.status}
             if self.wue.wue_kg_m3 is not None:
@@ -401,6 +450,11 @@ class CropHealthAssessment(BaseModel):
             entity["compactionMoistureWarning"] = {"type": "Property", "value": self.compaction_risk.moisture_warning}
             entity["compactionVigorConcern"] = {"type": "Property", "value": self.compaction_risk.vigor_concern}
             entity["compactionRequiresVerification"] = {"type": "Property", "value": self.compaction_risk.requires_field_verification}
+        if self.sar:
+            entity["sarIsFlooded"] = {"type": "Property", "value": self.sar.is_flooded}
+            entity["sarFloodStage"] = {"type": "Property", "value": self.sar.flood_stage}
+            entity["sarSurfaceMoisture"] = {"type": "Property", "value": self.sar.surface_moisture_index}
+            entity["sarWaterloggingRisk"] = {"type": "Property", "value": self.sar.waterlogging_risk}
         entity["dataFidelity"] = {"type": "Property", "value": self.data_fidelity}
         if self.crop_species is not None:
             entity["cropSpecies"] = {"type": "Property", "value": self.crop_species}
@@ -432,6 +486,11 @@ class CropHealthAssessment(BaseModel):
             entity["soilAWCmm"] = {"type": "Property", "value": swb.awc_mm, "unitCode": "MMT"}
             entity["soilWaterRatio"] = {"type": "Property", "value": round(swb.sw_ratio, 3)}
             entity["soilWaterConfidence"] = {"type": "Property", "value": swb.soil_moisture_confidence}
+            # FAO-56 extensions
+            entity["soilRAWmm"] = {"type": "Property", "value": swb.raw_mm, "unitCode": "MMT"}
+            entity["stressCoefficientKs"] = {"type": "Property", "value": round(swb.stress_coefficient_ks, 3)}
+            entity["actualETmm"] = {"type": "Property", "value": swb.actual_et_mm, "unitCode": "MMT"}
+            entity["deepPercolationMm"] = {"type": "Property", "value": swb.deep_percolation_mm, "unitCode": "MMT"}
         if self.waterlogging_risk:
             wlr = self.waterlogging_risk
             entity["waterloggingRiskLevel"] = {"type": "Property", "value": wlr.risk_level}

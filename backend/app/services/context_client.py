@@ -299,6 +299,59 @@ async def get_variety_yield_baseline(
     return None
 
 
+# Key: parcel_id, Value: AgriCrop dict
+_agri_crop_cache: TTLCache[str, dict | None] = TTLCache(
+    maxsize=256,
+    ttl=300,  # 5 min
+)
+
+
+async def get_agri_crop(
+    parcel_id: str,
+    tenant_id: str = "",
+) -> dict | None:
+    """Fetch AgriCrop entity for a parcel from Orion-LD.
+
+    Returns:
+        Dict with AgriCrop fields (plantingDate, harvestDate, variety, etc.)
+        or None if no AgriCrop exists for this parcel.
+    """
+    if parcel_id in _agri_crop_cache:
+        return _agri_crop_cache[parcel_id]
+
+    settings = get_settings()
+    if not settings.orion_ld_url:
+        return None
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(
+                f"{settings.orion_ld_url}/ngsi-ld/v1/entities",
+                params={
+                    "type": "AgriCrop",
+                    "q": f'hasAgriParcel==\"urn:ngsi-ld:AgriParcel:{parcel_id}\"',
+                    "limit": 1,
+                    "options": "keyValues",
+                },
+                headers={
+                    "Accept": "application/ld+json",
+                    "NGSILD-Tenant": tenant_id,
+                    "Fiware-Service": tenant_id,
+                    "Fiware-ServicePath": "/",
+                } if tenant_id else {"Accept": "application/ld+json"},
+            )
+            if resp.status_code == 200:
+                entities = resp.json()
+                if entities and isinstance(entities, list) and len(entities) > 0:
+                    _agri_crop_cache[parcel_id] = entities[0]
+                    return entities[0]
+    except Exception as exc:
+        logger.warning("Failed to fetch AgriCrop for parcel %s: %s", parcel_id, exc)
+
+    _agri_crop_cache[parcel_id] = None
+    return None
+
+
 def clear_phenology_cache() -> None:
     """Clear the phenology cache (useful for testing)."""
     _phenology_cache.clear()

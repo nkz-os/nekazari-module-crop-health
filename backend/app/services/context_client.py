@@ -705,7 +705,7 @@ async def get_multiyear_vigor_anomaly(
                 f"{orion_url}/ngsi-ld/v1/entities",
                 params={
                     "type": "CropHealthAssessment",
-                    "q": f'refAgriParcel==\"urn:ngsi-ld:AgriParcel:{parcel_id}\"',
+                    "q": f'hasAgriParcel==\"urn:ngsi-ld:AgriParcel:{parcel_id}\"',
                     "limit": 500,
                     "options": "keyValues",
                 },
@@ -841,7 +841,7 @@ async def get_penetrometer_data(
                 f"{orion_url}/ngsi-ld/v1/entities",
                 params={
                     "type": "SoilSamplingPoint",
-                    "q": f'refAgriParcel==\"urn:ngsi-ld:AgriParcel:{parcel_id}\"',
+                    "q": f'hasAgriParcel==\"urn:ngsi-ld:AgriParcel:{parcel_id}\"',
                     "limit": 50,
                     "options": "keyValues",
                 },

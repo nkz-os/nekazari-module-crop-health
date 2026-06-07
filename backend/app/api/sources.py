@@ -137,7 +137,7 @@ async def _list_sources(request: Request) -> dict:
     # Count IoT devices per parcel
     iot_by_parcel: dict[str, int] = {}
     for d in iot_devices:
-        ref_parcel = d.get("refAgriParcel", "")
+        ref_parcel = d.get("hasAgriParcel", "")
         if isinstance(ref_parcel, dict):
             ref_parcel = ref_parcel.get("object", "")
         pid = ref_parcel.replace("urn:ngsi-ld:AgriParcel:", "")
@@ -153,7 +153,7 @@ async def _list_sources(request: Request) -> dict:
     now = datetime.now(timezone.utc)
     latest_per_parcel: dict[str, datetime] = {}
     for a in assessments:
-        ref_p = a.get("refAgriParcel", "")
+        ref_p = a.get("hasAgriParcel", "")
         if isinstance(ref_p, dict):
             ref_p = ref_p.get("object", "")
         pid = ref_p.replace("urn:ngsi-ld:AgriParcel:", "")
@@ -231,9 +231,9 @@ async def _detail_sources(request: Request, parcelId: str) -> dict:
 
     # Query all sources in parallel
     results = await asyncio.gather(
-        _query("CropHealthAssessment", f'refAgriParcel=="{parcel_urn}"', 1),
-        _query("DeviceMeasurement", f'refAgriParcel=="{parcel_urn}"', 20),
-        _query("VegetationIndex", f'refAgriParcel=="{parcel_urn}"', 1),
+        _query("CropHealthAssessment", f'hasAgriParcel=="{parcel_urn}"', 1),
+        _query("DeviceMeasurement", f'hasAgriParcel=="{parcel_urn}"', 20),
+        _query("VegetationIndex", f'hasAgriParcel=="{parcel_urn}"', 1),
         _query("AgriCrop", f'hasAgriParcel=="{parcel_urn}"', 1),
         return_exceptions=True,
     )

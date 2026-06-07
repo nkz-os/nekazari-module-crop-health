@@ -53,8 +53,8 @@ async def latest_assessments(request: Request):
             assessments = []
             for e in entities:
                 parcel = ""
-                if isinstance(e.get("refAgriParcel"), dict):
-                    parcel = e["refAgriParcel"].get("object", "").replace("urn:ngsi-ld:AgriParcel:", "")
+                if isinstance(e.get("hasAgriParcel"), dict):
+                    parcel = e["hasAgriParcel"].get("object", "").replace("urn:ngsi-ld:AgriParcel:", "")
                 assessments.append({
                     "id": e.get("id", ""),
                     "parcelId": parcel,
@@ -189,7 +189,7 @@ async def ndvi_cwsi_correlation(
                 f"{ORION_URL}/ngsi-ld/v1/entities",
                 params={
                     "type": "VegetationIndex",
-                    "q": f'refAgriParcel=="urn:ngsi-ld:AgriParcel:{parcelId}"',
+                    "q": f'hasAgriParcel=="urn:ngsi-ld:AgriParcel:{parcelId}"',
                     "limit": 30,
                     "options": "keyValues",
                 },
@@ -289,7 +289,7 @@ async def export_assessments(
                 "options": "keyValues",
             }
             if parcelId:
-                params["q"] = f'refAgriParcel=="urn:ngsi-ld:AgriParcel:{parcelId}"'
+                params["q"] = f'hasAgriParcel=="urn:ngsi-ld:AgriParcel:{parcelId}"'
             resp = await client.get(
                 f"{ORION_URL}/ngsi-ld/v1/entities", params=params, headers=headers,
             )
@@ -378,7 +378,7 @@ async def list_parcels(request: Request):
     assessment_by_parcel: dict[str, dict] = {}
     for e in assessments_raw:
         parcel = ""
-        ref = e.get("refAgriParcel")
+        ref = e.get("hasAgriParcel")
         if isinstance(ref, dict):
             parcel = ref.get("object", "").replace("urn:ngsi-ld:AgriParcel:", "")
         elif isinstance(ref, str):
@@ -452,7 +452,7 @@ async def active_disease_risks(
 ):
     """Return active disease risks from Orion-LD DiseaseRiskAssessment entities.
 
-    Optionally filter by parcelId (refAgriParcel relationship).
+    Optionally filter by parcelId (hasAgriParcel relationship).
     """
     tenant_id = getattr(request.state, "tenant_id", "")
     headers = {"Accept": "application/ld+json"}
@@ -471,10 +471,10 @@ async def active_disease_risks(
                 risks = []
                 for e in entities:
                     parcel = ""
-                    if isinstance(e.get("refAgriParcel"), dict):
-                        parcel = e["refAgriParcel"].get("object", "").replace("urn:ngsi-ld:AgriParcel:", "")
-                    elif isinstance(e.get("refAgriParcel"), str):
-                        parcel = e["refAgriParcel"].replace("urn:ngsi-ld:AgriParcel:", "")
+                    if isinstance(e.get("hasAgriParcel"), dict):
+                        parcel = e["hasAgriParcel"].get("object", "").replace("urn:ngsi-ld:AgriParcel:", "")
+                    elif isinstance(e.get("hasAgriParcel"), str):
+                        parcel = e["hasAgriParcel"].replace("urn:ngsi-ld:AgriParcel:", "")
 
                     if parcelId and parcel != parcelId:
                         continue

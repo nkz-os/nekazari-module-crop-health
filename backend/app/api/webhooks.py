@@ -76,7 +76,7 @@ async def receive_sensor_data(
             continue
 
         # Extract parcel relationship if present
-        parcel_ref = entity.get("refAgriParcel", {})
+        parcel_ref = entity.get("hasAgriParcel", {})
         parcel_id = None
         if isinstance(parcel_ref, dict):
             obj = parcel_ref.get("object", "")

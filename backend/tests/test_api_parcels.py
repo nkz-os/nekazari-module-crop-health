@@ -33,7 +33,7 @@ class TestParcels:
                     {
                         "id": "urn:ngsi-ld:CropHealthAssessment:cha-1",
                         "type": "CropHealthAssessment",
-                        "refAgriParcel": {"type": "Relationship", "object": "urn:ngsi-ld:AgriParcel:Parcela-4"},
+                        "hasAgriParcel": {"type": "Relationship", "object": "urn:ngsi-ld:AgriParcel:Parcela-4"},
                         "cwsiValue": {"type": "Property", "value": 0.42},
                         "vigorIndex": {"type": "Property", "value": 0.72},
                         "overallSeverity": {"type": "Property", "value": "MEDIUM"},
@@ -102,14 +102,14 @@ class TestParcels:
                     {
                         "id": "urn:ngsi-ld:CropHealthAssessment:low",
                         "type": "CropHealthAssessment",
-                        "refAgriParcel": {"type": "Relationship", "object": "urn:ngsi-ld:AgriParcel:parcel-low"},
+                        "hasAgriParcel": {"type": "Relationship", "object": "urn:ngsi-ld:AgriParcel:parcel-low"},
                         "overallSeverity": "LOW",
                         "assessedAt": "2026-06-03T10:00:00Z",
                     },
                     {
                         "id": "urn:ngsi-ld:CropHealthAssessment:crit",
                         "type": "CropHealthAssessment",
-                        "refAgriParcel": {"type": "Relationship", "object": "urn:ngsi-ld:AgriParcel:parcel-crit"},
+                        "hasAgriParcel": {"type": "Relationship", "object": "urn:ngsi-ld:AgriParcel:parcel-crit"},
                         "overallSeverity": "CRITICAL",
                         "assessedAt": "2026-06-03T10:00:00Z",
                     },

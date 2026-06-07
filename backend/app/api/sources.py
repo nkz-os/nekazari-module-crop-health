@@ -1,0 +1,396 @@
+"""Sources endpoint — diagnostic dashboard for data source health per parcel."""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+from datetime import datetime, timezone
+
+import httpx
+from fastapi import APIRouter, Query, Request
+
+from app.config import get_settings
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(prefix="/sources", tags=["sources"])
+
+# Cache for detail responses: key=parcelId, value=(timestamp, data)
+_detail_cache: dict[str, tuple[float, dict]] = {}
+_DETAIL_CACHE_TTL = 45  # seconds
+
+
+def _make_headers(tenant_id: str) -> dict:
+    headers = {"Accept": "application/ld+json"}
+    if tenant_id:
+        headers["NGSILD-Tenant"] = tenant_id
+        headers["Fiware-Service"] = tenant_id
+        headers["Fiware-ServicePath"] = "/"
+    ctx_url = get_settings().orion_ld_context
+    if ctx_url:
+        headers["Link"] = (
+            f'<{ctx_url}>; rel="http://www.w3.org/ns/json-ld#context";'
+            f' type="application/ld+json"'
+        )
+    return headers
+
+
+def _freshness(iso_ts: str | None) -> str:
+    if not iso_ts:
+        return "none"
+    try:
+        dt = datetime.fromisoformat(iso_ts.replace("Z", "+00:00"))
+        age_h = (datetime.now(timezone.utc) - dt).total_seconds() / 3600
+        if age_h < 24:
+            return "fresh"
+        if age_h < 168:  # 7 days
+            return "stale"
+        return "none"
+    except Exception:
+        return "none"
+
+
+def _health_indicator(
+    sources_active: int,
+    sources_total: int,
+    has_iot: bool,
+    freshest_hours: float | None,
+) -> str:
+    """Determine the health indicator color for a parcel."""
+    if sources_active == 0:
+        return "grey"
+    if freshest_hours is not None and freshest_hours > 168:
+        return "red"
+    if has_iot and sources_active >= 3:
+        return "green"
+    if not has_iot and sources_active >= 3:
+        return "blue"
+    if sources_active >= 1:
+        return "yellow"
+    return "red"
+
+
+# ── Public route (dispatches to list or detail) ──────────────────────────
+
+@router.get("")
+async def get_sources(request: Request, parcelId: str | None = Query(None)):
+    """Get source health for all parcels or detail for one."""
+    if parcelId:
+        return await _detail_sources(request, parcelId)
+    return await _list_sources(request)
+
+
+# ── List (all parcels) ───────────────────────────────────────────────────
+
+async def _list_sources(request: Request) -> dict:
+    """Get health summary for all parcels.
+
+    Derived from existing Orion-LD entities (CropHealthAssessment,
+    DeviceMeasurement, AgriParcel) — no per-parcel external calls.
+    """
+    tenant_id = getattr(request.state, "tenant_id", "")
+    headers = _make_headers(tenant_id)
+    settings = get_settings()
+    base = settings.orion_ld_url
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp_a = await client.get(
+                f"{base}/ngsi-ld/v1/entities",
+                params={"type": "CropHealthAssessment", "limit": 500, "options": "keyValues"},
+                headers=headers,
+            )
+            assessments = resp_a.json() if resp_a.status_code == 200 else []
+
+            resp_p = await client.get(
+                f"{base}/ngsi-ld/v1/entities",
+                params={"type": "AgriParcel", "limit": 500, "options": "keyValues"},
+                headers=headers,
+            )
+            parcels = resp_p.json() if resp_p.status_code == 200 else []
+
+            resp_i = await client.get(
+                f"{base}/ngsi-ld/v1/entities",
+                params={"type": "DeviceMeasurement", "limit": 1000, "options": "keyValues"},
+                headers=headers,
+            )
+            iot_devices = resp_i.json() if resp_i.status_code == 200 else []
+    except Exception as e:
+        logger.error("Sources list query failed: %s", e)
+        return {"parcels": []}
+
+    # Build parcel lookup
+    parcel_map: dict[str, dict] = {}
+    for p in parcels:
+        pid = p.get("id", "").replace("urn:ngsi-ld:AgriParcel:", "")
+        if pid:
+            parcel_map[pid] = {
+                "parcelId": pid,
+                "parcelName": p.get("name", pid),
+                "hasIot": False,
+                "sourcesActive": 0,
+                "sourcesDegraded": 0,
+                "sourcesDown": 0,
+                "healthIndicator": "grey",
+            }
+
+    # Count IoT devices per parcel
+    iot_by_parcel: dict[str, int] = {}
+    for d in iot_devices:
+        ref_parcel = d.get("refAgriParcel", "")
+        if isinstance(ref_parcel, dict):
+            ref_parcel = ref_parcel.get("object", "")
+        pid = ref_parcel.replace("urn:ngsi-ld:AgriParcel:", "")
+        if pid:
+            iot_by_parcel[pid] = iot_by_parcel.get(pid, 0) + 1
+
+    for pid, count in iot_by_parcel.items():
+        if pid in parcel_map:
+            parcel_map[pid]["hasIot"] = True
+            parcel_map[pid]["sourcesActive"] += 1
+
+    # Count assessments as active source
+    now = datetime.now(timezone.utc)
+    latest_per_parcel: dict[str, datetime] = {}
+    for a in assessments:
+        ref_p = a.get("refAgriParcel", "")
+        if isinstance(ref_p, dict):
+            ref_p = ref_p.get("object", "")
+        pid = ref_p.replace("urn:ngsi-ld:AgriParcel:", "")
+        if not pid:
+            continue
+
+        ts_str = a.get("assessedAt", "")
+        try:
+            ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+        except Exception:
+            ts = now
+        if pid not in latest_per_parcel or ts > latest_per_parcel[pid]:
+            latest_per_parcel[pid] = ts
+
+        if pid in parcel_map:
+            fidelity = a.get("dataFidelity", "")
+            if fidelity in ("onsite_calibrated", "onsite_uncalibrated"):
+                parcel_map[pid]["sourcesActive"] += 1
+
+    # Compute health indicators
+    for pid, pdata in parcel_map.items():
+        latest = latest_per_parcel.get(pid)
+        if latest:
+            freshest_h = (now - latest).total_seconds() / 3600
+        else:
+            freshest_h = None
+
+        pdata["healthIndicator"] = _health_indicator(
+            pdata["sourcesActive"], max(pdata["sourcesActive"] + 1, 1), pdata["hasIot"], freshest_h
+        )
+        pdata["lastCheckedAt"] = now.isoformat()
+
+    return {"parcels": sorted(parcel_map.values(), key=lambda p: p["parcelName"])}
+
+
+# ── Detail (single parcel) ───────────────────────────────────────────────
+
+async def _detail_sources(request: Request, parcelId: str) -> dict:
+    """Get detailed source status for a single parcel.
+
+    Result is cached for 45s to prevent rate-limit abuse on external services.
+    """
+    # Check cache
+    cached = _detail_cache.get(parcelId)
+    if cached:
+        ts, data = cached
+        if (datetime.now(timezone.utc).timestamp() - ts) < _DETAIL_CACHE_TTL:
+            return data
+
+    tenant_id = getattr(request.state, "tenant_id", "")
+    headers = _make_headers(tenant_id)
+    settings = get_settings()
+    base = settings.orion_ld_url
+
+    now = datetime.now(timezone.utc)
+    parcel_urn = f"urn:ngsi-ld:AgriParcel:{parcelId}"
+
+    async def _query(type_: str, q: str = "", limit: int = 1) -> list:
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                params: dict = {"type": type_, "limit": limit, "options": "keyValues"}
+                if q:
+                    params["q"] = q
+                resp = await client.get(
+                    f"{base}/ngsi-ld/v1/entities",
+                    params=params,
+                    headers=headers,
+                )
+                if resp.status_code == 200:
+                    result = resp.json()
+                    return result if isinstance(result, list) else []
+        except Exception as e:
+            logger.warning("Source query failed for %s: %s", type_, e)
+        return []
+
+    # Query all sources in parallel
+    results = await asyncio.gather(
+        _query("CropHealthAssessment", f'refAgriParcel=="{parcel_urn}"', 1),
+        _query("DeviceMeasurement", f'refAgriParcel=="{parcel_urn}"', 20),
+        _query("VegetationIndex", f'refAgriParcel=="{parcel_urn}"', 1),
+        _query("AgriCrop", f'hasAgriParcel=="{parcel_urn}"', 1),
+        return_exceptions=True,
+    )
+
+    assessments = results[0] if not isinstance(results[0], BaseException) else []
+    iot_devices = results[1] if not isinstance(results[1], BaseException) else []
+    veg_indices = results[2] if not isinstance(results[2], BaseException) else []
+    agri_crops = results[3] if not isinstance(results[3], BaseException) else []
+
+    assessment = assessments[0] if assessments else {}
+
+    # ── Soil ──────────────────────────────────────────────────────────
+    soil_texture = assessment.get("soilTexture")
+    soil_ph = assessment.get("soilPh")
+    soil_awc = assessment.get("soilAWCmm")
+    soil_fc = assessment.get("soilFieldCapacity")
+    soil_wp = assessment.get("soilWiltingPoint")
+    soil_source = assessment.get("soilDataSource", "unknown")
+
+    soil_ok = soil_texture is not None
+    soil = {
+        "status": "ok" if soil_ok else "unavailable",
+        "freshness": _freshness(assessment.get("assessedAt")),
+        "lastDataAt": assessment.get("assessedAt"),
+        "summary": f"{soil_texture or '?'} · pH {soil_ph or '?'} · AWC {soil_awc or '?'}mm",
+        "details": {
+            "texture": soil_texture,
+            "fieldCapacity": soil_fc,
+            "wiltingPoint": soil_wp,
+            "awcMm": soil_awc,
+            "ph": soil_ph,
+            "organicCarbonPct": None,
+            "source": soil_source,
+        },
+    }
+
+    # ── IoT ───────────────────────────────────────────────────────────
+    iot_sensors = []
+    for d in iot_devices:
+        for metric in ("leafTemperature", "trunkDiameter", "soilMoisture", "soilTemp", "soilPh", "soilEC"):
+            val = d.get(metric)
+            if val is not None:
+                unit = "°C" if "Temp" in metric else "µm" if "trunk" in metric.lower() else "%" if "Moisture" in metric else ""
+                iot_sensors.append({
+                    "metric": metric,
+                    "lastValue": val,
+                    "lastTs": d.get("dateObserved", ""),
+                    "unit": unit,
+                })
+    iot_ok = len(iot_sensors) > 0
+    iot_freshness = "none"
+    if iot_sensors:
+        iot_freshness = _freshness(iot_sensors[0].get("lastTs"))
+
+    iot = {
+        "status": "ok" if iot_ok else "unavailable",
+        "freshness": iot_freshness,
+        "lastDataAt": iot_sensors[0]["lastTs"] if iot_sensors else None,
+        "summary": f"{len(iot_sensors)} sensores activos" if iot_ok else "sin sensores",
+        "sensors": iot_sensors,
+    }
+
+    # ── Weather ───────────────────────────────────────────────────────
+    weather_parts = []
+    if assessment.get("vpdKpa") is not None:
+        weather_parts.append(f"VPD {assessment['vpdKpa']:.1f}kPa")
+    weather_summary = " · ".join(weather_parts) if weather_parts else "sin datos"
+    weather = {
+        "status": "ok" if weather_parts else "unavailable",
+        "freshness": _freshness(assessment.get("assessedAt")),
+        "lastDataAt": assessment.get("assessedAt"),
+        "summary": weather_summary,
+        "details": {
+            "vpdKpa": assessment.get("vpdKpa"),
+        },
+    }
+
+    # ── Satellite ──────────────────────────────────────────────────────
+    ndvi_val = None
+    ndvi_ts = None
+    if veg_indices:
+        vi = veg_indices[0]
+        ndvi_val = vi.get("ndviValue") or vi.get("value")
+        ndvi_ts = vi.get("dateObserved")
+    ndvi = {
+        "status": "ok" if ndvi_val is not None else "unavailable",
+        "freshness": _freshness(ndvi_ts),
+        "lastDataAt": ndvi_ts,
+        "lastValue": ndvi_val,
+    }
+
+    sar = {
+        "status": "unavailable",
+        "freshness": "none",
+        "lastDataAt": None,
+        "reason": "no_entity" if ndvi_val is not None else "no_parcel_data",
+    }
+
+    # ── Crop ───────────────────────────────────────────────────────────
+    ac = agri_crops[0] if agri_crops else {}
+    crop_ok = bool(ac.get("species") or ac.get("eppoCode"))
+    phenology_stage = assessment.get("phenologyStage")
+    crop = {
+        "status": "ok" if crop_ok else "unavailable",
+        "freshness": "fresh" if crop_ok else "none",
+        "lastDataAt": ac.get("plantingDate"),
+        "species": ac.get("species"),
+        "eppoCode": ac.get("eppoCode"),
+        "variety": ac.get("variety"),
+        "plantingDate": ac.get("plantingDate"),
+        "harvestDate": ac.get("harvestDate"),
+        "phenologyStage": phenology_stage,
+        "gddProgressPct": None,
+        "source": "agri_crop" if crop_ok else "none",
+    }
+
+    # ── BioOrchestrator ────────────────────────────────────────────────
+    phenology_source = assessment.get("phenologySource", "default")
+    kc_val = assessment.get("kc")
+    bio_ok = phenology_source != "default" or kc_val is not None
+    bio = {
+        "status": "ok" if bio_ok else "unavailable",
+        "freshness": _freshness(assessment.get("assessedAt")),
+        "lastDataAt": assessment.get("assessedAt"),
+        "summary": f"Kc={kc_val}" if kc_val else "sin parámetros",
+        "matchLevel": "SPECIES" if phenology_source == "bioorchestrator" else "NONE",
+        "details": {
+            "kc": kc_val,
+            "d1": assessment.get("d1"),
+            "d2": assessment.get("d2"),
+            "ky": None,
+            "mdsRef": None,
+            "provenance": None,
+        },
+    }
+
+    # ── Risks ──────────────────────────────────────────────────────────
+    risks_alerts = []
+    # Placeholder risk logic — expandable with real disease/thermal models
+    risks = {
+        "status": "advisory" if risks_alerts else "none",
+        "alerts": risks_alerts,
+    }
+
+    response = {
+        "parcelId": parcelId,
+        "checkedAt": now.isoformat(),
+        "sources": {
+            "soil": soil,
+            "iot": iot,
+            "weather": weather,
+            "satellite": {"ndvi": ndvi, "sar": sar},
+            "crop": crop,
+            "bioorchestrator": bio,
+            "risks": risks,
+        },
+    }
+
+    _detail_cache[parcelId] = (now.timestamp(), response)
+    return response

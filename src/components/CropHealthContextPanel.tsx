@@ -1,5 +1,6 @@
 import React from 'react';
 import { useTranslation } from '@nekazari/sdk';
+import SourceStatusPanel from './SourceStatusPanel';
 import CropStatusSnapshot from './CropStatusSnapshot';
 import CropHealthDetail from './CropHealthDetail';
 
@@ -23,6 +24,7 @@ const CropHealthContextPanel: React.FC<Props> = ({ parcelId, parcelName }) => {
 
   return (
     <div>
+      <SourceStatusPanel parcelId={parcelId} parcelName={parcelName} />
       <CropStatusSnapshot parcelId={parcelId} parcelName={parcelName} />
       <CropHealthDetail parcelId={parcelId} />
     </div>

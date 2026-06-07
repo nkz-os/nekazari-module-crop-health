@@ -764,7 +764,8 @@ async def _fetch_parcel_ndvi(parcel_id: str, tenant_id: str) -> float | None:
 async def _fetch_parcel_sar(parcel_id: str, tenant_id: str) -> tuple[float, float] | None:
     """Fetch latest SAR backscatter (VV, VH) for a parcel from Orion-LD.
     
-    This expects a specific NGSI-LD entity holding Sentinel-1 backscatter values.
+    Queries EOProduct entities (FIWARE Smart Data Model) filtered by
+    productType=GRD (Sentinel-1 Ground Range Detected).
     """
     try:
         settings = __import__("app.config", fromlist=["get_settings"]).get_settings()
@@ -773,8 +774,8 @@ async def _fetch_parcel_sar(parcel_id: str, tenant_id: str) -> tuple[float, floa
             resp = await client.get(
                 f"{orion_url}/ngsi-ld/v1/entities",
                 params={
-                    "type": "RadarObservation",
-                    "q": f'hasAgriParcel==\"urn:ngsi-ld:AgriParcel:{parcel_id}\"',
+                    "type": "EOProduct",
+                    "q": f'hasAgriParcel==\"urn:ngsi-ld:AgriParcel:{parcel_id}\";productType==\"GRD\"',
                     "limit": 1,
                     "options": "keyValues",
                 },

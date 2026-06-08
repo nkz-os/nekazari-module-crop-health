@@ -70,8 +70,6 @@ class AuthMiddleware(BaseHTTPMiddleware):
         # Trust gateway-injected headers (request already passed api-gateway auth)
         gateway_tenant = request.headers.get("X-Tenant-ID", "")
         gateway_user = request.headers.get("X-User-ID", "")
-        logger.info("AuthMiddleware: path=%s X-Tenant-ID=%s X-User-ID=%s",
-                     path, gateway_tenant[:20] if gateway_tenant else "", gateway_user[:20] if gateway_user else "")
         if gateway_tenant and gateway_user:
             request.state.tenant_id = gateway_tenant
             request.state.user_id = gateway_user

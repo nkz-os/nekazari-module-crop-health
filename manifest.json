@@ -57,7 +57,8 @@
     "slots": {
         "dashboard-widget": [
             "CropHealthWidget",
-            "DiseaseRiskWidget"
+            "DiseaseRiskWidget",
+            "CompactionRiskWidget"
         ],
         "context-panel": [
             "CropHealthContextPanel",

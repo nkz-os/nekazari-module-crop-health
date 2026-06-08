@@ -892,3 +892,183 @@ async def get_penetrometer_data(
         pass
 
     return None
+
+
+# ── NDVI Climatology for VHI ────────────────────────────────────────────────
+
+_ndvi_climatology_cache: TTLCache[str, dict] = TTLCache(maxsize=128, ttl=86400)
+
+
+async def get_ndvi_climatology(
+    parcel_id: str,
+    tenant_id: str,
+    target_month: int,
+    eppo_code: str | None = None,
+) -> dict:
+    """Fetch NDVI climatology for a parcel and month.
+
+    Priority cascade:
+    1. Same parcel + same crop EPPO -> best
+    2. Same parcel, same month (any crop) -> acceptable
+    3. Not enough data -> unreliable
+
+    Returns:
+        dict with keys: ndvi_p05, ndvi_p95, sample_count, filter_criteria,
+        period_start, period_end, is_reliable, reason
+    """
+    from datetime import datetime as dt, timedelta
+
+    cache_key = f"{tenant_id}:{parcel_id}:{target_month}:{eppo_code or ''}"
+    cached = _ndvi_climatology_cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    settings = get_settings()
+    orion_url = settings.orion_ld_url
+    if not orion_url:
+        return _climatology_unavailable("ORION_LD_URL not configured")
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.get(
+                f"{orion_url}/ngsi-ld/v1/entities",
+                params={
+                    "type": "VegetationIndex",
+                    "q": f'hasAgriParcel=="urn:ngsi-ld:AgriParcel:{parcel_id}"',
+                    "limit": 500,
+                    "options": "keyValues",
+                },
+                headers={
+                    "Accept": "application/ld+json",
+                    "NGSILD-Tenant": tenant_id,
+                } if tenant_id else {"Accept": "application/ld+json"},
+            )
+            if resp.status_code != 200:
+                return _climatology_unavailable(f"Orion-LD returned {resp.status_code}")
+
+            entities = resp.json()
+            if not isinstance(entities, list) or len(entities) < 3:
+                return _climatology_unavailable(
+                    f"Only {len(entities) if isinstance(entities, list) else 0} VegetationIndex records"
+                )
+
+            # Filter by month +-1
+            month_entities = []
+            for e in entities:
+                assessed = e.get("dateObserved") or e.get("observedAt")
+                if isinstance(assessed, dict):
+                    assessed = assessed.get("value")
+                if not assessed:
+                    continue
+                try:
+                    d = dt.fromisoformat(str(assessed).replace("Z", "+00:00"))
+                except (ValueError, TypeError):
+                    continue
+                if abs(d.month - target_month) <= 1 or (
+                    target_month == 1 and d.month == 12
+                ) or (target_month == 12 and d.month == 1):
+                    month_entities.append((d, e))
+
+            if len(month_entities) < 2:
+                return _climatology_unavailable(
+                    f"Only {len(month_entities)} records in month {target_month}+-1"
+                )
+
+            # Priority 1: filter by crop EPPO
+            if eppo_code:
+                crop_filtered = [
+                    (d, e) for d, e in month_entities
+                    if e.get("cropEPPO", "") == eppo_code
+                ]
+                if len(crop_filtered) >= 2:
+                    ndvi_vals = _extract_ndvi_values(crop_filtered)
+                    if ndvi_vals:
+                        dates = [d for d, _ in crop_filtered]
+                        result = _build_climatology_result(
+                            ndvi_vals, dates,
+                            f"parcel_specific:same_crop_{eppo_code}",
+                        )
+                        _ndvi_climatology_cache[cache_key] = result
+                        logger.info(
+                            "NDVI climatology for %s: %d same-crop records (month %d)",
+                            parcel_id, len(crop_filtered), target_month,
+                        )
+                        return result
+
+            # Priority 2: all records in month range (any crop)
+            ndvi_vals = _extract_ndvi_values(month_entities)
+            if ndvi_vals and len(ndvi_vals) >= 2:
+                dates = [d for d, _ in month_entities]
+                result = _build_climatology_result(
+                    ndvi_vals, dates,
+                    "parcel_specific:same_month",
+                )
+                _ndvi_climatology_cache[cache_key] = result
+                logger.info(
+                    "NDVI climatology for %s: %d same-month records (month %d)",
+                    parcel_id, len(month_entities), target_month,
+                )
+                return result
+
+            return _climatology_unavailable(
+                f"No valid NDVI values in {len(month_entities)} records"
+            )
+
+    except httpx.TimeoutException:
+        return _climatology_unavailable("Orion-LD timeout")
+    except httpx.ConnectError:
+        return _climatology_unavailable("Orion-LD unreachable")
+    except Exception as exc:
+        return _climatology_unavailable(f"Unexpected error: {exc}")
+
+
+def _extract_ndvi_values(entities: list) -> list[float]:
+    """Extract NDVI values from VegetationIndex entities."""
+    values = []
+    for _, e in entities:
+        ndvi = e.get("NDVI") or e.get("ndvi")
+        if isinstance(ndvi, dict):
+            ndvi = ndvi.get("value")
+        if ndvi is not None:
+            try:
+                val = float(ndvi)
+                if 0.0 <= val <= 1.0:
+                    values.append(val)
+            except (ValueError, TypeError):
+                pass
+    return values
+
+
+def _build_climatology_result(
+    values: list[float], dates: list, criteria: str
+) -> dict:
+    """Compute NDVI percentiles and build result dict."""
+    sorted_vals = sorted(values)
+    n = len(sorted_vals)
+    p05_idx = max(0, int(n * 0.05))
+    p95_idx = min(n - 1, int(n * 0.95))
+    sorted_dates = sorted(dates)
+    return {
+        "ndvi_p05": round(sorted_vals[p05_idx], 4),
+        "ndvi_p95": round(sorted_vals[p95_idx], 4),
+        "sample_count": n,
+        "filter_criteria": criteria,
+        "period_start": sorted_dates[0].strftime("%Y-%m-%d"),
+        "period_end": sorted_dates[-1].strftime("%Y-%m-%d"),
+        "is_reliable": n >= 3,
+        "reason": None,
+    }
+
+
+def _climatology_unavailable(reason: str) -> dict:
+    logger.warning("NDVI climatology unavailable: %s", reason)
+    return {
+        "ndvi_p05": None,
+        "ndvi_p95": None,
+        "sample_count": 0,
+        "filter_criteria": "none",
+        "period_start": None,
+        "period_end": None,
+        "is_reliable": False,
+        "reason": reason,
+    }

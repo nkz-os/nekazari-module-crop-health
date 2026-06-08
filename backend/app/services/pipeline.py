@@ -775,8 +775,8 @@ async def _fetch_parcel_ndvi(parcel_id: str, tenant_id: str) -> float | None:
             resp = await client.get(
                 f"{orion_url}/ngsi-ld/v1/entities",
                 params={
-                    "type": "VegetationIndex",
-                    "q": f'hasAgriParcel==\"urn:ngsi-ld:AgriParcel:{parcel_id}\"',
+                    "type": "EOProduct",
+                    "q": f'hasAgriParcel==\"urn:ngsi-ld:AgriParcel:{parcel_id}\";productType==\"NDVI\"',
                     "limit": 1,
                     "options": "keyValues",
                 },

@@ -188,8 +188,8 @@ async def ndvi_cwsi_correlation(
             vi_resp = await client.get(
                 f"{ORION_URL}/ngsi-ld/v1/entities",
                 params={
-                    "type": "VegetationIndex",
-                    "q": f'hasAgriParcel=="urn:ngsi-ld:AgriParcel:{parcelId}"',
+                    "type": "EOProduct",
+                    "q": f'hasAgriParcel=="urn:ngsi-ld:AgriParcel:{parcelId}";productType=="NDVI"',
                     "limit": 30,
                     "options": "keyValues",
                 },

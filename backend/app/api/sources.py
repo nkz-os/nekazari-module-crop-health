@@ -233,7 +233,7 @@ async def _detail_sources(request: Request, parcelId: str) -> dict:
     results = await asyncio.gather(
         _query("CropHealthAssessment", f'hasAgriParcel=="{parcel_urn}"', 1),
         _query("DeviceMeasurement", f'hasAgriParcel=="{parcel_urn}"', 20),
-        _query("VegetationIndex", f'hasAgriParcel=="{parcel_urn}"', 1),
+        _query("EOProduct", f'hasAgriParcel=="{parcel_urn}";productType=="NDVI"', 1),
         _query("AgriCrop", f'hasAgriParcel=="{parcel_urn}"', 1),
         return_exceptions=True,
     )

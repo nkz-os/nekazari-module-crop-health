@@ -222,9 +222,19 @@ async def trigger(
         pass
 
     phenology = await get_phenology_params(species=species, gdd=gdd)
+
+    from app.services.context_client import _resolve_parcel_coords
+    coords = await _resolve_parcel_coords(effective_parcel, tenant_id)
+    if coords:
+        latitude, longitude = coords
+        logger.info("Resolved parcel %s coordinates: (%.4f, %.4f)", effective_parcel, latitude, longitude)
+    else:
+        latitude, longitude = 0.0, 0.0
+        logger.warning("Cannot resolve coordinates for parcel %s — weather from (0,0)", effective_parcel)
+
     weather = await get_weather_snapshot(
-        latitude=0.0,  # TODO: resolve from parcel geometry
-        longitude=0.0,
+        latitude=latitude,
+        longitude=longitude,
         tenant_id=tenant_id,
     )
 

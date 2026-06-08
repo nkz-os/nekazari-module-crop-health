@@ -15,8 +15,19 @@ logger = logging.getLogger(__name__)
 ORION_URL = os.getenv("ORION_LD_URL", "http://orion-ld-service:1026")
 CONTEXT_URL = os.getenv(
     "ORION_LD_CONTEXT",
-    "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.6.jsonld",
+    "http://api-gateway-service:5000/ngsi-ld-context.json",
 )
+
+
+def _orion_headers(tenant_id: str = "") -> dict:
+    """NGSI-LD headers with platform @context for Orion-LD type expansion."""
+    headers = {
+        "Accept": "application/ld+json",
+        "Link": f'<{CONTEXT_URL}>; rel="http://www.w3.org/ns/json-ld#context"; type="application/ld+json"',
+    }
+    if tenant_id:
+        headers["NGSILD-Tenant"] = tenant_id
+    return headers
 
 
 @router.get("/assessments/latest")
@@ -180,9 +191,7 @@ async def ndvi_cwsi_correlation(
     try:
         # Query VegetationIndex from Orion-LD
         tenant_id = getattr(request.state, "tenant_id", "")
-        headers = {"Accept": "application/ld+json"}
-        if tenant_id:
-            headers["NGSILD-Tenant"] = tenant_id
+        headers = _orion_headers(tenant_id)
 
         async with httpx.AsyncClient(timeout=15.0) as client:
             vi_resp = await client.get(

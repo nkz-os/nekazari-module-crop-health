@@ -8,9 +8,11 @@ import CropHealthDetail from './components/CropHealthDetail';
 const App: React.FC = () => {
   const { t } = useTranslation('crop-health');
   const [selectedParcelId, setSelectedParcelId] = useState<string | null>(null);
+  const [selectedParcelName, setSelectedParcelName] = useState<string>("");
 
-  const handleSelectParcel = (parcelId: string) => {
+  const handleSelectParcel = (parcelId: string, parcelName: string) => {
     setSelectedParcelId(parcelId);
+    setSelectedParcelName(parcelName);
   };
 
   const handleViewInViewer = (parcelId: string) => {
@@ -51,7 +53,7 @@ const App: React.FC = () => {
           <>
             <div className="flex items-center justify-between mb-3">
               <h2 className="text-nkz-text-primary font-bold text-lg">
-                {selectedParcelId}
+                {selectedParcelName || selectedParcelId}
               </h2>
               <button
                 onClick={() => handleViewInViewer(selectedParcelId)}

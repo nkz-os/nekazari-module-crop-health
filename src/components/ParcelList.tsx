@@ -35,7 +35,7 @@ const INDICATOR_TOOLTIPS: Record<string, string> = {
 };
 
 interface ParcelListProps {
-  onSelectParcel: (parcelId: string) => void;
+  onSelectParcel: (parcelId: string, parcelName: string) => void;
   selectedParcelId: string | null;
 }
 
@@ -145,7 +145,7 @@ const ParcelList: React.FC<ParcelListProps> = ({ onSelectParcel, selectedParcelI
         {filtered.map(p => (
           <button
             key={p.parcelId}
-            onClick={() => onSelectParcel(p.parcelId)}
+            onClick={() => onSelectParcel(p.parcelId, p.parcelName || "")}
             className={`w-full text-left p-2 border-b border-nkz-border transition-colors hover:bg-nkz-surface-raised ${
               selectedParcelId === p.parcelId ? 'bg-nkz-accent-soft border-l-2 border-l-nkz-accent-base' : ''
             }`}

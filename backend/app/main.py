@@ -77,6 +77,10 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
+    # Auth — JWT validation + gateway header trust
+    from app.middleware.auth import AuthMiddleware
+    app.add_middleware(AuthMiddleware)
+
     # CORS
     app.add_middleware(
         CORSMiddleware,

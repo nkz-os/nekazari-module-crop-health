@@ -383,9 +383,6 @@ async def list_parcels(request: Request):
         logger.error("Failed to query Orion-LD for parcels: %s", e)
         return {"parcels": []}
 
-    logger.info("list_parcels: tenant_id=%s assessments=%d parcels_raw=%d",
-                tenant_id, len(assessments_raw), len(parcels_raw) if isinstance(parcels_raw, list) else -1)
-
     # Build assessment lookup by parcel ID (keep latest per parcel)
     assessment_by_parcel: dict[str, dict] = {}
     for e in assessments_raw:
@@ -454,8 +451,6 @@ async def list_parcels(request: Request):
         severity_order.get(p.get("overallSeverity", "LOW"), 3),
     ))
 
-    logger.info("list_parcels: returning %d parcels (with_data=%d, without=%d)",
-                len(parcels), sum(1 for p in parcels if p.get("hasData")), sum(1 for p in parcels if not p.get("hasData")))
     return {"parcels": parcels}
 
 

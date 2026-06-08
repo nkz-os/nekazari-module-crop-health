@@ -732,7 +732,187 @@ async def trigger(
     except Exception:
         pass  # Event bus is best-effort, never block the pipeline
 
+    # ── 6. Aggregate parent parcel if this is a child ──────────────────
+    try:
+        import httpx as _httpx
+        from app.config import get_settings as _gs
+        _settings = _gs()
+        async with _httpx.AsyncClient(timeout=10.0) as _client:
+            _resp = await _client.get(
+                f"{_settings.orion_ld_url}/ngsi-ld/v1/entities/"
+                f"urn:ngsi-ld:AgriParcel:{effective_parcel}",
+                params={"options": "keyValues"},
+                headers={
+                    "Accept": "application/ld+json",
+                    "NGSILD-Tenant": tenant_id,
+                } if tenant_id else {"Accept": "application/ld+json"},
+            )
+            if _resp.status_code == 200:
+                _entity = _resp.json()
+                _parent = _entity.get("hasAgriParcel")
+                if isinstance(_parent, dict):
+                    _parent_id = _parent.get("object")
+                else:
+                    _parent_id = _parent
+                if _parent_id and "AgriParcel" in str(_parent_id):
+                    await _aggregate_parent_composite(
+                        _parent_id, tenant_id, now,
+                    )
+    except Exception:
+        pass  # Aggregation is best-effort
+
     return assessment
+
+
+async def _aggregate_parent_composite(
+    parent_parcel_id: str,
+    tenant_id: str,
+    trigger_time: datetime,
+) -> None:
+    """Recalculate parent parcel composite as area-weighted avg of children.
+
+    Called after a child parcel's assessment is published.
+    Queries Orion-LD for all child parcels (hasAgriParcel -> parent),
+    fetches their latest CropHealthAssessment, and computes an
+    area-weighted composite index for the parent.
+    """
+    try:
+        import httpx
+        from app.config import get_settings as _gs
+
+        settings = _gs()
+        orion_url = settings.orion_ld_url
+
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            # Find all child parcels
+            children_resp = await client.get(
+                f"{orion_url}/ngsi-ld/v1/entities",
+                params={
+                    "type": "AgriParcel",
+                    "q": f'hasAgriParcel=="{parent_parcel_id}"',
+                    "limit": 20,
+                    "options": "keyValues",
+                },
+                headers={
+                    "Accept": "application/ld+json",
+                    "NGSILD-Tenant": tenant_id,
+                    "Fiware-Service": tenant_id,
+                    "Fiware-ServicePath": "/",
+                } if tenant_id else {"Accept": "application/ld+json"},
+            )
+            if children_resp.status_code != 200:
+                return
+            children = children_resp.json()
+            if not isinstance(children, list) or len(children) < 2:
+                return
+
+            # Fetch latest assessment per child, accumulate weighted composite
+            weighted_sum = 0.0
+            total_area = 0.0
+            count = 0
+            dominant = "none"
+
+            for child in children:
+                child_id = child["id"]
+                child_area_raw = child.get("area")
+                if isinstance(child_area_raw, dict):
+                    child_area = child_area_raw.get("value", 0)
+                else:
+                    child_area = child_area_raw or 0
+                if not child_area:
+                    continue
+                total_area += child_area
+
+                assess_resp = await client.get(
+                    f"{orion_url}/ngsi-ld/v1/entities",
+                    params={
+                        "type": "CropHealthAssessment",
+                        "q": f'hasAgriParcel=="{child_id}"',
+                        "limit": 1,
+                        "options": "keyValues",
+                    },
+                    headers={
+                        "Accept": "application/ld+json",
+                        "NGSILD-Tenant": tenant_id,
+                    } if tenant_id else {"Accept": "application/ld+json"},
+                )
+                if assess_resp.status_code != 200:
+                    continue
+                child_assessments = assess_resp.json()
+                if isinstance(child_assessments, list) and child_assessments:
+                    ca = child_assessments[0]
+                    csi = ca.get("compositeStressIndex")
+                    if isinstance(csi, dict):
+                        csi = csi.get("value")
+                    dom = ca.get("dominantStressor")
+                    if isinstance(dom, dict):
+                        dom = dom.get("value", "none")
+                    if csi is not None:
+                        weighted_sum += float(csi) * child_area
+                        count += 1
+                        if dom and dom != "none":
+                            dominant = dom
+
+            if count == 0 or total_area == 0:
+                return
+
+            parent_composite = round(weighted_sum / total_area, 1)
+
+            # Upsert parent aggregated assessment
+            parent_id_short = parent_parcel_id.split(":")[-1]
+            assessment_id = (
+                f"urn:ngsi-ld:CropHealthAssessment:{tenant_id}:"
+                f"{parent_id_short}:aggregated"
+            )
+            body = {
+                "id": assessment_id,
+                "type": "CropHealthAssessment",
+                "hasAgriParcel": {
+                    "type": "Relationship",
+                    "object": parent_parcel_id,
+                },
+                "assessedAt": {
+                    "type": "Property",
+                    "value": trigger_time.isoformat(),
+                },
+                "compositeStressIndex": {
+                    "type": "Property",
+                    "value": parent_composite,
+                },
+                "dominantStressor": {
+                    "type": "Property",
+                    "value": dominant if dominant != "none" else "aggregated",
+                },
+                "dataFidelity": {
+                    "type": "Property",
+                    "value": "aggregated_children",
+                },
+                "phenologySource": {
+                    "type": "Property",
+                    "value": f"aggregated_from_{count}_children",
+                },
+            }
+
+            await client.post(
+                f"{orion_url}/ngsi-ld/v1/entities",
+                json=body,
+                headers={
+                    "Content-Type": "application/ld+json",
+                    "NGSILD-Tenant": tenant_id,
+                    "Fiware-Service": tenant_id,
+                    "Fiware-ServicePath": "/",
+                } if tenant_id else {"Content-Type": "application/ld+json"},
+            )
+            logger.info(
+                "Parent parcel %s composite aggregated from %d children: %.1f",
+                parent_parcel_id, count, parent_composite,
+            )
+
+    except Exception as exc:
+        logger.warning(
+            "Failed to aggregate parent composite for %s: %s",
+            parent_parcel_id, exc,
+        )
 
 
 async def _publish_redis_event(stream: str, event: dict) -> None:

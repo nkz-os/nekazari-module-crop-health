@@ -36,7 +36,7 @@ class Settings(BaseSettings):
 
     # ── External Services ────────────────────────────────────────────────────
     orion_ld_url: str = "http://orion-ld-service:1026"
-    orion_ld_context: str = "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.6.jsonld"
+    orion_ld_context: str = "http://api-gateway-service:5000/ngsi-ld-context.json"
     bioorchestrator_url: str = "http://bioorchestrator-api-service:8420"
     weather_api_url: str = "http://timeseries-reader-service:5000"
     weather_db_url: str = ""  # deprecated — use weather_api_url instead

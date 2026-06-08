@@ -30,6 +30,27 @@ from app.schemas import (
 
 logger = logging.getLogger(__name__)
 
+
+def _orion_headers(tenant_id: str = "") -> dict[str, str]:
+    """Build NGSI-LD headers with platform @context for Orion-LD queries.
+    
+    The Link header is REQUIRED for Orion-LD to expand short entity type
+    names (e.g. AgriParcel) to their full JSON-LD URIs. Without it,
+    type=AgriParcel won't match https://saref.etsi.org/saref4agri/AgriParcel.
+    """
+    settings = get_settings()
+    headers: dict[str, str] = {
+        "Accept": "application/ld+json",
+        "Link": (
+            f'<{settings.orion_ld_context}>; '
+            'rel="http://www.w3.org/ns/json-ld#context"; '
+            'type="application/ld+json"'
+        ),
+    }
+    if tenant_id:
+        headers["NGSILD-Tenant"] = tenant_id
+    return headers
+
 # ── Phenology cache ──────────────────────────────────────────────────────────
 # Key: (species, stage), Value: PhenologyParams
 _phenology_cache: TTLCache[tuple[str, str], PhenologyParams] = TTLCache(
@@ -333,12 +354,7 @@ async def get_agri_crop(
                     "limit": 1,
                     "options": "keyValues",
                 },
-                headers={
-                    "Accept": "application/ld+json",
-                    "NGSILD-Tenant": tenant_id,
-                    "Fiware-Service": tenant_id,
-                    "Fiware-ServicePath": "/",
-                } if tenant_id else {"Accept": "application/ld+json"},
+                headers=_orion_headers(tenant_id),
             )
             if resp.status_code == 200:
                 entities = resp.json()
@@ -381,13 +397,10 @@ async def _resolve_parcel_coords(parcel_id: str, tenant_id: str) -> tuple[float,
     settings = get_settings()
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
-            headers = {"Accept": "application/ld+json"}
-            if tenant_id:
-                headers["NGSILD-Tenant"] = tenant_id
             resp = await client.get(
                 f"{settings.orion_ld_url}/ngsi-ld/v1/entities/urn:ngsi-ld:AgriParcel:{parcel_id}",
                 params={"options": "keyValues"},
-                headers=headers,
+                headers=_orion_headers(tenant_id),
             )
             if resp.status_code == 200:
                 data = resp.json()
@@ -709,10 +722,7 @@ async def get_multiyear_vigor_anomaly(
                     "limit": 500,
                     "options": "keyValues",
                 },
-                headers={
-                    "Accept": "application/ld+json",
-                    "NGSILD-Tenant": tenant_id,
-                } if tenant_id else {"Accept": "application/ld+json"},
+                headers=_orion_headers(tenant_id),
             )
             if resp.status_code != 200:
                 logger.warning(
@@ -845,10 +855,7 @@ async def get_penetrometer_data(
                     "limit": 50,
                     "options": "keyValues",
                 },
-                headers={
-                    "Accept": "application/ld+json",
-                    "NGSILD-Tenant": tenant_id,
-                } if tenant_id else {"Accept": "application/ld+json"},
+                headers=_orion_headers(tenant_id),
             )
             if resp.status_code != 200:
                 return None
@@ -938,10 +945,7 @@ async def get_ndvi_climatology(
                     "limit": 500,
                     "options": "keyValues",
                 },
-                headers={
-                    "Accept": "application/ld+json",
-                    "NGSILD-Tenant": tenant_id,
-                } if tenant_id else {"Accept": "application/ld+json"},
+                headers=_orion_headers(tenant_id),
             )
             if resp.status_code != 200:
                 return _climatology_unavailable(f"Orion-LD returned {resp.status_code}")

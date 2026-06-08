@@ -61,8 +61,8 @@ const ParcelList: React.FC<ParcelListProps> = ({ onSelectParcel, selectedParcelI
     const fetchData = async () => {
       try {
         const [parcelsResp, sourcesResp] = await Promise.all([
-          fetch('/api/crop-health/parcels'),
-          fetch('/api/crop-health/sources'),
+          fetch('/api/crop-health/parcels', { credentials: 'include' }),
+          fetch('/api/crop-health/sources', { credentials: 'include' }),
         ]);
 
         const parcelsData = parcelsResp.ok ? await parcelsResp.json() : { parcels: [] };

@@ -67,6 +67,14 @@ class AuthMiddleware(BaseHTTPMiddleware):
         if request.method == "OPTIONS":
             return await call_next(request)
 
+        # Trust gateway-injected headers (request already passed api-gateway auth)
+        gateway_tenant = request.headers.get("X-Tenant-ID", "")
+        gateway_user = request.headers.get("X-User-ID", "")
+        if gateway_tenant and gateway_user:
+            request.state.tenant_id = gateway_tenant
+            request.state.user_id = gateway_user
+            return await call_next(request)
+
         # Extract token: Authorization header or httpOnly cookie
         token = self._extract_token(request)
         if not token:

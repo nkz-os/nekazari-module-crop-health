@@ -26,6 +26,7 @@ from app.schemas import (
     RecommendedAction,
     Severity,
     ThermalStressResult,
+    VHIClimatologyWindow,
     VigorResult as VigorResultSchema,
 )
 from app.services.context_client import get_phenology_params, get_weather_snapshot
@@ -422,9 +423,11 @@ async def trigger(
 
     # ── 2.5 VHI/ASIS Engine (Agricultural Drought Early Warning) ────────
     try:
+        from datetime import datetime as dt
         from app.engines.vhi_asis import evaluate_vhi
         from app.schemas import VHIResult as VHIResultSchema
         from app.services.landsat_lst_client import LandsatTirsClient
+        from app.services.context_client import get_ndvi_climatology
 
         temp_actual = None
         temp_source = "none"
@@ -450,30 +453,55 @@ async def trigger(
                 temp_source = "landsat_tirs"
                 fidelity = "modeled_opendata"
 
-        # Historical min/max placeholders (to be fetched from climatology DB in future)
-        ndvi_min_hist = 0.15
-        ndvi_max_hist = 0.85
         temp_min_hist = 10.0
         temp_max_hist = 45.0
 
-        vr = evaluate_vhi(
-            ndvi_actual=ndvi_val,
-            ndvi_min=ndvi_min_hist,
-            ndvi_max=ndvi_max_hist,
-            temp_actual=temp_actual,
-            temp_min=temp_min_hist,
-            temp_max=temp_max_hist,
-            temp_source=temp_source,
-            fidelity=fidelity,
+        # Resolve crop EPPO for filtered climatology
+        eppo_for_climo = None
+        if crop_context and crop_context.crop and crop_context.crop.eppo:
+            eppo_for_climo = crop_context.crop.eppo
+
+        current_month = dt.now(timezone.utc).month
+        climo = await get_ndvi_climatology(
+            parcel_id=effective_parcel,
+            tenant_id=tenant_id,
+            target_month=current_month,
+            eppo_code=eppo_for_climo,
         )
-        if vr.vhi is not None:
-            assessment.vhi = VHIResultSchema(
-                vci=vr.vci,
-                tci=vr.tci,
-                vhi=vr.vhi,
-                asi_pct=vr.asi_pct,
-                tci_source=vr.tci_source,
-                data_fidelity=vr.data_fidelity,
+
+        assessment.vhi_climatology_window = VHIClimatologyWindow(
+            period_start=climo.get("period_start"),
+            period_end=climo.get("period_end"),
+            sample_count=climo["sample_count"],
+            filter_criteria=climo["filter_criteria"],
+            is_reliable=climo["is_reliable"],
+            reason=climo.get("reason"),
+        )
+
+        if climo["is_reliable"] and ndvi_val is not None:
+            vr = evaluate_vhi(
+                ndvi_actual=ndvi_val,
+                ndvi_min=climo["ndvi_p05"],
+                ndvi_max=climo["ndvi_p95"],
+                temp_actual=temp_actual,
+                temp_min=temp_min_hist,
+                temp_max=temp_max_hist,
+                temp_source=temp_source,
+                fidelity=fidelity,
+            )
+            if vr.vhi is not None:
+                assessment.vhi = VHIResultSchema(
+                    vci=vr.vci,
+                    tci=vr.tci,
+                    vhi=vr.vhi,
+                    asi_pct=vr.asi_pct,
+                    tci_source=vr.tci_source,
+                    data_fidelity=vr.data_fidelity,
+                )
+        else:
+            logger.info(
+                "VHI skipped for parcel %s: climatology unreliable (%s)",
+                effective_parcel, climo.get("reason", "unknown"),
             )
     except Exception as e:
         logger.error("VHI engine failed: %s", e)

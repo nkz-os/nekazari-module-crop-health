@@ -252,6 +252,16 @@ class VHIResult(BaseModel):
     data_fidelity: str = "none"
 
 
+class VHIClimatologyWindow(BaseModel):
+    """Transparent tracking of what NDVI climatology was used for VHI."""
+    period_start: str | None = None
+    period_end: str | None = None
+    sample_count: int = 0
+    filter_criteria: str = "none"
+    is_reliable: bool = False
+    reason: str | None = None
+
+
 # ── SAR Moisture & Flood ───────────────────────────────────────────────────
 
 
@@ -346,6 +356,7 @@ class CropHealthAssessment(BaseModel):
     phenology_progress: PhenologyProgressResult | None = None
     wue: WUEResult | None = None
     vhi: VHIResult | None = None
+    vhi_climatology_window: VHIClimatologyWindow | None = None
     sar: SARResult | None = None
     compaction_risk: CompactionRiskResult | None = None
     overall_severity: Severity = Severity.LOW

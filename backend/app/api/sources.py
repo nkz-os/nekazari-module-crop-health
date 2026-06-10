@@ -229,12 +229,15 @@ async def _detail_sources(request: Request, parcelId: str) -> dict:
             logger.warning("Source query failed for %s: %s", type_, e)
         return []
 
-    # Query all sources in parallel
+    # Query all sources in parallel with dual relationship check (hasAgriParcel|refAgriParcel)
+    rel_q = f'(hasAgriParcel=="{parcel_urn}"|refAgriParcel=="{parcel_urn}")'
     results = await asyncio.gather(
-        _query("CropHealthAssessment", f'hasAgriParcel=="{parcel_urn}"', 1),
-        _query("DeviceMeasurement", f'hasAgriParcel=="{parcel_urn}"', 20),
-        _query("EOProduct", f'hasAgriParcel=="{parcel_urn}";productType=="NDVI"', 1),
-        _query("AgriCrop", f'hasAgriParcel=="{parcel_urn}"', 1),
+        _query("CropHealthAssessment", rel_q, 1),
+        _query("DeviceMeasurement", rel_q, 20),
+        _query("EOProduct", f'{rel_q};productType=="NDVI"', 1),
+        _query("AgriCrop", rel_q, 1),
+        _query("VegetationIndex", rel_q, 1),
+        _query("WeatherObserved", f'locatedAt=="{parcel_urn}"', 1),
         return_exceptions=True,
     )
 
@@ -242,6 +245,8 @@ async def _detail_sources(request: Request, parcelId: str) -> dict:
     iot_devices = results[1] if not isinstance(results[1], BaseException) else []
     veg_indices = results[2] if not isinstance(results[2], BaseException) else []
     agri_crops = results[3] if not isinstance(results[3], BaseException) else []
+    vi_fallback = results[4] if not isinstance(results[4], BaseException) else []
+    weather_obs = results[5] if not isinstance(results[5], BaseException) else []
 
     assessment = assessments[0] if assessments else {}
 
@@ -298,13 +303,27 @@ async def _detail_sources(request: Request, parcelId: str) -> dict:
 
     # ── Weather ───────────────────────────────────────────────────────
     weather_parts = []
+    weather_last_ts = None
+    # Check WeatherObserved entity (SDM standard)
+    if weather_obs:
+        wo = weather_obs[0]
+        temp = wo.get("temperature")
+        if temp is not None:
+            weather_parts.append(f"{temp}°C")
+        et0 = wo.get("et0")
+        if et0 is not None:
+            weather_parts.append(f"ET0 {et0}mm")
+        weather_last_ts = wo.get("dateObserved")
+    # Fallback: CropHealthAssessment VPD
     if assessment.get("vpdKpa") is not None:
         weather_parts.append(f"VPD {assessment['vpdKpa']:.1f}kPa")
+        if not weather_last_ts:
+            weather_last_ts = assessment.get("assessedAt")
     weather_summary = " · ".join(weather_parts) if weather_parts else "sin datos"
     weather = {
         "status": "ok" if weather_parts else "unavailable",
-        "freshness": _freshness(assessment.get("assessedAt")),
-        "lastDataAt": assessment.get("assessedAt"),
+        "freshness": _freshness(weather_last_ts),
+        "lastDataAt": weather_last_ts,
         "summary": weather_summary,
         "details": {
             "vpdKpa": assessment.get("vpdKpa"),
@@ -314,14 +333,20 @@ async def _detail_sources(request: Request, parcelId: str) -> dict:
     # ── Satellite ──────────────────────────────────────────────────────
     ndvi_val = None
     ndvi_ts = None
+    # Primary: EOProduct with productType=NDVI
     if veg_indices:
         vi = veg_indices[0]
-        ndvi_val = vi.get("ndviValue") or vi.get("value")
-        ndvi_ts = vi.get("dateObserved")
+        ndvi_val = vi.get("ndviMean") or vi.get("ndviValue") or vi.get("value")
+        ndvi_ts = vi.get("dateObserved") or vi.get("sensingDate")
+    # Fallback: legacy VegetationIndex during migration window
+    if ndvi_val is None and vi_fallback:
+        fb = vi_fallback[0]
+        ndvi_val = fb.get("ndviMean") or fb.get("ndviMax")
+        ndvi_ts = fb.get("sensingDate")
     ndvi = {
         "status": "ok" if ndvi_val is not None else "unavailable",
-        "freshness": _freshness(ndvi_ts),
-        "lastDataAt": ndvi_ts,
+        "freshness": _freshness(ndvi_ts) if isinstance(ndvi_ts, str) else "none",
+        "lastDataAt": ndvi_ts if isinstance(ndvi_ts, str) else None,
         "lastValue": ndvi_val,
     }
 

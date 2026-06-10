@@ -49,3 +49,8 @@ INSERT INTO marketplace_modules (
     route_path = EXCLUDED.route_path,
     is_active = true,
     updated_at = NOW();
+
+UPDATE marketplace_modules
+SET metadata = COALESCE(metadata, '{}'::jsonb)
+    || '{"setup_parcel_url": "http://crop-health-api-service:8000/api/crop-health/internal/setup-parcel"}'::jsonb
+WHERE id = 'crop-health';

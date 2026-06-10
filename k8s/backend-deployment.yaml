@@ -27,7 +27,7 @@ spec:
     spec:
       containers:
         - name: backend
-          image: ghcr.io/nkz-os/nekazari-module-crop-health@sha256:af851db266bd1042c1f44c3dd545c94bd7303b0ff9549f0e051cded22f262d16  # v1.1.1 internal-path auth exemption (PR #8)
+          image: ghcr.io/nkz-os/nekazari-module-crop-health@sha256:2cfc590c185307bc0dbd9f4d062180423e27c0aeb117746571a8142f3471bfb3  # v1.1.3 bundles nkz-platform-sdk 0.4.1 (idempotent setup-parcel)
           imagePullPolicy: Always
           ports:
             - name: http

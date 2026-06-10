@@ -30,9 +30,12 @@ _PUBLIC_PATHS = {
     "/readyz",
 }
 
-# Webhook paths — authenticated by Fiware-Service header, not JWT
+# Paths authenticated by their own mechanism instead of JWT:
+# webhooks by Fiware-Service header, internal endpoints by
+# X-Internal-Service-Secret (enforced in the route handler).
 _WEBHOOK_PREFIXES = [
     "/webhooks/",
+    "/internal/",
 ]
 
 # JWKS cache

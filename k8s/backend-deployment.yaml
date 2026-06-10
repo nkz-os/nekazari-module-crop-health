@@ -67,6 +67,13 @@ spec:
             # FIWARE
             - name: ORION_LD_URL
               value: "http://orion-ld-service:1026"
+            - name: CONTEXT_URL
+              value: "http://api-gateway-service:5000/ngsi-ld-context.json"
+            - name: INTERNAL_SERVICE_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: internal-service-secret
+                  key: INTERNAL_SERVICE_SECRET
             # External services
             - name: BIOORCHESTRATOR_URL
               value: "http://bioorchestrator-api-service:8420"

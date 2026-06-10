@@ -27,7 +27,7 @@ spec:
     spec:
       containers:
         - name: backend
-          image: ghcr.io/nkz-os/crop-health-backend@sha256:f2e8a1f51651a50d67832f7f7c5d287d1deb7c41bd377610126a7998d44fa283  # v1.0.1 setup-parcel (PR #5)
+          image: ghcr.io/nkz-os/nekazari-module-crop-health@sha256:2368855060f35ea8e45688bf63878afaf9c96504d9355699ed70407585c9caac  # v1.1.0 setup-parcel (tag build of 71b7480)
           imagePullPolicy: Always
           ports:
             - name: http

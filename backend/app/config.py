@@ -40,7 +40,7 @@ class Settings(BaseSettings):
     bioorchestrator_url: str = "http://bioorchestrator-api-service:8420"
     weather_api_url: str = "http://timeseries-reader-service:5000"
     weather_db_url: str = ""  # deprecated — use weather_api_url instead
-    soil_module_url: str = "http://nkz-soil-service:5000"
+    soil_module_url: str = "http://soil-module-service:8000"
 
     # ── Cache TTLs (seconds) ─────────────────────────────────────────────────
     phenology_cache_ttl: int = 3600  # 1h — phenology params change slowly

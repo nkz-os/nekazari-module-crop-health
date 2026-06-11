@@ -5,6 +5,9 @@ import respx
 
 from app.main import app
 
+# AuthMiddleware trusts gateway-injected identity headers
+GATEWAY_HEADERS = {"X-Tenant-ID": "test-tenant", "X-User-ID": "test-user"}
+
 
 @pytest.fixture
 def anyio_backend():
@@ -19,7 +22,7 @@ async def test_sources_list_returns_empty_for_no_parcels():
         mock.get().respond(json=[])
 
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
+        async with AsyncClient(transport=transport, base_url="http://test", headers=GATEWAY_HEADERS) as client:
             resp = await client.get("/api/crop-health/sources")
             assert resp.status_code == 200
             data = resp.json()
@@ -57,7 +60,7 @@ async def test_sources_list_with_assessment_data():
         ])
 
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
+        async with AsyncClient(transport=transport, base_url="http://test", headers=GATEWAY_HEADERS) as client:
             resp = await client.get("/api/crop-health/sources")
             assert resp.status_code == 200
             data = resp.json()
@@ -96,11 +99,14 @@ async def test_sources_detail_returns_source_status():
                 "dateObserved": "2026-06-07T10:25:00Z",
             }
         ])
+        # Real VegetationIndex entities (vegetation module
+        # fiware_integration.py) carry ndviMean/Min/Max/StdDev + sensingDate,
+        # not ndviValue/dateObserved.
         mock.get(url__regex=r".*type=VegetationIndex.*hasAgriParcel.*").respond(json=[
             {
                 "id": "urn:ngsi-ld:VegetationIndex:vi-1",
-                "ndviValue": 0.72,
-                "dateObserved": "2026-06-05T10:30:00Z",
+                "ndviMean": 0.72,
+                "sensingDate": "2026-06-05T10:30:00Z",
             }
         ])
         mock.get(url__regex=r".*type=AgriCrop.*hasAgriParcel.*").respond(json=[
@@ -114,7 +120,7 @@ async def test_sources_detail_returns_source_status():
         ])
 
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
+        async with AsyncClient(transport=transport, base_url="http://test", headers=GATEWAY_HEADERS) as client:
             resp = await client.get("/api/crop-health/sources?parcelId=Parcela-4")
             assert resp.status_code == 200
             data = resp.json()
@@ -138,7 +144,7 @@ async def test_sources_detail_no_data_parcel():
         mock.get().respond(json=[])
 
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
+        async with AsyncClient(transport=transport, base_url="http://test", headers=GATEWAY_HEADERS) as client:
             resp = await client.get("/api/crop-health/sources?parcelId=Parcela-99")
             assert resp.status_code == 200
             data = resp.json()

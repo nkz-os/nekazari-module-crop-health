@@ -10,7 +10,10 @@ def client():
     with patch("app.services.redis_state.RedisState.create", AsyncMock()), \
          patch("app.services.redis_state.RedisState.health_check", AsyncMock(return_value={"redis": "connected"})):
         from app.main import app
-        return TestClient(app)
+        c = TestClient(app)
+        # AuthMiddleware trusts gateway-injected identity headers
+        c.headers.update({"X-Tenant-ID": "test-tenant", "X-User-ID": "test-user"})
+        return c
 
 
 class TestParcels:

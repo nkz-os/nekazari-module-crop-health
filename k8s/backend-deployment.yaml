@@ -75,6 +75,8 @@ spec:
                   name: internal-service-secret
                   key: INTERNAL_SERVICE_SECRET
             # External services
+            - name: SOIL_MODULE_URL
+              value: "http://soil-module-service:8000"
             - name: BIOORCHESTRATOR_URL
               value: "http://bioorchestrator-api-service:8420"
             # Weather DB (from shared secret)

@@ -1002,16 +1002,20 @@ const pt = {
     },
 };
 
-if (typeof window !== 'undefined') {
-    const nkzSdk = (window as any).__NKZ_SDK__;
-    if (nkzSdk?.i18n) {
-        nkzSdk.i18n.addResources('en', 'crop-health', en['crop-health']);
-        nkzSdk.i18n.addResources('es', 'crop-health', es['crop-health']);
-        nkzSdk.i18n.addResources('ca', 'crop-health', ca['crop-health']);
-        nkzSdk.i18n.addResources('eu', 'crop-health', eu['crop-health']);
-        nkzSdk.i18n.addResources('fr', 'crop-health', fr['crop-health']);
-        nkzSdk.i18n.addResources('pt', 'crop-health', pt['crop-health']);
-    }
+import { i18n } from '@nekazari/sdk';
+
+const NAMESPACE = 'crop-health';
+
+export function registerCropHealthTranslations(): void {
+  if (!i18n || typeof (i18n as any).addResourceBundle !== 'function') return;
+  i18n.addResourceBundle('en', NAMESPACE, en, true, true);
+  i18n.addResourceBundle('es', NAMESPACE, es, true, true);
+  i18n.addResourceBundle('ca', NAMESPACE, ca, true, true);
+  i18n.addResourceBundle('eu', NAMESPACE, eu, true, true);
+  i18n.addResourceBundle('fr', NAMESPACE, fr, true, true);
+  i18n.addResourceBundle('pt', NAMESPACE, pt, true, true);
 }
+
+registerCropHealthTranslations();
 
 export { en, es, ca, eu, fr, pt };

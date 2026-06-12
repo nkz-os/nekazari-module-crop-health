@@ -45,7 +45,7 @@ const CropHealthContextPanel: React.FC<Props> = ({
     return (
       <div className="text-center p-4">
         <span className="text-2xl">🌱</span>
-        <p className="text-nkz-text-muted text-sm mt-1">{t('contextPanel.noData')}</p>
+        <p className="text-sm text-nkz-text-muted mt-1">{t('contextPanel.noData')}</p>
       </div>
     );
   }

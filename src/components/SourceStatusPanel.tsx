@@ -48,13 +48,28 @@ interface SourceStatusPanelProps {
   parcelName?: string;
 }
 
-const STATUS_ICONS: Record<string, string> = {
-  ok: '✅',
+const STATUS_DOT: Record<string, string> = {
+  ok: '🟢',
   degraded: '🟡',
-  unavailable: '❌',
-  error: '❌',
+  unavailable: '🔴',
+  error: '🔴',
   none: '⚪',
 };
+
+function StatusBadge({ status, label }: { status: string; label: string }) {
+  const cls: Record<string, string> = {
+    ok: 'bg-green-100 text-green-800 border border-green-200',
+    degraded: 'bg-amber-100 text-amber-800 border border-amber-200',
+    error: 'bg-red-100 text-red-800 border border-red-200',
+    unavailable: 'bg-red-100 text-red-800 border border-red-200',
+    none: 'bg-gray-100 text-gray-800 border border-gray-200',
+  };
+  return (
+    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium leading-4 ${cls[status] || cls.none}`}>
+      {label}
+    </span>
+  );
+}
 
 function relativeTime(iso: string | null): string {
   if (!iso) return '—';
@@ -106,9 +121,9 @@ const SourceStatusPanel: React.FC<SourceStatusPanelProps> = ({ parcelId, parcelN
 
   if (loading) {
     return (
-      <div className="bg-nkz-surface-raised rounded p-3 mb-3 border border-nkz-border animate-pulse space-y-2">
+      <div className="bg-nkz-surface-raised border border-nkz-border rounded-lg p-3 mb-3 animate-pulse space-y-2">
         {[1, 2, 3, 4, 5, 6].map(i => (
-          <div key={i} className="h-4 bg-nkz-border rounded w-full" />
+          <div key={i} className="h-4 bg-gray-200 rounded w-full" />
         ))}
       </div>
     );
@@ -116,10 +131,10 @@ const SourceStatusPanel: React.FC<SourceStatusPanelProps> = ({ parcelId, parcelN
 
   if (error || !data) {
     return (
-      <div className="bg-nkz-surface-raised rounded p-3 mb-3 border border-nkz-border text-center">
-        <p className="text-nkz-text-muted text-sm">{t('sources.error')}: {error}</p>
+      <div className="bg-nkz-surface-raised border border-nkz-border rounded-lg p-3 mb-3 text-center">
+        <p className="text-sm text-nkz-text-muted">{t('sources.error')}: {error}</p>
         <button
-          className="text-nkz-accent-base text-xs mt-1 underline"
+          className="text-xs text-nkz-accent-base underline mt-1 cursor-pointer bg-transparent border-none"
           onClick={() => { setLoading(true); fetchData(); }}
         >
           {t('sources.retry')}
@@ -150,23 +165,23 @@ const SourceStatusPanel: React.FC<SourceStatusPanelProps> = ({ parcelId, parcelN
     (src.satellite.sar.status === 'error' ? 1 : 0);
 
   return (
-    <div className="bg-nkz-surface-raised rounded p-3 mb-3 border border-nkz-border">
+    <div className="bg-nkz-surface-raised border border-nkz-border rounded-lg p-3 mb-3 shadow-sm">
       {/* Header */}
-      <div className="flex items-center justify-between mb-2">
+      <div className="flex items-start justify-between">
         <div>
-          <h3 className="text-nkz-text-primary font-semibold text-sm">
+          <h3 className="text-sm font-semibold text-nkz-text-primary">
             {t('sources.title', { parcel: parcelName || parcelId })}
           </h3>
-          <p className="text-nkz-text-muted text-xs">
-            🟢 {countActive} {t('sources.activeCount')}
-            {countDegraded > 0 && ` · 🟡 ${countDegraded} ${t('sources.degradedCount')}`}
-            {countDown > 0 && ` · 🔴 ${countDown} ${t('sources.downCount')}`}
-          </p>
+          <div className="flex flex-wrap gap-1 mt-1">
+            <StatusBadge status="ok" label={`🟢 ${countActive} ${t('sources.activeCount')}`} />
+            {countDegraded > 0 && <StatusBadge status="degraded" label={`🟡 ${countDegraded} ${t('sources.degradedCount')}`} />}
+            {countDown > 0 && <StatusBadge status="error" label={`🔴 ${countDown} ${t('sources.downCount')}`} />}
+          </div>
         </div>
         <button
           onClick={() => fetchData(true)}
           disabled={refreshing}
-          className="text-nkz-accent-base text-lg hover:opacity-70 disabled:opacity-40"
+          className="text-lg text-nkz-accent-base hover:opacity-70 disabled:opacity-40 cursor-pointer bg-transparent border-none"
           title={t('sources.refresh')}
         >
           {refreshing ? '⏳' : '🔄'}
@@ -174,7 +189,7 @@ const SourceStatusPanel: React.FC<SourceStatusPanelProps> = ({ parcelId, parcelN
       </div>
 
       {/* Source rows */}
-      <div className="space-y-1.5">
+      <div className="space-y-1.5 mt-2">
         <SourceRow icon="🌍" label={t('sources.soil.label')} status={src.soil.status}
           freshness={src.soil.freshness} lastDataAt={src.soil.lastDataAt}
           summary={src.soil.summary || t('sources.noData')} />
@@ -226,11 +241,11 @@ interface SourceRowProps {
   summary: string;
 }
 
-const SourceRow: React.FC<SourceRowProps> = ({ icon, label, status, freshness, lastDataAt, summary }) => (
+const SourceRow: React.FC<SourceRowProps> = ({ icon, label, status, lastDataAt, summary }) => (
   <div className="flex items-center gap-2 text-sm">
     <span className="w-5 text-center flex-shrink-0">{icon}</span>
-    <span className="text-nkz-text-primary w-28 flex-shrink-0 truncate">{label}</span>
-    <span className="flex-shrink-0">{STATUS_ICONS[status] || '❓'}</span>
+    <span className="text-nkz-text-primary w-28 flex-shrink-0 truncate text-xs">{label}</span>
+    <span className="flex-shrink-0 text-xs">{STATUS_DOT[status] || '❓'}</span>
     <span className="text-nkz-text-muted text-xs flex-shrink-0 w-16">{relativeTime(lastDataAt)}</span>
     <span className="text-nkz-text-secondary text-xs truncate">{summary}</span>
   </div>

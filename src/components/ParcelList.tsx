@@ -26,19 +26,6 @@ const INDICATOR_COLORS: Record<string, string> = {
   grey: '#9ca3af',
 };
 
-const INDICATOR_TOOLTIPS: Record<string, string> = {
-  green: 'Datos propios OK — sensores IoT activos',
-  blue: 'Datos públicos OK — sin sensores IoT propios',
-  yellow: 'Datos escasos — pocas fuentes activas',
-  red: 'Degradado — fuentes caídas o sin datos recientes',
-  grey: 'Sin datos — parcela sin fuentes configuradas',
-};
-
-interface ParcelListProps {
-  onSelectParcel: (parcelId: string, parcelName: string) => void;
-  selectedParcelId: string | null;
-}
-
 function relativeTime(iso: string | undefined): string {
   if (!iso) return '';
   const diff = Date.now() - new Date(iso).getTime();
@@ -48,6 +35,11 @@ function relativeTime(iso: string | undefined): string {
   const hours = Math.floor(mins / 60);
   if (hours < 24) return `hace ${hours}h`;
   return `hace ${Math.floor(hours / 24)}d`;
+}
+
+interface ParcelListProps {
+  onSelectParcel: (parcelId: string, parcelName: string) => void;
+  selectedParcelId: string | null;
 }
 
 const ParcelList: React.FC<ParcelListProps> = ({ onSelectParcel, selectedParcelId }) => {
@@ -102,9 +94,12 @@ const ParcelList: React.FC<ParcelListProps> = ({ onSelectParcel, selectedParcelI
 
   if (loading) {
     return (
-      <div className="space-y-2 p-2">
+      <div className="p-2 space-y-2">
+        <div className="animate-pulse mb-2">
+          <div className="h-9 bg-gray-200 rounded" />
+        </div>
         {[1, 2, 3, 4, 5].map(i => (
-          <div key={i} className="animate-pulse h-14 bg-nkz-border rounded" />
+          <div key={i} className="animate-pulse h-14 bg-gray-100 rounded" />
         ))}
       </div>
     );
@@ -113,9 +108,9 @@ const ParcelList: React.FC<ParcelListProps> = ({ onSelectParcel, selectedParcelI
   if (error) {
     return (
       <div className="p-3 text-center">
-        <p className="text-nkz-text-muted text-sm">{t('error')}: {error}</p>
+        <p className="text-sm text-nkz-text-muted">{t('error')}: {error}</p>
         <button
-          className="text-nkz-accent-base text-xs mt-1 underline"
+          className="text-xs text-nkz-accent-base underline mt-1 cursor-pointer bg-transparent border-none"
           onClick={() => window.location.reload()}
         >
           {t('retry')}
@@ -128,49 +123,53 @@ const ParcelList: React.FC<ParcelListProps> = ({ onSelectParcel, selectedParcelI
     <div className="h-full flex flex-col">
       {/* Search */}
       <div className="p-2">
-        <input
-          type="text"
-          placeholder={t('parcelList.search')}
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          className="w-full px-2 py-1.5 text-sm border border-nkz-border rounded bg-nkz-surface text-nkz-text-primary placeholder:text-nkz-text-muted focus:outline-none focus:border-nkz-accent-base"
-        />
+        <div className="relative">
+          <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-nkz-text-muted">🔍</span>
+          <input
+            type="text"
+            placeholder={t('parcelList.search')}
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            className="w-full pl-7 pr-2.5 py-1.5 text-sm border border-nkz-border rounded-lg bg-nkz-surface text-nkz-text-primary placeholder:text-nkz-text-muted focus:outline-none focus:border-nkz-accent-base focus:ring-1 focus:ring-nkz-accent-base/20"
+          />
+        </div>
       </div>
 
       {/* List */}
       <div className="flex-1 overflow-y-auto">
         {filtered.length === 0 && (
-          <p className="text-nkz-text-muted text-sm text-center p-4">{t('parcelList.noParcels')}</p>
+          <p className="text-sm text-nkz-text-muted text-center p-4">{t('parcelList.noParcels')}</p>
         )}
         {filtered.map(p => (
           <button
             key={p.parcelId}
             onClick={() => onSelectParcel(p.parcelId, p.parcelName || "")}
-            className={`w-full text-left p-2 border-b border-nkz-border transition-colors hover:bg-nkz-surface-raised ${
-              selectedParcelId === p.parcelId ? 'bg-nkz-accent-soft border-l-2 border-l-nkz-accent-base' : ''
+            className={`w-full text-left p-2.5 border-b border-nkz-border transition-colors cursor-pointer bg-transparent ${
+              selectedParcelId === p.parcelId
+                ? 'bg-nkz-accent-soft border-l-[3px] border-l-nkz-accent-base'
+                : 'hover:bg-nkz-surface-raised border-l-[3px] border-l-transparent'
             }`}
           >
-            <div className="flex items-center gap-2">
+            <div className="flex items-start gap-2">
               <span
-                title={INDICATOR_TOOLTIPS[p.healthIndicator || 'grey']}
+                title={p.healthIndicator || 'grey'}
+                className="inline-block flex-shrink-0 mt-1"
                 style={{
-                  display: 'inline-block',
                   width: 10,
                   height: 10,
                   borderRadius: '50%',
                   backgroundColor: INDICATOR_COLORS[p.healthIndicator || 'grey'] || '#9ca3af',
-                  flexShrink: 0,
                   boxShadow: p.healthIndicator === 'green' ? '0 0 6px rgba(22,163,74,0.4)' : undefined,
                 }}
               />
               <div className="min-w-0 flex-1">
-                <p className="text-nkz-text-primary text-sm font-medium truncate">
+                <p className="text-sm font-medium text-nkz-text-primary truncate">
                   {p.parcelName || p.parcelId}
                 </p>
-                <div className="flex items-center gap-2 text-xs text-nkz-text-muted">
-                  {p.cropName && <span>{p.cropName}</span>}
-                  {p.phenologyStage && <span>· {p.phenologyStage}</span>}
-                  {p.areaHa != null && <span>· {p.areaHa.toFixed(1)} ha</span>}
+                <div className="flex items-center gap-2 text-xs text-nkz-text-muted mt-0.5">
+                  {p.cropName && <span>🌾 {p.cropName}</span>}
+                  {p.phenologyStage && <span>🌸 {p.phenologyStage}</span>}
+                  {p.areaHa != null && <span>📐 {p.areaHa.toFixed(1)} ha</span>}
                 </div>
               </div>
               <div className="text-right flex-shrink-0">
@@ -184,10 +183,12 @@ const ParcelList: React.FC<ParcelListProps> = ({ onSelectParcel, selectedParcelI
                         CWSI {p.cwsiValue.toFixed(2)}
                       </span>
                     )}
-                    <p className="text-nkz-text-muted text-xs">{relativeTime(p.assessedAt)}</p>
+                    <p className="text-xs text-nkz-text-muted">{relativeTime(p.assessedAt)}</p>
                   </>
                 ) : (
-                  <span className="text-nkz-text-muted text-xs">{t('parcelList.noData')}</span>
+                  <span className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium leading-4 bg-gray-100 text-gray-800 border border-gray-200">
+                    {t('parcelList.noData')}
+                  </span>
                 )}
               </div>
             </div>

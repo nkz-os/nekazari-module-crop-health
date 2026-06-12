@@ -20,13 +20,27 @@ const DISEASE_LABELS: Record<string, string> = {
     powdery_mildew: 'Oídio',
 };
 
-const RISK_COLORS: Record<string, string> = {
-    LOW: '#16a34a',
-    MEDIUM: '#d97706',
-    HIGH: '#dc2626',
+const DISEASE_EMOJIS: Record<string, string> = {
+    downy_mildew: '🍇',
+    apple_scab: '🍎',
+    alternaria: '🍅',
+    powdery_mildew: '🌿',
 };
 
-const CropHealthWidget: React.FC = () => {
+function RiskBadge({ level }: { level: string }) {
+    const classes: Record<string, string> = {
+        LOW: 'bg-green-100 text-green-800 border border-green-200',
+        MEDIUM: 'bg-amber-100 text-amber-800 border border-amber-200',
+        HIGH: 'bg-red-100 text-red-800 border border-red-200',
+    };
+    return (
+        <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium leading-4 ${classes[level] || classes.LOW}`}>
+            {level}
+        </span>
+    );
+}
+
+const DiseaseRiskWidget: React.FC = () => {
     const { t } = useTranslation('crop-health');
     const [risks, setRisks] = useState<DiseaseRisk[]>([]);
     const [loading, setLoading] = useState(true);
@@ -46,42 +60,55 @@ const CropHealthWidget: React.FC = () => {
         return () => clearInterval(interval);
     }, []);
 
-    if (loading) return null;
+    if (loading) {
+        return (
+            <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-4">
+                <div className="space-y-2">
+                    <div className="animate-pulse h-12 bg-gray-100 rounded-lg" />
+                    <div className="animate-pulse h-12 bg-gray-100 rounded-lg" />
+                </div>
+            </div>
+        );
+    }
+
     if (!risks.length) return null;
 
     return (
-        <div className="chw-container">
-            <h3 className="chw-title">🦠 {t('diseaseRisk')}</h3>
-            {risks.map((r, i) => (
-                <div key={i} className="chw-card" style={{ borderLeftColor: RISK_COLORS[r.risk_level] || '#6b7280' }}>
-                    <div className="chw-card-header">
-                        <span className="chw-parcel">{DISEASE_LABELS[r.disease] || r.disease}</span>
-                        <span className="chw-severity" style={{
-                            background: r.risk_level === 'HIGH' ? '#fee2e2' : r.risk_level === 'MEDIUM' ? '#fef3c7' : '#dcfce7',
-                            color: r.risk_level === 'HIGH' ? '#991b1b' : r.risk_level === 'MEDIUM' ? '#92400e' : '#166534',
-                        }}>{r.risk_level}</span>
-                    </div>
-                    {(r.crop || r.parcelId) && (
-                        <div className="chw-card-subheader">
-                            {r.crop && <span className="chw-disease-crop">🌾 {r.crop}</span>}
-                            {r.parcelId && <span className="chw-disease-parcel">📋 {r.parcelId}</span>}
+        <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-3 space-y-2">
+            <div className="flex items-center gap-2 mb-1">
+                <span className="text-base">🦠</span>
+                <span className="text-sm font-semibold text-nkz-text-primary">{t('diseaseRisk')}</span>
+            </div>
+            {risks.map((r, i) => {
+                const color = r.risk_level === 'HIGH' ? '#dc2626' : r.risk_level === 'MEDIUM' ? '#d97706' : '#16a34a';
+                return (
+                    <div key={i} className="bg-nkz-surface border border-nkz-border rounded-lg p-2.5 border-l-[3px]" style={{ borderLeftColor: color }}>
+                        <div className="flex items-center justify-between">
+                            <span className="text-sm font-semibold text-nkz-text-primary">
+                                {(DISEASE_EMOJIS[r.disease] || '🦠')} {DISEASE_LABELS[r.disease] || r.disease}
+                            </span>
+                            <RiskBadge level={r.risk_level} />
                         </div>
-                    )}
-                    <div className="chw-metrics">
-                        <p className="chw-disease-conditions">{r.conditions}</p>
-                        <p className="chw-disease-action" style={{ color: RISK_COLORS[r.risk_level] }}>
-                            {r.recommended_action}
-                        </p>
+                        {(r.crop || r.parcelId) && (
+                            <div className="text-xs text-nkz-text-muted mt-1">
+                                {r.crop && <span>🌾 {r.crop}</span>}
+                                {r.parcelId && <span className="ml-2">📋 {r.parcelId}</span>}
+                            </div>
+                        )}
+                        <p className="text-xs text-nkz-text-secondary mt-1">{r.conditions}</p>
+                        <div className="flex items-center justify-between mt-1.5">
+                            <span className="text-xs font-semibold" style={{ color }}>
+                                {r.recommended_action}
+                            </span>
+                            <span className="text-xs text-nkz-text-muted" title={r.source_model}>
+                                {r.confidence === 'high' ? '📡' : '📡?'} {r.lwd_method ? `LWD: ${r.lwd_method}` : ''}
+                            </span>
+                        </div>
                     </div>
-                    <div className="chw-footer">
-                        <span className="chw-source" title={r.source_model}>
-                            {r.confidence === 'high' ? '📡' : '📡?'} {r.lwd_method ? `LWD: ${r.lwd_method}` : ''}
-                        </span>
-                    </div>
-                </div>
-            ))}
+                );
+            })}
         </div>
     );
 };
 
-export default CropHealthWidget;
+export default DiseaseRiskWidget;

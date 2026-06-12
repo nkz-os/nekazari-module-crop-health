@@ -448,9 +448,13 @@ async def get_soil_properties(parcel_id: str, tenant_id: str = "") -> "SoilPrope
     # Attempt 1: parcel/summary endpoint
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
+            headers = {}
+            if tenant_id:
+                headers["X-Tenant-ID"] = tenant_id
+                headers["X-User-ID"] = "crop-health-worker"
             resp = await client.get(
                 f"{soil_url}/v1/soil/parcel/{parcel_id}/summary",
-                headers={"X-Tenant-ID": tenant_id} if tenant_id else {},
+                headers=headers,
             )
             if resp.status_code == 200:
                 data = resp.json()
@@ -483,7 +487,7 @@ async def get_soil_properties(parcel_id: str, tenant_id: str = "") -> "SoilPrope
                     resp = await client.get(
                         f"{soil_url}/v1/soil/point/texture",
                         params={"lat": lat, "lon": lon, "depth": "0-60"},
-                        headers={"X-Tenant-ID": tenant_id} if tenant_id else {},
+                        headers={"X-Tenant-ID": tenant_id, "X-User-ID": "crop-health-worker"} if tenant_id else {},
                     )
                     if resp.status_code == 200:
                         data = resp.json()
@@ -621,7 +625,7 @@ async def get_soil_susceptibility(parcel_id: str, tenant_id: str) -> dict | None
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.get(
                 url,
-                headers={"X-Tenant-ID": tenant_id} if tenant_id else {},
+                headers={"X-Tenant-ID": tenant_id, "X-User-ID": "crop-health-worker"} if tenant_id else {},
             )
             if resp.status_code == 200:
                 data = resp.json()

@@ -20,11 +20,25 @@ const DISEASE_LABELS: Record<string, string> = {
     powdery_mildew: 'Oídio',
 };
 
-const RISK_COLORS: Record<string, string> = {
-    LOW: '#16a34a',
-    MEDIUM: '#d97706',
-    HIGH: '#dc2626',
+const DISEASE_EMOJIS: Record<string, string> = {
+    downy_mildew: '🍇',
+    apple_scab: '🍎',
+    alternaria: '🍅',
+    powdery_mildew: '🌿',
 };
+
+function RiskBadge({ level }: { level: string }) {
+    const classes: Record<string, string> = {
+        LOW: 'bg-green-100 text-green-800 border border-green-200',
+        MEDIUM: 'bg-amber-100 text-amber-800 border border-amber-200',
+        HIGH: 'bg-red-100 text-red-800 border border-red-200',
+    };
+    return (
+        <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium leading-4 ${classes[level] || classes.LOW}`}>
+            {level}
+        </span>
+    );
+}
 
 interface Props {
     parcelId: string;
@@ -46,46 +60,48 @@ const DiseaseRiskContextPanel: React.FC<Props> = ({ parcelId, parcelName }) => {
             .finally(() => setLoading(false));
     }, [parcelId]);
 
-    if (loading) {
-        return <div className="chp-loading">{t('contextPanel.loading')}</div>;
-    }
-
-    if (!risks.length) {
-        return (
-            <div className="chp-empty">
-                <span>🛡️</span>
-                <p>{t('diseaseRiskNone')}</p>
-            </div>
-        );
-    }
-
     return (
-        <div className="chp-container">
-            <div className="chp-header" style={{ borderLeftColor: '#d97706' }}>
-                <h3>🦠 {t('diseaseRisk')}{parcelName ? ` — ${parcelName}` : ''}</h3>
+        <div className="space-y-2">
+            <div className="flex items-center gap-2">
+                <span className="text-base">🦠</span>
+                <span className="text-sm font-semibold text-nkz-text-primary">
+                    {t('diseaseRisk')}{parcelName ? ` — ${parcelName}` : ''}
+                </span>
             </div>
-            {risks.map((r, i) => (
-                <div key={i} className="chp-section" style={{ borderLeft: `3px solid ${RISK_COLORS[r.risk_level] || '#6b7280'}`, paddingLeft: '8px' }}>
-                    <div className="chp-section-header">
-                        <span>{DISEASE_LABELS[r.disease] || r.disease}</span>
-                        <span className="chp-metric-badge" style={{
-                            background: r.risk_level === 'HIGH' ? '#fee2e2' : r.risk_level === 'MEDIUM' ? '#fef3c7' : '#dcfce7',
-                            color: r.risk_level === 'HIGH' ? '#991b1b' : r.risk_level === 'MEDIUM' ? '#92400e' : '#166534',
-                            padding: '1px 6px', borderRadius: '4px', fontSize: '0.7rem', fontWeight: 600,
-                        }}>{r.risk_level}</span>
-                    </div>
-                    {r.crop && <p className="chp-trend">🌾 {r.crop}</p>}
-                    <p className="chp-trend">{r.conditions}</p>
-                    <p className="chp-trend" style={{ color: RISK_COLORS[r.risk_level], fontWeight: 600 }}>
-                        {r.recommended_action}
-                    </p>
-                    <div style={{ fontSize: '0.7rem', color: '#6b7280', marginTop: '4px' }}>
-                        {r.confidence && `${r.confidence} confidence`}
-                        {r.lwd_method && ` · LWD: ${r.lwd_method}`}
-                        {r.source_model && ` · ${r.source_model}`}
-                    </div>
+
+            {loading ? (
+                <div className="space-y-2">
+                    <div className="animate-pulse h-14 bg-nkz-surface-raised rounded-lg" />
+                    <div className="animate-pulse h-14 bg-nkz-surface-raised rounded-lg" />
                 </div>
-            ))}
+            ) : !risks.length ? (
+                <div className="bg-nkz-surface-raised border border-nkz-border rounded-lg p-4 text-center">
+                    <span className="text-xl">🛡️</span>
+                    <p className="text-sm text-nkz-text-muted mt-1">{t('diseaseRiskNone')}</p>
+                </div>
+            ) : (
+                risks.map((r, i) => {
+                    const color = r.risk_level === 'HIGH' ? '#dc2626' : r.risk_level === 'MEDIUM' ? '#d97706' : '#16a34a';
+                    return (
+                        <div key={i} className="bg-nkz-surface-raised border border-nkz-border rounded-lg p-3 border-l-[3px]" style={{ borderLeftColor: color }}>
+                            <div className="flex items-center justify-between">
+                                <span className="text-sm font-semibold text-nkz-text-primary">
+                                    {(DISEASE_EMOJIS[r.disease] || '🦠')} {DISEASE_LABELS[r.disease] || r.disease}
+                                </span>
+                                <RiskBadge level={r.risk_level} />
+                            </div>
+                            {r.crop && <p className="text-xs text-nkz-text-muted mt-1">🌾 {r.crop}</p>}
+                            <p className="text-xs text-nkz-text-secondary mt-1">{r.conditions}</p>
+                            <p className="text-xs font-semibold mt-1.5" style={{ color }}>{r.recommended_action}</p>
+                            <div className="text-xs text-nkz-text-muted mt-1">
+                                {r.confidence && `${r.confidence} confidence`}
+                                {r.lwd_method && ` · LWD: ${r.lwd_method}`}
+                                {r.source_model && ` · ${r.source_model}`}
+                            </div>
+                        </div>
+                    );
+                })
+            )}
         </div>
     );
 };

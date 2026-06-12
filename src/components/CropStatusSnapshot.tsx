@@ -74,34 +74,6 @@ function cwsiPhrase(cwsi: number): string {
   return 'summary.cwsi.severe';
 }
 
-function balancePhrase(balance: number): string {
-  if (balance > 0) return 'summary.balance.positive';
-  if (balance >= -5) return 'summary.balance.mild';
-  if (balance >= -15) return 'summary.balance.moderate';
-  return 'summary.balance.severe';
-}
-
-function vigorPhrase(vigor: number): string {
-  if (vigor > 0.7) return 'summary.vigor.good';
-  if (vigor >= 0.4) return 'summary.vigor.below';
-  return 'summary.vigor.low';
-}
-
-function thermalPhrase(condition: string | undefined): string | null {
-  if (!condition || condition === 'no_stress') return null;
-  if (condition.startsWith('frost')) return 'summary.thermal.frost';
-  if (condition.startsWith('heat')) return 'summary.thermal.heat';
-  return null;
-}
-
-function mdsPhrase(severity: string | undefined): string | null {
-  if (!severity || severity === 'LOW') return null;
-  if (severity === 'MEDIUM') return 'summary.mds.medium';
-  if (severity === 'HIGH') return 'summary.mds.high';
-  if (severity === 'CRITICAL') return 'summary.mds.critical';
-  return null;
-}
-
 function gddProgress(
   gdd: number | undefined,
   stageMin: number | undefined,
@@ -110,6 +82,46 @@ function gddProgress(
   if (gdd == null || stageMin == null || stageMax == null) return null;
   if (stageMax <= stageMin) return null;
   return Math.min(100, Math.max(0, ((gdd - stageMin) / (stageMax - stageMin)) * 100));
+}
+
+const actionLabelKey = (action: string): string => {
+  switch (action) {
+    case 'NO_ACTION': return 'action.noAction';
+    case 'MONITOR': return 'action.monitor';
+    case 'IRRIGATE_SCHEDULED': return 'action.irrigateScheduled';
+    case 'IRRIGATE_IMMEDIATE': return 'action.irrigateImmediate';
+    default: return action;
+  }
+};
+
+function FidelityBadge({ fidelity }: { fidelity: string }) {
+  const key = fidelity.replace(/^(onsite_|regional_)/, '').replace(/_proxy$/, '');
+  const cls: Record<string, string> = {
+    calibrated: 'bg-green-100 text-green-800 border border-green-200',
+    onsite: 'bg-amber-100 text-amber-800 border border-amber-200',
+    uncalibrated: 'bg-amber-100 text-amber-800 border border-amber-200',
+    local: 'bg-gray-100 text-gray-800 border border-gray-200',
+    regional: 'bg-blue-100 text-blue-800 border border-blue-200',
+    modeled: 'bg-blue-100 text-blue-800 border border-blue-200',
+    proxy: 'bg-blue-100 text-blue-800 border border-blue-200',
+  };
+  return (
+    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium leading-4 ${cls[key] || 'bg-gray-100 text-gray-800 border border-gray-200'}`}>
+      {fidelity}
+    </span>
+  );
+}
+
+function MetricChip({ icon, text, color }: { icon: string; text: string; color?: string }) {
+  const defaultCls = 'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium';
+  const colorCls = color === '#dc2626' || color === '#ea580c'
+    ? 'bg-red-100 text-red-800'
+    : color === '#d97706'
+    ? 'bg-amber-100 text-amber-800'
+    : color === '#16a34a'
+    ? 'bg-green-100 text-green-800'
+    : 'bg-gray-100 text-gray-800';
+  return <span className={`${defaultCls} ${colorCls}`}>{icon} {text}</span>;
 }
 
 const CropStatusSnapshot: React.FC<CropStatusSnapshotProps> = ({ parcelId, parcelName }) => {
@@ -143,25 +155,24 @@ const CropStatusSnapshot: React.FC<CropStatusSnapshotProps> = ({ parcelId, parce
 
   if (loading) {
     return (
-      <div className="animate-pulse space-y-2 p-3 bg-nkz-surface-raised rounded mb-3">
-        <div className="h-4 bg-nkz-border rounded w-3/4" />
-        <div className="h-3 bg-nkz-border rounded w-1/2" />
-        <div className="h-3 bg-nkz-border rounded w-2/3" />
+      <div className="bg-nkz-surface-raised border border-nkz-border rounded-lg p-3 mb-3 animate-pulse space-y-2">
+        <div className="h-4 bg-gray-200 rounded w-3/4" />
+        <div className="h-3 bg-gray-200 rounded w-1/2" />
+        <div className="h-3 bg-gray-200 rounded w-2/3" />
       </div>
     );
   }
 
   if (!assessment) {
     return (
-      <div className="text-center p-3 bg-nkz-surface-raised rounded mb-3 border border-nkz-border">
+      <div className="bg-nkz-surface-raised border border-nkz-border rounded-lg p-3 mb-3 text-center">
         <span className="text-xl">🌱</span>
-        <p className="text-nkz-text-muted text-sm">{t('summary.noData')}</p>
-        <p className="text-nkz-text-muted text-xs mt-1">{t('summary.noDataHint')}</p>
+        <p className="text-sm text-nkz-text-muted">{t('summary.noData')}</p>
+        <p className="text-xs text-nkz-text-muted mt-1">{t('summary.noDataHint')}</p>
       </div>
     );
   }
 
-  // Priority: assessment fields (persisted) > crop-context (live)
   const cropName = assessment.cropName || cropCtx?.crop?.name || cropCtx?.crop?.eppo;
   const varietyName = assessment.varietyName || cropCtx?.variety?.name;
   const stage = assessment.phenologyStage || cropCtx?.phenology?.stage;
@@ -172,124 +183,91 @@ const CropStatusSnapshot: React.FC<CropStatusSnapshotProps> = ({ parcelId, parce
 
   const cwsi = assessment.cwsiValue;
   const balance = assessment.waterBalanceDeficit;
-  const mdsSev = assessment.mdsSeverity;
-  const thermal = assessment.thermalCondition;
   const vigor = assessment.vigorIndex;
 
-  const lines: { icon: string; text: string; color?: string }[] = [];
+  const fidelity = assessment.dataFidelity || 'regional_proxy';
+  const chips: { icon: string; text: string; color?: string }[] = [];
 
-  // Identity line
-  if (cropName) {
-    const idLine = varietyName
-      ? `🌾 ${cropName} — var. ${varietyName}`
-      : `🌾 ${cropName}`;
-    lines.push({ icon: '', text: idLine });
-  }
-  if (parcelName) {
-    lines.push({ icon: '📍', text: parcelName });
-  }
-
-  // Phenology line
-  if (stage) {
-    const stageLabel = t(`phenology.stage.${stage}`, stage);
-    const gddInfo = gddPct != null ? ` · GDD ${gddPct.toFixed(0)}%` : '';
-    lines.push({ icon: '🌸', text: `${t('summary.phaseLabel')}: ${stageLabel}${gddInfo}` });
-  }
-
-  // Water stress lines
   if (cwsi != null && cwsi >= 0.2) {
-    lines.push({ icon: '⚠️', text: t(cwsiPhrase(cwsi)), color: cwsi > 0.6 ? '#dc2626' : '#d97706' });
+    chips.push({ icon: '⚠️', text: t(cwsiPhrase(cwsi)), color: cwsi > 0.6 ? '#dc2626' : '#d97706' });
   }
   if (balance != null && balance < 0) {
-    lines.push({ icon: '💧', text: t(balancePhrase(balance), { value: Math.abs(balance).toFixed(1) }), color: '#dc2626' });
+    const balColor = balance < -15 ? '#dc2626' : balance < -5 ? '#d97706' : '#d97706';
+    chips.push({ icon: '💧', text: `${Math.abs(balance).toFixed(1)}mm deficit`, color: balColor });
   }
-  if (mdsSev) {
-    const phrase = mdsPhrase(mdsSev);
-    if (phrase) {
-      const mdsVal = assessment.mdsValue;
-      lines.push({ icon: '📏', text: t(phrase, { value: mdsVal?.toFixed(0) || '?' }), color: '#d97706' });
-    }
+  if (assessment.mdsSeverity && assessment.mdsSeverity !== 'LOW' && assessment.mdsValue != null) {
+    chips.push({ icon: '📏', text: `${assessment.mdsValue.toFixed(0)}µm ${assessment.mdsSeverity}`, color: assessment.mdsSeverity === 'CRITICAL' ? '#dc2626' : '#d97706' });
   }
-
-  // Thermal line
-  const tPhrase = thermalPhrase(thermal);
-  if (tPhrase) {
-    lines.push({ icon: '🌡️', text: t(tPhrase) });
-  } else if (thermal === 'no_stress') {
-    lines.push({ icon: '✅', text: t('summary.thermal.none') });
+  if (assessment.thermalCondition && assessment.thermalCondition !== 'no_stress') {
+    chips.push({ icon: assessment.thermalCondition?.startsWith('frost') ? '❄️' : '🔥', text: t(assessment.thermalCondition?.startsWith('frost') ? 'summary.thermal.frost' : 'summary.thermal.heat') });
+  } else if (assessment.thermalCondition === 'no_stress') {
+    chips.push({ icon: '✅', text: t('summary.thermal.none') });
   }
-
-  // Vigor line
-  if (vigor != null) {
-    const vColor = vigor > 0.7 ? '#16a34a' : vigor >= 0.4 ? '#d97706' : '#dc2626';
-    lines.push({ icon: '🌿', text: t(vigorPhrase(vigor), { value: vigor.toFixed(2) }), color: vColor });
+  if (vigor != null && vigor < 0.7) {
+    chips.push({ icon: '🌿', text: `${t(vigor >= 0.4 ? 'summary.vigor.below' : 'summary.vigor.low', { value: vigor.toFixed(2) })}`, color: vigor >= 0.4 ? '#d97706' : '#dc2626' });
   }
-
-  // Soil properties line
-  const sp = assessment.soilProperties;
-  if (sp?.hasData) {
-    lines.push({
-      icon: '🌱',
-      text: `${sp.usdaTextureClass} · AWC ${((sp.fieldCapacity - sp.wiltingPoint) * 100).toFixed(0)}% · Drenaje ${sp.scsHydrologicGroup}`
-    });
-  }
-
-  // Soil water reservoir
-  const swb = assessment.soilWaterBalance;
-  if (swb && swb.stressLevel !== 'none') {
-    const ratioPct = (swb.swRatio * 100).toFixed(0);
-    lines.push({
-      icon: '🪣',
-      text: t('soil.reservoir.' + swb.stressLevel, {
-        current: swb.swMm.toFixed(0),
-        capacity: swb.awcMm.toFixed(0),
-        ratio: ratioPct,
-      }),
-      color: swb.stressLevel === 'critical' ? '#dc2626' : '#d97706',
-    });
-  }
-
-  // Waterlogging risk
-  const wlr = assessment.waterloggingRisk;
-  if (wlr && wlr.riskLevel !== 'LOW') {
-    lines.push({
-      icon: '💦',
-      text: t('waterlogging.' + wlr.riskLevel, { hours: wlr.saturationHours.toFixed(0) }),
-      color: '#1e40af',
-    });
-  }
-
-  // Fidelity
-  const fidelity = assessment.dataFidelity || 'regional_proxy';
 
   return (
-    <div className="bg-nkz-surface-raised rounded p-3 mb-3 border border-nkz-border">
+    <div className="bg-nkz-surface-raised border border-nkz-border rounded-lg p-3 mb-3 shadow-sm">
       {/* Header: severity + action */}
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-2">
           <SeverityBadge severity={assessment.overallSeverity} />
-          <span className="text-nkz-text-primary font-semibold text-sm">
-            {t(`action.${assessment.recommendedAction === 'NO_ACTION' ? 'noAction' : assessment.recommendedAction === 'MONITOR' ? 'monitor' : assessment.recommendedAction === 'IRRIGATE_SCHEDULED' ? 'irrigateScheduled' : 'irrigateImmediate'}`)}
+          <span className="text-sm font-semibold text-nkz-text-primary">
+            {t(actionLabelKey(assessment.recommendedAction))}
           </span>
         </div>
-        <span className="text-nkz-text-muted text-xs">{t(`summary.fidelity.${fidelity}`, fidelity)}</span>
+        <FidelityBadge fidelity={fidelity} />
       </div>
 
-      {/* Narrative lines */}
-      {lines.map((line, i) => (
-        <p
-          key={i}
-          className="text-sm leading-relaxed"
-          style={{ color: line.color || undefined }}
-        >
-          {line.icon && <span className="mr-1.5">{line.icon}</span>}
-          <span className={line.color ? '' : 'text-nkz-text-primary'}>{line.text}</span>
-        </p>
-      ))}
+      {/* Identity & Phenology */}
+      <div className="space-y-1 mb-2">
+        {(cropName || parcelName) && (
+          <p className="text-sm text-nkz-text-primary">
+            {cropName && <span>🌾 <strong>{cropName}</strong>{varietyName ? ` — var. ${varietyName}` : ''}</span>}
+            {parcelName && <span className="ml-2 text-nkz-text-muted">📍 {parcelName}</span>}
+          </p>
+        )}
+        {stage && (
+          <p className="text-xs text-nkz-text-secondary">
+            🌸 {t('summary.phaseLabel')}: <strong>{t(`phenology.stage.${stage}`, stage)}</strong>
+            {gddPct != null && <span> · GDD {gddPct.toFixed(0)}%</span>}
+          </p>
+        )}
+      </div>
+
+      {/* Metric chips */}
+      {chips.length > 0 && (
+        <div className="flex flex-wrap gap-1.5 mb-2">
+          {chips.map((c, i) => <MetricChip key={i} {...c} />)}
+        </div>
+      )}
+
+      {/* Soil reservoir */}
+      {assessment.soilWaterBalance && assessment.soilWaterBalance.stressLevel !== 'none' && (
+        <div className="pt-2 border-t border-nkz-border">
+          <p className="text-xs text-nkz-text-muted">
+            🪣 {t('soil.reservoir.' + assessment.soilWaterBalance.stressLevel, {
+              current: assessment.soilWaterBalance.swMm.toFixed(0),
+              capacity: assessment.soilWaterBalance.awcMm.toFixed(0),
+              ratio: (assessment.soilWaterBalance.swRatio * 100).toFixed(0),
+            })}
+          </p>
+        </div>
+      )}
+
+      {/* Waterlogging risk */}
+      {assessment.waterloggingRisk && assessment.waterloggingRisk.riskLevel !== 'LOW' && (
+        <div className="mt-1">
+          <p className="text-xs" style={{ color: '#1e40af' }}>
+            💦 {t('waterlogging.' + assessment.waterloggingRisk.riskLevel, { hours: assessment.waterloggingRisk.saturationHours.toFixed(0) })}
+          </p>
+        </div>
+      )}
 
       {/* Timestamp */}
       {assessment.assessedAt && (
-        <p className="text-nkz-text-muted text-xs mt-2">
+        <p className="text-xs text-nkz-text-muted mt-2 pt-2 border-t border-nkz-border">
           {t('summary.updated')}: {new Date(assessment.assessedAt).toLocaleString()}
         </p>
       )}

@@ -26,3 +26,17 @@ jobs:
 
       - name: Run pytest
         run: python -m pytest tests/ -v --tb=short
+
+  # Publish MF2 frontend via OIDC (push to main only)
+  publish-module:
+    name: Publish Module
+    needs: backend-tests
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      id-token: write
+      contents: read
+    uses: nkz-os/nkz/.github/workflows/_publish-module.yml@main
+    with:
+      module_id: crop-health
+    secrets:
+      INTERNAL_SERVICE_SECRET: ${{ secrets.INTERNAL_SERVICE_SECRET }}

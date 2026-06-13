@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import logging
 import os
-import re
 
 import httpx
 
@@ -17,10 +16,13 @@ logger = logging.getLogger(__name__)
 
 
 def _make_headers(tenant_id: str) -> dict:
-    """Build Orion-LD headers with normalized tenant ID."""
-    normalized = tenant_id.lower().strip().replace("-", "_").replace(" ", "_")
-    normalized = re.sub(r"[^a-z0-9_]", "", normalized)
-    normalized = normalized.strip("_") or tenant_id
+    """Build Orion-LD headers — tenant sent AS-IS (canonical is hyphenated).
+
+    The canonical tenant format is hyphenated and the SDK OrionClient sends it
+    verbatim. Underscoring it here routed assessment writes to a phantom tenant
+    for hyphenated (paying) tenants.
+    """
+    normalized = tenant_id
 
     headers = {
         "NGSILD-Tenant": normalized,

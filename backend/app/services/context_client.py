@@ -21,6 +21,7 @@ import httpx
 from cachetools import TTLCache
 
 from app.config import get_settings
+from nkz_platform_sdk.orion import OrionClient
 from app.schemas import (
     PhenologyAlternative,
     PhenologyParams,
@@ -30,26 +31,6 @@ from app.schemas import (
 
 logger = logging.getLogger(__name__)
 
-
-def _orion_headers(tenant_id: str = "") -> dict[str, str]:
-    """Build NGSI-LD headers with platform @context for Orion-LD queries.
-    
-    The Link header is REQUIRED for Orion-LD to expand short entity type
-    names (e.g. AgriParcel) to their full JSON-LD URIs. Without it,
-    type=AgriParcel won't match https://saref.etsi.org/saref4agri/AgriParcel.
-    """
-    settings = get_settings()
-    headers: dict[str, str] = {
-        "Accept": "application/ld+json",
-        "Link": (
-            f'<{settings.orion_ld_context}>; '
-            'rel="http://www.w3.org/ns/json-ld#context"; '
-            'type="application/ld+json"'
-        ),
-    }
-    if tenant_id:
-        headers["NGSILD-Tenant"] = tenant_id
-    return headers
 
 # ── Phenology cache ──────────────────────────────────────────────────────────
 # Key: (species, stage), Value: PhenologyParams
@@ -344,25 +325,21 @@ async def get_agri_crop(
     if not settings.orion_ld_url:
         return None
 
+    client = OrionClient(tenant_id, base_url=settings.orion_ld_url, context_url=settings.orion_ld_context)
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(
-                f"{settings.orion_ld_url}/ngsi-ld/v1/entities",
-                params={
-                    "type": "AgriCrop",
-                    "q": f'hasAgriParcel==\"urn:ngsi-ld:AgriParcel:{parcel_id}\"',
-                    "limit": 1,
-                    "options": "keyValues",
-                },
-                headers=_orion_headers(tenant_id),
-            )
-            if resp.status_code == 200:
-                entities = resp.json()
-                if entities and isinstance(entities, list) and len(entities) > 0:
-                    _agri_crop_cache[parcel_id] = entities[0]
-                    return entities[0]
+        entities = await client.query_entities(
+            type="AgriCrop",
+            q=f'hasAgriParcel==\"urn:ngsi-ld:AgriParcel:{parcel_id}\"',
+            limit=1,
+            options="keyValues",
+        )
+        if entities and isinstance(entities, list) and len(entities) > 0:
+            _agri_crop_cache[parcel_id] = entities[0]
+            return entities[0]
     except Exception as exc:
         logger.warning("Failed to fetch AgriCrop for parcel %s: %s", parcel_id, exc)
+    finally:
+        await client.close()
 
     _agri_crop_cache[parcel_id] = None
     return None
@@ -395,31 +372,30 @@ async def _resolve_parcel_coords(parcel_id: str, tenant_id: str) -> tuple[float,
         return cached
 
     settings = get_settings()
+    orion_client = OrionClient(tenant_id, base_url=settings.orion_ld_url, context_url=settings.orion_ld_context)
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(
-                f"{settings.orion_ld_url}/ngsi-ld/v1/entities/urn:ngsi-ld:AgriParcel:{parcel_id}",
-                params={"options": "keyValues"},
-                headers=_orion_headers(tenant_id),
-            )
-            if resp.status_code == 200:
-                data = resp.json()
-                loc = data.get("location")
-                if isinstance(loc, dict) and loc.get("type") == "Point":
-                    coords = loc["coordinates"]
-                    result = (coords[1], coords[0])  # lat, lon
-                    _coord_cache[cache_key] = result
-                    return result
-                elif isinstance(loc, dict) and loc.get("type") == "Polygon":
-                    ring = loc.get("coordinates", [[[]]])[0]
-                    if ring:
-                        lats = [p[1] for p in ring]
-                        lons = [p[0] for p in ring]
-                        result = (sum(lats) / len(lats), sum(lons) / len(lons))
-                        _coord_cache[cache_key] = result
-                        return result
+        data = await orion_client.get_entity(
+            f"urn:ngsi-ld:AgriParcel:{parcel_id}",
+            options="keyValues",
+        )
+        loc = data.get("location")
+        if isinstance(loc, dict) and loc.get("type") == "Point":
+            coords = loc["coordinates"]
+            result = (coords[1], coords[0])  # lat, lon
+            _coord_cache[cache_key] = result
+            return result
+        elif isinstance(loc, dict) and loc.get("type") == "Polygon":
+            ring = loc.get("coordinates", [[[]]])[0]
+            if ring:
+                lats = [p[1] for p in ring]
+                lons = [p[0] for p in ring]
+                result = (sum(lats) / len(lats), sum(lons) / len(lons))
+                _coord_cache[cache_key] = result
+                return result
     except Exception:
         pass
+    finally:
+        await orion_client.close()
     return None
 
 
@@ -713,104 +689,91 @@ async def get_multiyear_vigor_anomaly(
         }
     """
     settings = get_settings()
-    orion_url = settings.orion_ld_url
 
+    client = OrionClient(tenant_id, base_url=settings.orion_ld_url, context_url=settings.orion_ld_context)
     try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            # Query all CropHealthAssessment entities for this parcel
-            resp = await client.get(
-                f"{orion_url}/ngsi-ld/v1/entities",
-                params={
-                    "type": "CropHealthAssessment",
-                    "q": f'hasAgriParcel==\"urn:ngsi-ld:AgriParcel:{parcel_id}\"',
-                    "limit": 500,
-                    "options": "keyValues",
-                },
-                headers=_orion_headers(tenant_id),
-            )
-            if resp.status_code != 200:
-                logger.warning(
-                    "Orion-LD returned %d for multi-year vigor query (parcel %s)",
-                    resp.status_code, parcel_id,
-                )
-                return None
-
-            entities = resp.json()
-            if not isinstance(entities, list) or len(entities) < 2:
-                logger.info(
-                    "Insufficient CropHealthAssessment entities for parcel %s: %d",
-                    parcel_id, len(entities) if isinstance(entities, list) else 0,
-                )
-                return None
-
-            # ── Group by growing season year ──
-            seasonal_vigors: dict[int, list[float]] = {}
-            for e in entities:
-                # Handle both flat keyValues and nested NGSI-LD Property format
-                raw_at = e.get("assessedAt")
-                if isinstance(raw_at, dict):
-                    assessed_at = raw_at.get("value")
-                else:
-                    assessed_at = raw_at
-
-                raw_vigor = e.get("vigorIndex")
-                if isinstance(raw_vigor, dict):
-                    vigor = raw_vigor.get("value")
-                else:
-                    vigor = raw_vigor
-
-                if assessed_at is None or vigor is None:
-                    continue
-
-                season_year = _extract_season_year(str(assessed_at))
-                if season_year is None:
-                    continue
-
-                try:
-                    vigor_val = float(vigor)
-                    if 0.0 <= vigor_val <= 1.0:
-                        seasonal_vigors.setdefault(season_year, []).append(vigor_val)
-                except (ValueError, TypeError):
-                    continue
-
-            # Need at least 2 seasons per Phase 2 engine contract
-            if len(seasonal_vigors) < 2:
-                logger.info(
-                    "Only %d growing season(s) found for parcel %s (need ≥2)",
-                    len(seasonal_vigors), parcel_id,
-                )
-                return None
-
-            # Only keep the most recent N seasons
-            sorted_years = sorted(seasonal_vigors.keys(), reverse=True)[:seasons]
-            seasonal_vigors = {y: seasonal_vigors[y] for y in sorted_years}
-
-            # ── Compute per-season means ──
-            seasonal_means: dict[int, float] = {}
-            for year, vigors in seasonal_vigors.items():
-                seasonal_means[year] = round(sum(vigors) / len(vigors), 4)
-
-            # ── Overall mean across all seasons ──
-            all_vigors = [v for vigors in seasonal_vigors.values() for v in vigors]
-            overall_mean = round(sum(all_vigors) / len(all_vigors), 4) if all_vigors else 0.5
-
-            # ── Average anomaly: mean of (season_mean - overall_mean) ──
-            anomalies = [seasonal_means[y] - overall_mean for y in sorted_years]
-            avg_anomaly = round(sum(anomalies) / len(anomalies), 4) if anomalies else 0.0
-
-            seasons_count = len(seasonal_vigors)
-
+        # Query all CropHealthAssessment entities for this parcel
+        entities = await client.query_entities(
+            type="CropHealthAssessment",
+            q=f'hasAgriParcel==\"urn:ngsi-ld:AgriParcel:{parcel_id}\"',
+            limit=500,
+            options="keyValues",
+        )
+        if not isinstance(entities, list) or len(entities) < 2:
             logger.info(
-                "Multi-year vigor for parcel %s: %d seasons, mean=%.3f, anomaly=%.3f",
-                parcel_id, seasons_count, overall_mean, avg_anomaly,
+                "Insufficient CropHealthAssessment entities for parcel %s: %d",
+                parcel_id, len(entities) if isinstance(entities, list) else 0,
             )
+            return None
 
-            return {
-                "avg_anomaly": avg_anomaly,
-                "seasons_analyzed": seasons_count,
-                "seasonal_means": seasonal_means,
-                "overall_mean_vigor": overall_mean,
-            }
+        # ── Group by growing season year ──
+        seasonal_vigors: dict[int, list[float]] = {}
+        for e in entities:
+            # Handle both flat keyValues and nested NGSI-LD Property format
+            raw_at = e.get("assessedAt")
+            if isinstance(raw_at, dict):
+                assessed_at = raw_at.get("value")
+            else:
+                assessed_at = raw_at
+
+            raw_vigor = e.get("vigorIndex")
+            if isinstance(raw_vigor, dict):
+                vigor = raw_vigor.get("value")
+            else:
+                vigor = raw_vigor
+
+            if assessed_at is None or vigor is None:
+                continue
+
+            season_year = _extract_season_year(str(assessed_at))
+            if season_year is None:
+                continue
+
+            try:
+                vigor_val = float(vigor)
+                if 0.0 <= vigor_val <= 1.0:
+                    seasonal_vigors.setdefault(season_year, []).append(vigor_val)
+            except (ValueError, TypeError):
+                continue
+
+        # Need at least 2 seasons per Phase 2 engine contract
+        if len(seasonal_vigors) < 2:
+            logger.info(
+                "Only %d growing season(s) found for parcel %s (need ≥2)",
+                len(seasonal_vigors), parcel_id,
+            )
+            return None
+
+        # Only keep the most recent N seasons
+        sorted_years = sorted(seasonal_vigors.keys(), reverse=True)[:seasons]
+        seasonal_vigors = {y: seasonal_vigors[y] for y in sorted_years}
+
+        # ── Compute per-season means ──
+        seasonal_means: dict[int, float] = {}
+        for year, vigors in seasonal_vigors.items():
+            seasonal_means[year] = round(sum(vigors) / len(vigors), 4)
+
+        # ── Overall mean across all seasons ──
+        all_vigors = [v for vigors in seasonal_vigors.values() for v in vigors]
+        overall_mean = round(sum(all_vigors) / len(all_vigors), 4) if all_vigors else 0.5
+
+        # ── Average anomaly: mean of (season_mean - overall_mean) ──
+        anomalies = [seasonal_means[y] - overall_mean for y in sorted_years]
+        avg_anomaly = round(sum(anomalies) / len(anomalies), 4) if anomalies else 0.0
+
+        seasons_count = len(seasonal_vigors)
+
+        logger.info(
+            "Multi-year vigor for parcel %s: %d seasons, mean=%.3f, anomaly=%.3f",
+            parcel_id, seasons_count, overall_mean, avg_anomaly,
+        )
+
+        return {
+            "avg_anomaly": avg_anomaly,
+            "seasons_analyzed": seasons_count,
+            "seasonal_means": seasonal_means,
+            "overall_mean_vigor": overall_mean,
+        }
 
     except httpx.TimeoutException:
         logger.warning("Orion-LD timeout for multi-year vigor query (parcel %s)", parcel_id)
@@ -818,6 +781,8 @@ async def get_multiyear_vigor_anomaly(
         logger.warning("Orion-LD unreachable for multi-year vigor query")
     except Exception as exc:
         logger.error("Unexpected error in multi-year vigor analysis: %s", exc)
+    finally:
+        await client.close()
 
     return None
 
@@ -847,60 +812,54 @@ async def get_penetrometer_data(
         }
     """
     settings = get_settings()
-    orion_url = settings.orion_ld_url
 
+    # TODO(naming-2026-06-07): cross-module query filters hasAgriParcel only; legacy refAgriParcel data (if any) is missed
+    client = OrionClient(tenant_id, base_url=settings.orion_ld_url, context_url=settings.orion_ld_context)
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(
-                f"{orion_url}/ngsi-ld/v1/entities",
-                params={
-                    "type": "SoilSamplingPoint",
-                    "q": f'hasAgriParcel==\"urn:ngsi-ld:AgriParcel:{parcel_id}\"',
-                    "limit": 50,
-                    "options": "keyValues",
-                },
-                headers=_orion_headers(tenant_id),
-            )
-            if resp.status_code != 200:
-                return None
+        entities = await client.query_entities(
+            type="SoilSamplingPoint",
+            q=f'hasAgriParcel==\"urn:ngsi-ld:AgriParcel:{parcel_id}\"',
+            limit=50,
+            options="keyValues",
+        )
+        if not isinstance(entities, list):
+            return None
 
-            entities = resp.json()
-            if not isinstance(entities, list):
-                return None
+        mpa_values = []
+        for e in entities:
+            pr = e.get("penetrationResistance")
+            if isinstance(pr, dict):
+                pr = pr.get("value")
+            if pr is not None:
+                try:
+                    val = float(pr)
+                    if val > 0:
+                        mpa_values.append(val)
+                except (ValueError, TypeError):
+                    pass
 
-            mpa_values = []
-            for e in entities:
-                pr = e.get("penetrationResistance")
-                if isinstance(pr, dict):
-                    pr = pr.get("value")
-                if pr is not None:
-                    try:
-                        val = float(pr)
-                        if val > 0:
-                            mpa_values.append(val)
-                    except (ValueError, TypeError):
-                        pass
+        if len(mpa_values) < 1:
+            return None
 
-            if len(mpa_values) < 1:
-                return None
+        depths = set()
+        for e in entities:
+            df = e.get("depthFrom", {}).get("value") if isinstance(e.get("depthFrom"), dict) else e.get("depthFrom")
+            dt = e.get("depthTo", {}).get("value") if isinstance(e.get("depthTo"), dict) else e.get("depthTo")
+            if df is not None and dt is not None:
+                depths.add(f"{df}-{dt}")
 
-            depths = set()
-            for e in entities:
-                df = e.get("depthFrom", {}).get("value") if isinstance(e.get("depthFrom"), dict) else e.get("depthFrom")
-                dt = e.get("depthTo", {}).get("value") if isinstance(e.get("depthTo"), dict) else e.get("depthTo")
-                if df is not None and dt is not None:
-                    depths.add(f"{df}-{dt}")
-
-            return {
-                "available": True,
-                "point_count": len(mpa_values),
-                "mean_mpa": round(sum(mpa_values) / len(mpa_values), 2),
-                "max_mpa": round(max(mpa_values), 2),
-                "depth_range": ", ".join(sorted(depths)) if depths else "unknown",
-            }
+        return {
+            "available": True,
+            "point_count": len(mpa_values),
+            "mean_mpa": round(sum(mpa_values) / len(mpa_values), 2),
+            "max_mpa": round(max(mpa_values), 2),
+            "depth_range": ", ".join(sorted(depths)) if depths else "unknown",
+        }
 
     except Exception:
         pass
+    finally:
+        await client.close()
 
     return None
 
@@ -939,88 +898,81 @@ async def get_ndvi_climatology(
     if not orion_url:
         return _climatology_unavailable("ORION_LD_URL not configured")
 
+    # TODO(naming-2026-06-07): cross-module query filters hasAgriParcel only; legacy refAgriParcel data (if any) is missed
+    client = OrionClient(tenant_id, base_url=orion_url, context_url=settings.orion_ld_context)
     try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.get(
-                f"{orion_url}/ngsi-ld/v1/entities",
-                params={
-                    "type": "VegetationIndex",
-                    "q": f'hasAgriParcel=="urn:ngsi-ld:AgriParcel:{parcel_id}"',
-                    "limit": 500,
-                    "options": "keyValues",
-                },
-                headers=_orion_headers(tenant_id),
-            )
-            if resp.status_code != 200:
-                return _climatology_unavailable(f"Orion-LD returned {resp.status_code}")
-
-            entities = resp.json()
-            if not isinstance(entities, list) or len(entities) < 3:
-                return _climatology_unavailable(
-                    f"Only {len(entities) if isinstance(entities, list) else 0} VegetationIndex records"
-                )
-
-            # Filter by month +-1
-            month_entities = []
-            for e in entities:
-                assessed = e.get("dateObserved") or e.get("observedAt")
-                if isinstance(assessed, dict):
-                    assessed = assessed.get("value")
-                if not assessed:
-                    continue
-                try:
-                    d = dt.fromisoformat(str(assessed).replace("Z", "+00:00"))
-                except (ValueError, TypeError):
-                    continue
-                if abs(d.month - target_month) <= 1 or (
-                    target_month == 1 and d.month == 12
-                ) or (target_month == 12 and d.month == 1):
-                    month_entities.append((d, e))
-
-            if len(month_entities) < 2:
-                return _climatology_unavailable(
-                    f"Only {len(month_entities)} records in month {target_month}+-1"
-                )
-
-            # Priority 1: filter by crop EPPO
-            if eppo_code:
-                crop_filtered = [
-                    (d, e) for d, e in month_entities
-                    if e.get("cropEPPO", "") == eppo_code
-                ]
-                if len(crop_filtered) >= 2:
-                    ndvi_vals = _extract_ndvi_values(crop_filtered)
-                    if ndvi_vals:
-                        dates = [d for d, _ in crop_filtered]
-                        result = _build_climatology_result(
-                            ndvi_vals, dates,
-                            f"parcel_specific:same_crop_{eppo_code}",
-                        )
-                        _ndvi_climatology_cache[cache_key] = result
-                        logger.info(
-                            "NDVI climatology for %s: %d same-crop records (month %d)",
-                            parcel_id, len(crop_filtered), target_month,
-                        )
-                        return result
-
-            # Priority 2: all records in month range (any crop)
-            ndvi_vals = _extract_ndvi_values(month_entities)
-            if ndvi_vals and len(ndvi_vals) >= 2:
-                dates = [d for d, _ in month_entities]
-                result = _build_climatology_result(
-                    ndvi_vals, dates,
-                    "parcel_specific:same_month",
-                )
-                _ndvi_climatology_cache[cache_key] = result
-                logger.info(
-                    "NDVI climatology for %s: %d same-month records (month %d)",
-                    parcel_id, len(month_entities), target_month,
-                )
-                return result
-
+        entities = await client.query_entities(
+            type="VegetationIndex",
+            q=f'hasAgriParcel=="urn:ngsi-ld:AgriParcel:{parcel_id}"',
+            limit=500,
+            options="keyValues",
+        )
+        if not isinstance(entities, list) or len(entities) < 3:
             return _climatology_unavailable(
-                f"No valid NDVI values in {len(month_entities)} records"
+                f"Only {len(entities) if isinstance(entities, list) else 0} VegetationIndex records"
             )
+
+        # Filter by month +-1
+        month_entities = []
+        for e in entities:
+            assessed = e.get("dateObserved") or e.get("observedAt")
+            if isinstance(assessed, dict):
+                assessed = assessed.get("value")
+            if not assessed:
+                continue
+            try:
+                d = dt.fromisoformat(str(assessed).replace("Z", "+00:00"))
+            except (ValueError, TypeError):
+                continue
+            if abs(d.month - target_month) <= 1 or (
+                target_month == 1 and d.month == 12
+            ) or (target_month == 12 and d.month == 1):
+                month_entities.append((d, e))
+
+        if len(month_entities) < 2:
+            return _climatology_unavailable(
+                f"Only {len(month_entities)} records in month {target_month}+-1"
+            )
+
+        # Priority 1: filter by crop EPPO
+        if eppo_code:
+            crop_filtered = [
+                (d, e) for d, e in month_entities
+                if e.get("cropEPPO", "") == eppo_code
+            ]
+            if len(crop_filtered) >= 2:
+                ndvi_vals = _extract_ndvi_values(crop_filtered)
+                if ndvi_vals:
+                    dates = [d for d, _ in crop_filtered]
+                    result = _build_climatology_result(
+                        ndvi_vals, dates,
+                        f"parcel_specific:same_crop_{eppo_code}",
+                    )
+                    _ndvi_climatology_cache[cache_key] = result
+                    logger.info(
+                        "NDVI climatology for %s: %d same-crop records (month %d)",
+                        parcel_id, len(crop_filtered), target_month,
+                    )
+                    return result
+
+        # Priority 2: all records in month range (any crop)
+        ndvi_vals = _extract_ndvi_values(month_entities)
+        if ndvi_vals and len(ndvi_vals) >= 2:
+            dates = [d for d, _ in month_entities]
+            result = _build_climatology_result(
+                ndvi_vals, dates,
+                "parcel_specific:same_month",
+            )
+            _ndvi_climatology_cache[cache_key] = result
+            logger.info(
+                "NDVI climatology for %s: %d same-month records (month %d)",
+                parcel_id, len(month_entities), target_month,
+            )
+            return result
+
+        return _climatology_unavailable(
+            f"No valid NDVI values in {len(month_entities)} records"
+        )
 
     except httpx.TimeoutException:
         return _climatology_unavailable("Orion-LD timeout")
@@ -1028,6 +980,8 @@ async def get_ndvi_climatology(
         return _climatology_unavailable("Orion-LD unreachable")
     except Exception as exc:
         return _climatology_unavailable(f"Unexpected error: {exc}")
+    finally:
+        await client.close()
 
 
 def _extract_ndvi_values(entities: list) -> list[float]:

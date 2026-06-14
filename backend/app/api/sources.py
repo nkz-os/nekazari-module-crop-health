@@ -6,10 +6,10 @@ import asyncio
 import logging
 from datetime import datetime, timezone
 
-import httpx
 from fastapi import APIRouter, Query, Request
 
 from app.config import get_settings
+from nkz_platform_sdk.orion import OrionClient
 
 logger = logging.getLogger(__name__)
 
@@ -19,20 +19,6 @@ router = APIRouter(prefix="/sources", tags=["sources"])
 _detail_cache: dict[str, tuple[float, dict]] = {}
 _DETAIL_CACHE_TTL = 45  # seconds
 
-
-def _make_headers(tenant_id: str) -> dict:
-    headers = {"Accept": "application/ld+json"}
-    if tenant_id:
-        headers["NGSILD-Tenant"] = tenant_id
-        headers["Fiware-Service"] = tenant_id
-        headers["Fiware-ServicePath"] = "/"
-    ctx_url = get_settings().orion_ld_context
-    if ctx_url:
-        headers["Link"] = (
-            f'<{ctx_url}>; rel="http://www.w3.org/ns/json-ld#context";'
-            f' type="application/ld+json"'
-        )
-    return headers
 
 
 def _freshness(iso_ts: str | None) -> str:
@@ -89,35 +75,17 @@ async def _list_sources(request: Request) -> dict:
     DeviceMeasurement, AgriParcel) — no per-parcel external calls.
     """
     tenant_id = getattr(request.state, "tenant_id", "")
-    headers = _make_headers(tenant_id)
     settings = get_settings()
-    base = settings.orion_ld_url
-
+    client = OrionClient(tenant_id, base_url=settings.orion_ld_url, context_url=settings.orion_ld_context)
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp_a = await client.get(
-                f"{base}/ngsi-ld/v1/entities",
-                params={"type": "CropHealthAssessment", "limit": 500, "options": "keyValues"},
-                headers=headers,
-            )
-            assessments = resp_a.json() if resp_a.status_code == 200 else []
-
-            resp_p = await client.get(
-                f"{base}/ngsi-ld/v1/entities",
-                params={"type": "AgriParcel", "limit": 500, "options": "keyValues"},
-                headers=headers,
-            )
-            parcels = resp_p.json() if resp_p.status_code == 200 else []
-
-            resp_i = await client.get(
-                f"{base}/ngsi-ld/v1/entities",
-                params={"type": "DeviceMeasurement", "limit": 1000, "options": "keyValues"},
-                headers=headers,
-            )
-            iot_devices = resp_i.json() if resp_i.status_code == 200 else []
+        assessments = await client.query_entities(type="CropHealthAssessment", limit=500, options="keyValues")
+        parcels = await client.query_entities(type="AgriParcel", limit=500, options="keyValues")
+        iot_devices = await client.query_entities(type="DeviceMeasurement", limit=1000, options="keyValues")
     except Exception as e:
         logger.error("Sources list query failed: %s", e)
         return {"parcels": []}
+    finally:
+        await client.close()
 
     # Build parcel lookup
     parcel_map: dict[str, dict] = {}
@@ -204,30 +172,21 @@ async def _detail_sources(request: Request, parcelId: str) -> dict:
             return data
 
     tenant_id = getattr(request.state, "tenant_id", "")
-    headers = _make_headers(tenant_id)
     settings = get_settings()
-    base = settings.orion_ld_url
 
     now = datetime.now(timezone.utc)
     parcel_urn = f"urn:ngsi-ld:AgriParcel:{parcelId}"
 
     async def _query(type_: str, q: str = "", limit: int = 1) -> list:
+        orion = OrionClient(tenant_id, base_url=settings.orion_ld_url, context_url=settings.orion_ld_context)
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                params: dict = {"type": type_, "limit": limit, "options": "keyValues"}
-                if q:
-                    params["q"] = q
-                resp = await client.get(
-                    f"{base}/ngsi-ld/v1/entities",
-                    params=params,
-                    headers=headers,
-                )
-                if resp.status_code == 200:
-                    result = resp.json()
-                    return result if isinstance(result, list) else []
+            result = await orion.query_entities(type=type_, q=q or None, limit=limit, options="keyValues")
+            return result if isinstance(result, list) else []
         except Exception as e:
             logger.warning("Source query failed for %s: %s", type_, e)
-        return []
+            return []
+        finally:
+            await orion.close()
 
     # Query all sources in parallel with dual relationship check (hasAgriParcel|refAgriParcel)
     rel_q = f'(hasAgriParcel=="{parcel_urn}"|refAgriParcel=="{parcel_urn}")'

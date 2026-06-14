@@ -33,6 +33,8 @@ async def test_sources_list_returns_empty_for_no_parcels():
 @pytest.mark.anyio
 async def test_sources_list_with_assessment_data():
     """Parcels with assessments show health indicators."""
+    from datetime import datetime, timezone, timedelta
+    recent = (datetime.now(timezone.utc) - timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
     with respx.mock as mock:
         # Route 1: Assessments query
         mock.get(url__regex=r".*type=CropHealthAssessment.*").respond(json=[
@@ -41,7 +43,7 @@ async def test_sources_list_with_assessment_data():
                 "hasAgriParcel": {"type": "Relationship", "object": "urn:ngsi-ld:AgriParcel:Parcela-4"},
                 "cwsiValue": 0.42,
                 "overallSeverity": "MEDIUM",
-                "assessedAt": "2026-06-07T10:00:00Z",
+                "assessedAt": recent,
                 "dataFidelity": "onsite_uncalibrated",
             }
         ])

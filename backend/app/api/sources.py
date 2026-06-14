@@ -78,12 +78,21 @@ async def _list_sources(request: Request) -> dict:
     settings = get_settings()
     client = OrionClient(tenant_id, base_url=settings.orion_ld_url, context_url=settings.orion_ld_context)
     try:
-        assessments = await client.query_entities(type="CropHealthAssessment", limit=500, options="keyValues")
-        parcels = await client.query_entities(type="AgriParcel", limit=500, options="keyValues")
-        iot_devices = await client.query_entities(type="DeviceMeasurement", limit=1000, options="keyValues")
-    except Exception as e:
-        logger.error("Sources list query failed: %s", e)
-        return {"parcels": []}
+        try:
+            assessments = await client.query_entities(type="CropHealthAssessment", limit=500, options="keyValues")
+        except Exception as e:
+            logger.warning("CropHealthAssessment query failed: %s", e)
+            assessments = []
+        try:
+            parcels = await client.query_entities(type="AgriParcel", limit=500, options="keyValues")
+        except Exception as e:
+            logger.warning("AgriParcel query failed: %s", e)
+            parcels = []
+        try:
+            iot_devices = await client.query_entities(type="DeviceMeasurement", limit=1000, options="keyValues")
+        except Exception as e:
+            logger.warning("DeviceMeasurement query failed: %s", e)
+            iot_devices = []
     finally:
         await client.close()
 

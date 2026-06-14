@@ -73,9 +73,7 @@ async def setup_parcel(request: Request, body: SetupParcelRequest):
         )
 
     settings = get_settings()
-    notification_url = (
-        f"http://crop-health-backend-service:8000{settings.api_prefix}/webhooks/fiware-sensors"
-    )
+    notification_url = f"{settings.self_url}{settings.api_prefix}/webhooks/fiware-sensors"
     registrar = SubscriptionRegistrar(
         orion_url=settings.orion_ld_url,
         notification_url=notification_url,

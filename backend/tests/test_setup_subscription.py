@@ -27,3 +27,4 @@ async def test_activate_ensures_subscription_for_tenant():
     assert ensure_all.await_args.args[0] == ["t-1"]
     sub_defs = SR.call_args.kwargs["subscriptions"]
     assert any(s["type"] == "DeviceMeasurement" for s in sub_defs)
+    assert "/webhooks/fiware-sensors" in SR.call_args.kwargs["notification_url"]

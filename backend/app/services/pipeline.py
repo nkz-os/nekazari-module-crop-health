@@ -734,30 +734,30 @@ async def trigger(
 
     # ── 6. Aggregate parent parcel if this is a child ──────────────────
     try:
-        import httpx as _httpx
         from app.config import get_settings as _gs
+        from nkz_platform_sdk.orion import OrionClient
         _settings = _gs()
-        async with _httpx.AsyncClient(timeout=10.0) as _client:
-            _resp = await _client.get(
-                f"{_settings.orion_ld_url}/ngsi-ld/v1/entities/"
+        _client = OrionClient(
+            tenant_id,
+            base_url=_settings.orion_ld_url,
+            context_url=_settings.orion_ld_context,
+        )
+        try:
+            _entity = await _client.get_entity(
                 f"urn:ngsi-ld:AgriParcel:{effective_parcel}",
-                params={"options": "keyValues"},
-                headers={
-                    "Accept": "application/ld+json",
-                    "NGSILD-Tenant": tenant_id,
-                } if tenant_id else {"Accept": "application/ld+json"},
+                options="keyValues",
             )
-            if _resp.status_code == 200:
-                _entity = _resp.json()
-                _parent = _entity.get("hasAgriParcel")
-                if isinstance(_parent, dict):
-                    _parent_id = _parent.get("object")
-                else:
-                    _parent_id = _parent
-                if _parent_id and "AgriParcel" in str(_parent_id):
-                    await _aggregate_parent_composite(
-                        _parent_id, tenant_id, now,
-                    )
+        finally:
+            await _client.close()
+        _parent = _entity.get("hasAgriParcel")
+        if isinstance(_parent, dict):
+            _parent_id = _parent.get("object")
+        else:
+            _parent_id = _parent
+        if _parent_id and "AgriParcel" in str(_parent_id):
+            await _aggregate_parent_composite(
+                _parent_id, tenant_id, now,
+            )
     except Exception:
         pass  # Aggregation is best-effort
 
@@ -777,32 +777,24 @@ async def _aggregate_parent_composite(
     area-weighted composite index for the parent.
     """
     try:
-        import httpx
         from app.config import get_settings as _gs
+        from nkz_platform_sdk.orion import OrionClient
 
         settings = _gs()
-        orion_url = settings.orion_ld_url
 
-        async with httpx.AsyncClient(timeout=15.0) as client:
+        client = OrionClient(
+            tenant_id,
+            base_url=settings.orion_ld_url,
+            context_url=settings.orion_ld_context,
+        )
+        try:
             # Find all child parcels
-            children_resp = await client.get(
-                f"{orion_url}/ngsi-ld/v1/entities",
-                params={
-                    "type": "AgriParcel",
-                    "q": f'hasAgriParcel=="{parent_parcel_id}"',
-                    "limit": 20,
-                    "options": "keyValues",
-                },
-                headers={
-                    "Accept": "application/ld+json",
-                    "NGSILD-Tenant": tenant_id,
-                    "Fiware-Service": tenant_id,
-                    "Fiware-ServicePath": "/",
-                } if tenant_id else {"Accept": "application/ld+json"},
+            children = await client.query_entities(
+                type="AgriParcel",
+                q=f'hasAgriParcel=="{parent_parcel_id}"',
+                limit=20,
+                options="keyValues",
             )
-            if children_resp.status_code != 200:
-                return
-            children = children_resp.json()
             if not isinstance(children, list) or len(children) < 2:
                 return
 
@@ -823,22 +815,19 @@ async def _aggregate_parent_composite(
                     continue
                 total_area += child_area
 
-                assess_resp = await client.get(
-                    f"{orion_url}/ngsi-ld/v1/entities",
-                    params={
-                        "type": "CropHealthAssessment",
-                        "q": f'hasAgriParcel=="{child_id}"',
-                        "limit": 1,
-                        "options": "keyValues",
-                    },
-                    headers={
-                        "Accept": "application/ld+json",
-                        "NGSILD-Tenant": tenant_id,
-                    } if tenant_id else {"Accept": "application/ld+json"},
-                )
-                if assess_resp.status_code != 200:
+                try:
+                    child_assessments = await client.query_entities(
+                        type="CropHealthAssessment",
+                        q=f'hasAgriParcel=="{child_id}"',
+                        limit=1,
+                        options="keyValues",
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "aggregate: child %s assessment query failed: %s",
+                        child_id, e,
+                    )
                     continue
-                child_assessments = assess_resp.json()
                 if isinstance(child_assessments, list) and child_assessments:
                     ca = child_assessments[0]
                     csi = ca.get("compositeStressIndex")
@@ -893,20 +882,13 @@ async def _aggregate_parent_composite(
                 },
             }
 
-            await client.post(
-                f"{orion_url}/ngsi-ld/v1/entities",
-                json=body,
-                headers={
-                    "Content-Type": "application/ld+json",
-                    "NGSILD-Tenant": tenant_id,
-                    "Fiware-Service": tenant_id,
-                    "Fiware-ServicePath": "/",
-                } if tenant_id else {"Content-Type": "application/ld+json"},
-            )
+            await client.upsert_entities_batch([body])
             logger.info(
                 "Parent parcel %s composite aggregated from %d children: %.1f",
                 parent_parcel_id, count, parent_composite,
             )
+        finally:
+            await client.close()
 
     except Exception as exc:
         logger.warning(

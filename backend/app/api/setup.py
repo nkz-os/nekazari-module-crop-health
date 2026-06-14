@@ -6,7 +6,6 @@ POST /api/crop-health/internal/setup-parcel
 """
 
 import logging
-import os
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
@@ -20,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/internal", tags=["internal"])
 
-INTERNAL_SECRET = os.getenv("INTERNAL_SERVICE_SECRET", "")
+INTERNAL_SECRET = get_settings().internal_service_secret
 
 # Entities owned by crop-health (design spec §3.3)
 PLACEHOLDER_ENTITIES = [

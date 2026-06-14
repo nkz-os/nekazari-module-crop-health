@@ -3,20 +3,18 @@
 from __future__ import annotations
 
 import logging
-import os
 
 import httpx
 from fastapi import APIRouter, Request
+
+from app.config import get_settings
 
 router = APIRouter()
 
 logger = logging.getLogger(__name__)
 
-ORION_URL = os.getenv("ORION_LD_URL", "http://orion-ld-service:1026")
-CONTEXT_URL = os.getenv(
-    "ORION_LD_CONTEXT",
-    "http://api-gateway-service:5000/ngsi-ld-context.json",
-)
+ORION_URL = get_settings().orion_ld_url
+CONTEXT_URL = get_settings().orion_ld_context
 
 
 def _orion_headers(tenant_id: str = "") -> dict:
@@ -132,7 +130,7 @@ async def assessment_history(
 
     try:
         import asyncpg
-        weather_db = os.getenv("WEATHER_DB_URL", "")
+        weather_db = get_settings().weather_db_url
         if not weather_db:
             logger.warning("WEATHER_DB_URL not configured — history unavailable")
             return {"points": []}
@@ -208,7 +206,7 @@ async def ndvi_cwsi_correlation(
 
             # Query CropHealthAssessment from telemetry_events
             import asyncpg
-            weather_db = os.getenv("WEATHER_DB_URL", "")
+            weather_db = get_settings().weather_db_url
             if weather_db:
                 conn = await asyncpg.connect(weather_db)
                 try:

@@ -49,6 +49,7 @@ class Settings(BaseSettings):
 
     # ── Service-to-service auth ──────────────────────────────────────────────
     module_management_key: str = ""
+    internal_service_secret: str = ""
 
     @property
     def jwt_issuer_url(self) -> str:

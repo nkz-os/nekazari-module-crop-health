@@ -31,9 +31,10 @@ async def publish_assessment(assessment: CropHealthAssessment, tenant_id: str = 
     )
     try:
         result = await client.upsert_entities_batch([entity])
-        if result["errors"]:
-            logger.warning(
-                "Orion-LD upsert errors for %s: %s", entity["id"], result["errors"][:3]
+        errors = result.get("errors") or []
+        if errors:
+            logger.error(
+                "Orion-LD upsert errors for %s: %s", entity["id"], errors[:3]
             )
             return False
         logger.info("Published CropHealthAssessment %s", entity["id"])

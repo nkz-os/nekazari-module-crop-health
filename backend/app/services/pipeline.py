@@ -882,11 +882,17 @@ async def _aggregate_parent_composite(
                 },
             }
 
-            await client.upsert_entities_batch([body])
-            logger.info(
-                "Parent parcel %s composite aggregated from %d children: %.1f",
-                parent_parcel_id, count, parent_composite,
-            )
+            result = await client.upsert_entities_batch([body])
+            if result.get("errors"):
+                logger.warning(
+                    "Parent composite upsert partial failure for %s: %s",
+                    parent_parcel_id, result["errors"][:3],
+                )
+            else:
+                logger.info(
+                    "Parent parcel %s composite aggregated from %d children: %.1f",
+                    parent_parcel_id, count, parent_composite,
+                )
         finally:
             await client.close()
 

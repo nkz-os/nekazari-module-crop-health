@@ -171,6 +171,8 @@ async def ndvi_cwsi_correlation(
             logger.warning("ndvi_cwsi_correlation Orion query failed: %s", e)
             vi_data = []
         finally:
+            # close() runs here (before the asyncpg block below), so the outer
+            # except ImportError/Exception branches never see an open client.
             await client.close()
 
         # Query CropHealthAssessment from telemetry_events

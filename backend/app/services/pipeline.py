@@ -937,31 +937,24 @@ async def _fetch_gdd(tenant_id: str, season_start: str, base_temp: float = 10.0)
 async def _fetch_parcel_ndvi(parcel_id: str, tenant_id: str) -> float | None:
     """Fetch latest NDVI value for a parcel from Orion-LD VegetationIndex entities."""
     try:
-        settings = __import__("app.config", fromlist=["get_settings"]).get_settings()
-        orion_url = settings.orion_ld_url
-        async with __import__("httpx").AsyncClient(timeout=10.0) as client:
-            resp = await client.get(
-                f"{orion_url}/ngsi-ld/v1/entities",
-                params={
-                    "type": "EOProduct",
-                    "q": f'hasAgriParcel==\"urn:ngsi-ld:AgriParcel:{parcel_id}\";productType==\"NDVI\"',
-                    "limit": 1,
-                    "options": "keyValues",
-                },
-                headers={
-                    "Accept": "application/ld+json",
-                    "NGSILD-Tenant": tenant_id,
-                    "Fiware-Service": tenant_id,
-                    "Fiware-ServicePath": "/",
-                } if tenant_id else {"Accept": "application/ld+json"},
+        from app.config import get_settings
+        from nkz_platform_sdk.orion import OrionClient
+        settings = get_settings()
+        client = OrionClient(tenant_id, base_url=settings.orion_ld_url, context_url=settings.orion_ld_context)
+        try:
+            entities = await client.query_entities(
+                type="EOProduct",
+                q=f'hasAgriParcel==\"urn:ngsi-ld:AgriParcel:{parcel_id}\";productType==\"NDVI\"',
+                limit=1,
+                options="keyValues",
             )
-            if resp.status_code == 200:
-                entities = resp.json()
-                if entities and isinstance(entities, list):
-                    e = entities[0]
-                    ndvi = e.get("ndviValue") or e.get("value")
-                    if ndvi is not None:
-                        return float(ndvi)
+        finally:
+            await client.close()
+        if entities and isinstance(entities, list):
+            e = entities[0]
+            ndvi = e.get("ndviValue") or e.get("value")
+            if ndvi is not None:
+                return float(ndvi)
     except Exception:
         pass
     return None
@@ -969,37 +962,30 @@ async def _fetch_parcel_ndvi(parcel_id: str, tenant_id: str) -> float | None:
 
 async def _fetch_parcel_sar(parcel_id: str, tenant_id: str) -> tuple[float, float] | None:
     """Fetch latest SAR backscatter (VV, VH) for a parcel from Orion-LD.
-    
+
     Queries EOProduct entities (FIWARE Smart Data Model) filtered by
     productType=GRD (Sentinel-1 Ground Range Detected).
     """
     try:
-        settings = __import__("app.config", fromlist=["get_settings"]).get_settings()
-        orion_url = settings.orion_ld_url
-        async with __import__("httpx").AsyncClient(timeout=10.0) as client:
-            resp = await client.get(
-                f"{orion_url}/ngsi-ld/v1/entities",
-                params={
-                    "type": "EOProduct",
-                    "q": f'hasAgriParcel==\"urn:ngsi-ld:AgriParcel:{parcel_id}\";productType==\"GRD\"',
-                    "limit": 1,
-                    "options": "keyValues",
-                },
-                headers={
-                    "Accept": "application/ld+json",
-                    "NGSILD-Tenant": tenant_id,
-                    "Fiware-Service": tenant_id,
-                    "Fiware-ServicePath": "/",
-                } if tenant_id else {"Accept": "application/ld+json"},
+        from app.config import get_settings
+        from nkz_platform_sdk.orion import OrionClient
+        settings = get_settings()
+        client = OrionClient(tenant_id, base_url=settings.orion_ld_url, context_url=settings.orion_ld_context)
+        try:
+            entities = await client.query_entities(
+                type="EOProduct",
+                q=f'hasAgriParcel==\"urn:ngsi-ld:AgriParcel:{parcel_id}\";productType==\"GRD\"',
+                limit=1,
+                options="keyValues",
             )
-            if resp.status_code == 200:
-                entities = resp.json()
-                if entities and isinstance(entities, list):
-                    e = entities[0]
-                    vv = e.get("backscatterVV")
-                    vh = e.get("backscatterVH")
-                    if vv is not None and vh is not None:
-                        return float(vv), float(vh)
+        finally:
+            await client.close()
+        if entities and isinstance(entities, list):
+            e = entities[0]
+            vv = e.get("backscatterVV")
+            vh = e.get("backscatterVH")
+            if vv is not None and vh is not None:
+                return float(vv), float(vh)
     except Exception:
         pass
     return None

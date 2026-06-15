@@ -392,8 +392,8 @@ async def _resolve_parcel_coords(parcel_id: str, tenant_id: str) -> tuple[float,
                 result = (sum(lats) / len(lats), sum(lons) / len(lons))
                 _coord_cache[cache_key] = result
                 return result
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("_resolve_parcel_coords: failed for parcel %s: %s", parcel_id, exc)
     finally:
         await orion_client.close()
     return None

@@ -184,7 +184,8 @@ class RedisState:
         try:
             val = await self._client.get(f"{self._prefix}sw:{parcel_id}")
             return float(val) if val else None
-        except Exception:
+        except Exception as exc:
+            logger.warning("redis_state.get_soil_water: failed for parcel %s — returning None: %s", parcel_id, exc)
             return None
 
     async def set_soil_water(self, parcel_id: str, sw_mm: float) -> None:

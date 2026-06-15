@@ -674,8 +674,8 @@ async def trigger(
                 assessment.compaction_risk.contributing_factors.append(
                     f"penetrometer_verified_{penetrometer['point_count']}p"
                 )
-    except Exception:
-        pass  # Compaction risk is advisory — never block the pipeline
+    except Exception as exc:
+        logger.warning("pipeline: compaction risk evaluation failed for parcel %s — skipped: %s", effective_parcel, exc)
 
     assessment.data_fidelity = _resolve_data_fidelity(assessment)
 
@@ -729,8 +729,8 @@ async def trigger(
                 "timestamp": now.isoformat(),
             }
             await _publish_redis_event("crop:events", breach)
-    except Exception:
-        pass  # Event bus is best-effort, never block the pipeline
+    except Exception as exc:
+        logger.warning("pipeline: redis event publish failed for parcel %s — event dropped: %s", effective_parcel, exc)
 
     # ── 6. Aggregate parent parcel if this is a child ──────────────────
     try:
@@ -758,8 +758,8 @@ async def trigger(
             await _aggregate_parent_composite(
                 _parent_id, tenant_id, now,
             )
-    except Exception:
-        pass  # Aggregation is best-effort
+    except Exception as exc:
+        logger.warning("pipeline: parent composite aggregation failed for parcel %s — skipped: %s", effective_parcel, exc)
 
     return assessment
 

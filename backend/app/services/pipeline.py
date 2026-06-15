@@ -201,8 +201,8 @@ async def trigger(
             management = crop_context.management
             if crop_context.season and crop_context.season.gdd_accumulated:
                 gdd = crop_context.season.gdd_accumulated
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("pipeline: crop_context fetch failed for parcel %s — using defaults: %s", effective_parcel, exc)
 
     # GDD with real season start from AgriCrop
     gdd = None
@@ -219,8 +219,8 @@ async def trigger(
         gdd_data = await _fetch_gdd(tenant_id, season_start, 10.0)
         if gdd_data and gdd_data.get("gdd_total"):
             gdd = float(gdd_data["gdd_total"])
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("pipeline: GDD fetch failed for parcel %s — proceeding without GDD: %s", effective_parcel, exc)
 
     phenology = await get_phenology_params(species=species, gdd=gdd)
 
@@ -268,16 +268,16 @@ async def trigger(
     if redis_state:
         try:
             sw_yesterday = await redis_state.get_soil_water(effective_parcel)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("pipeline: redis get_soil_water failed for parcel %s — sw_yesterday=None: %s", effective_parcel, exc)
 
     # Read irrigation volume from Redis
     irrigation_mm = 0.0
     if redis_state:
         try:
             irrigation_mm = await redis_state.get_irrigation_24h(entity_id)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("pipeline: redis get_irrigation_24h failed for entity %s — irrigation_mm=0: %s", entity_id, exc)
 
     # ── 2. Execute engines ───────────────────────────────────────────────
 
@@ -346,8 +346,8 @@ async def trigger(
         if redis_state:
             try:
                 await redis_state.set_soil_water(effective_parcel, swb.sw_mm)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("pipeline: redis set_soil_water failed for parcel %s — state not persisted: %s", effective_parcel, exc)
 
     # Thermal stress (triggered by leaf temperature or opportunistically with weather)
     if weather:
@@ -370,8 +370,8 @@ async def trigger(
                 severity=tr.severity,
                 data_fidelity=tr.data_fidelity,
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("pipeline: thermal stress evaluation failed for parcel %s — skipped: %s", effective_parcel, exc)
 
     # Vigor (opportunistic — fetches latest vegetation index for the parcel)
     ndvi_val = None
@@ -394,8 +394,8 @@ async def trigger(
                 condition=vr.condition,
                 data_fidelity=vr.data_fidelity,
             )
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("pipeline: vigor evaluation failed for parcel %s — skipped: %s", effective_parcel, exc)
 
     # ── 2.4 Soil sensor readings (pass-through, no engine) ────────────
     soil_ph_val = None
@@ -551,8 +551,8 @@ async def trigger(
             stage=stage_name,
             ky_override=ky_by_stage,
         )
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("pipeline: composite stress evaluation failed for parcel %s — skipped: %s", effective_parcel, exc)
 
     try:
         from app.engines.yield_gap import evaluate_yield_gap
@@ -590,8 +590,8 @@ async def trigger(
             assessment.phenology_progress = evaluate_phenology_progress(
                 gdd_accumulated=gdd, current_stage=stage_name, stage_gdd_thresholds=thresholds,
             )
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("pipeline: phenology progress evaluation failed for parcel %s — skipped: %s", effective_parcel, exc)
 
     # WUE (after composite stress and yield gap, needs NDVI integral + irrigation data)
     try:
@@ -604,16 +604,16 @@ async def trigger(
             if irr_readings:
                 irrigation_mm = sum(r.value for r in irr_readings)
                 irrigation_source = "measured_flow"
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("pipeline: WUE redis irrigationVolume read failed for entity %s — skipped: %s", entity_id, exc)
         if irrigation_source == "none":
             try:
                 declared = await redis_state.get_latest(entity_id, "declaredIrrigation")
                 if declared and declared.value:
                     irrigation_mm = declared.value
                     irrigation_source = "declared_volume"
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("pipeline: WUE redis declaredIrrigation read failed for entity %s — skipped: %s", entity_id, exc)
         assessment.wue = evaluate_wue(
             ndvi_integrated=ndvi_val,
             irrigation_applied_mm=irrigation_mm,
@@ -621,8 +621,8 @@ async def trigger(
             previous_wue=None,
             fidelity="onsite_uncalibrated" if irrigation_source == "measured_flow" else "regional_proxy",
         )
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("pipeline: WUE evaluation failed for parcel %s — skipped: %s", effective_parcel, exc)
 
     # ── 2.7 Compaction Risk (cross-module, opportunistic) ────────
     try:
@@ -911,8 +911,8 @@ async def _publish_redis_event(stream: str, event: dict) -> None:
         payload = __import__("json").dumps(event)
         await r.xadd(stream, {"payload": payload}, maxlen=1000)
         await r.aclose()
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("_publish_redis_event: failed to publish to stream %s — dropped: %s", stream, exc)
 
 
 async def _fetch_gdd(tenant_id: str, season_start: str, base_temp: float = 10.0) -> dict | None:
@@ -929,8 +929,8 @@ async def _fetch_gdd(tenant_id: str, season_start: str, base_temp: float = 10.0)
             )
             if resp.status_code == 200:
                 return resp.json()
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("_fetch_gdd: failed for tenant %s season_start=%s — returning None: %s", tenant_id, season_start, exc)
     return None
 
 
@@ -955,8 +955,8 @@ async def _fetch_parcel_ndvi(parcel_id: str, tenant_id: str) -> float | None:
             ndvi = e.get("ndviValue") or e.get("value")
             if ndvi is not None:
                 return float(ndvi)
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("_fetch_parcel_ndvi: failed for parcel %s — returning None: %s", parcel_id, exc)
     return None
 
 
@@ -986,8 +986,8 @@ async def _fetch_parcel_sar(parcel_id: str, tenant_id: str) -> tuple[float, floa
             vh = e.get("backscatterVH")
             if vv is not None and vh is not None:
                 return float(vv), float(vh)
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("_fetch_parcel_sar: failed for parcel %s — returning None: %s", parcel_id, exc)
     return None
 
 

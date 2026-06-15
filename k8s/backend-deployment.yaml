@@ -60,6 +60,11 @@ spec:
             # Redis (shared instance)
             - name: REDIS_URL
               value: "redis://redis-service:6379/0"
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: redis-secret
+                  key: password
             - name: REDIS_KEY_PREFIX
               value: "crophealth:"
             - name: SLIDING_WINDOW_HOURS

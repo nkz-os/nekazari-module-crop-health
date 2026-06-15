@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
 """Seed AgriCrop placeholder entities for every AgriParcel in Orion-LD.
 
+Creates per-parcel placeholder AgriCrop entities (one per AgriParcel), tenant-scoped.
+This is NOT a reference catalog — the FAO-56 variety catalog belongs to bioorchestrator
+(consumed via its API). --tenant is REQUIRED to avoid seeding the shared `default` store.
+
 Creates one AgriCrop per AgriParcel with estimated plantingDate (March 1)
 and harvestDate (June 30). Marked provenance="placeholder" so consumers
 know dates are estimates until user assigns real crop via bioorchestrator.
 
 Usage:
-    python3 scripts/seed_agricrop.py [--tenant TENANT_ID] [--dry-run]
+    python3 scripts/seed_agricrop.py --tenant TENANT_ID [--dry-run]
 """
 from __future__ import annotations
 
@@ -107,7 +111,7 @@ async def main(tenant_id: str, dry_run: bool = False):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Seed AgriCrop placeholders")
-    parser.add_argument("--tenant", default="default", help="Tenant ID")
+    parser.add_argument("--tenant", required=True, help="Tenant ID (required — never seeds shared `default` store)")
     parser.add_argument(
         "--dry-run", action="store_true", help="Show what would be created"
     )

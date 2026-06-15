@@ -41,6 +41,7 @@ class Settings(BaseSettings):
     weather_api_url: str = "http://timeseries-reader-service:5000"
     weather_db_url: str = ""  # deprecated — use weather_api_url instead
     soil_module_url: str = "http://soil-module-service:8000"
+    self_url: str = "http://crop-health-backend-service:8000"  # this module's in-cluster base URL (for Orion notification callbacks)
 
     # ── Cache TTLs (seconds) ─────────────────────────────────────────────────
     phenology_cache_ttl: int = 3600  # 1h — phenology params change slowly
@@ -48,6 +49,7 @@ class Settings(BaseSettings):
 
     # ── Service-to-service auth ──────────────────────────────────────────────
     module_management_key: str = ""
+    internal_service_secret: str = ""
 
     @property
     def jwt_issuer_url(self) -> str:

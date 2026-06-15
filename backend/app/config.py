@@ -31,6 +31,7 @@ class Settings(BaseSettings):
 
     # ── Redis (shared instance, logical isolation via key prefix) ─────────────
     redis_url: str = "redis://localhost:6379/0"
+    redis_password: str = ""
     redis_key_prefix: str = "crophealth:"
     sliding_window_hours: int = 48  # Hours of dendrómetro data to retain
 

@@ -38,6 +38,7 @@ class RedisState:
         settings = get_settings()
         client = aioredis.from_url(
             settings.redis_url,
+            password=settings.redis_password or None,
             decode_responses=True,
             socket_connect_timeout=5,
         )

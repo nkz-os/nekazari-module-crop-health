@@ -6,18 +6,20 @@ POST /api/crop-health/internal/setup-parcel
 """
 
 import logging
-import os
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from nkz_platform_sdk.activation import ModuleActivation
+from nkz_platform_sdk.subscriptions import SubscriptionRegistrar
+
+from app.config import get_settings
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/internal", tags=["internal"])
 
-INTERNAL_SECRET = os.getenv("INTERNAL_SERVICE_SECRET", "")
+INTERNAL_SECRET = get_settings().internal_service_secret
 
 # Entities owned by crop-health (design spec §3.3)
 PLACEHOLDER_ENTITIES = [
@@ -68,6 +70,22 @@ async def setup_parcel(request: Request, body: SetupParcelRequest):
             status_code=502,
             detail=f"Orion-LD entity creation failed: {result['errors'][:3]}",
         )
+
+    settings = get_settings()
+    notification_url = f"{settings.self_url}{settings.api_prefix}/webhooks/fiware-sensors"
+    registrar = SubscriptionRegistrar(
+        orion_url=settings.orion_ld_url,
+        notification_url=notification_url,
+        subscriptions=[{"type": "DeviceMeasurement", "throttling": 30}],
+        module_name="crop-health",
+        context_url=settings.orion_ld_context,
+    )
+    sub_result = await registrar.ensure_all([body.tenant_id])
+    logger.info(
+        "setup-parcel subscription ensure tenant=%s: created=%d skipped=%d errors=%d",
+        body.tenant_id, sub_result["created"], sub_result["skipped"], len(sub_result["errors"]),
+    )
+
     return {
         "message": "activated",
         "parcel_id": body.parcel_id,

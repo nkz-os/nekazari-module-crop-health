@@ -201,8 +201,8 @@ async def trigger(
             management = crop_context.management
             if crop_context.season and crop_context.season.gdd_accumulated:
                 gdd = crop_context.season.gdd_accumulated
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("pipeline: crop_context fetch failed for parcel %s — using defaults: %s", effective_parcel, exc)
 
     # GDD with real season start from AgriCrop
     gdd = None
@@ -219,8 +219,8 @@ async def trigger(
         gdd_data = await _fetch_gdd(tenant_id, season_start, 10.0)
         if gdd_data and gdd_data.get("gdd_total"):
             gdd = float(gdd_data["gdd_total"])
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("pipeline: GDD fetch failed for parcel %s — proceeding without GDD: %s", effective_parcel, exc)
 
     phenology = await get_phenology_params(species=species, gdd=gdd)
 
@@ -268,16 +268,16 @@ async def trigger(
     if redis_state:
         try:
             sw_yesterday = await redis_state.get_soil_water(effective_parcel)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("pipeline: redis get_soil_water failed for parcel %s — sw_yesterday=None: %s", effective_parcel, exc)
 
     # Read irrigation volume from Redis
     irrigation_mm = 0.0
     if redis_state:
         try:
             irrigation_mm = await redis_state.get_irrigation_24h(entity_id)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("pipeline: redis get_irrigation_24h failed for entity %s — irrigation_mm=0: %s", entity_id, exc)
 
     # ── 2. Execute engines ───────────────────────────────────────────────
 
@@ -346,8 +346,8 @@ async def trigger(
         if redis_state:
             try:
                 await redis_state.set_soil_water(effective_parcel, swb.sw_mm)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("pipeline: redis set_soil_water failed for parcel %s — state not persisted: %s", effective_parcel, exc)
 
     # Thermal stress (triggered by leaf temperature or opportunistically with weather)
     if weather:
@@ -370,8 +370,8 @@ async def trigger(
                 severity=tr.severity,
                 data_fidelity=tr.data_fidelity,
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("pipeline: thermal stress evaluation failed for parcel %s — skipped: %s", effective_parcel, exc)
 
     # Vigor (opportunistic — fetches latest vegetation index for the parcel)
     ndvi_val = None
@@ -394,8 +394,8 @@ async def trigger(
                 condition=vr.condition,
                 data_fidelity=vr.data_fidelity,
             )
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("pipeline: vigor evaluation failed for parcel %s — skipped: %s", effective_parcel, exc)
 
     # ── 2.4 Soil sensor readings (pass-through, no engine) ────────────
     soil_ph_val = None
@@ -551,8 +551,8 @@ async def trigger(
             stage=stage_name,
             ky_override=ky_by_stage,
         )
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("pipeline: composite stress evaluation failed for parcel %s — skipped: %s", effective_parcel, exc)
 
     try:
         from app.engines.yield_gap import evaluate_yield_gap
@@ -590,8 +590,8 @@ async def trigger(
             assessment.phenology_progress = evaluate_phenology_progress(
                 gdd_accumulated=gdd, current_stage=stage_name, stage_gdd_thresholds=thresholds,
             )
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("pipeline: phenology progress evaluation failed for parcel %s — skipped: %s", effective_parcel, exc)
 
     # WUE (after composite stress and yield gap, needs NDVI integral + irrigation data)
     try:
@@ -604,16 +604,16 @@ async def trigger(
             if irr_readings:
                 irrigation_mm = sum(r.value for r in irr_readings)
                 irrigation_source = "measured_flow"
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("pipeline: WUE redis irrigationVolume read failed for entity %s — skipped: %s", entity_id, exc)
         if irrigation_source == "none":
             try:
                 declared = await redis_state.get_latest(entity_id, "declaredIrrigation")
                 if declared and declared.value:
                     irrigation_mm = declared.value
                     irrigation_source = "declared_volume"
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("pipeline: WUE redis declaredIrrigation read failed for entity %s — skipped: %s", entity_id, exc)
         assessment.wue = evaluate_wue(
             ndvi_integrated=ndvi_val,
             irrigation_applied_mm=irrigation_mm,
@@ -621,8 +621,8 @@ async def trigger(
             previous_wue=None,
             fidelity="onsite_uncalibrated" if irrigation_source == "measured_flow" else "regional_proxy",
         )
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("pipeline: WUE evaluation failed for parcel %s — skipped: %s", effective_parcel, exc)
 
     # ── 2.7 Compaction Risk (cross-module, opportunistic) ────────
     try:
@@ -674,8 +674,8 @@ async def trigger(
                 assessment.compaction_risk.contributing_factors.append(
                     f"penetrometer_verified_{penetrometer['point_count']}p"
                 )
-    except Exception:
-        pass  # Compaction risk is advisory — never block the pipeline
+    except Exception as exc:
+        logger.warning("pipeline: compaction risk evaluation failed for parcel %s — skipped: %s", effective_parcel, exc)
 
     assessment.data_fidelity = _resolve_data_fidelity(assessment)
 
@@ -729,37 +729,37 @@ async def trigger(
                 "timestamp": now.isoformat(),
             }
             await _publish_redis_event("crop:events", breach)
-    except Exception:
-        pass  # Event bus is best-effort, never block the pipeline
+    except Exception as exc:
+        logger.warning("pipeline: redis event publish failed for parcel %s — event dropped: %s", effective_parcel, exc)
 
     # ── 6. Aggregate parent parcel if this is a child ──────────────────
     try:
-        import httpx as _httpx
         from app.config import get_settings as _gs
+        from nkz_platform_sdk.orion import OrionClient
         _settings = _gs()
-        async with _httpx.AsyncClient(timeout=10.0) as _client:
-            _resp = await _client.get(
-                f"{_settings.orion_ld_url}/ngsi-ld/v1/entities/"
+        _client = OrionClient(
+            tenant_id,
+            base_url=_settings.orion_ld_url,
+            context_url=_settings.orion_ld_context,
+        )
+        try:
+            _entity = await _client.get_entity(
                 f"urn:ngsi-ld:AgriParcel:{effective_parcel}",
-                params={"options": "keyValues"},
-                headers={
-                    "Accept": "application/ld+json",
-                    "NGSILD-Tenant": tenant_id,
-                } if tenant_id else {"Accept": "application/ld+json"},
+                options="keyValues",
             )
-            if _resp.status_code == 200:
-                _entity = _resp.json()
-                _parent = _entity.get("hasAgriParcel")
-                if isinstance(_parent, dict):
-                    _parent_id = _parent.get("object")
-                else:
-                    _parent_id = _parent
-                if _parent_id and "AgriParcel" in str(_parent_id):
-                    await _aggregate_parent_composite(
-                        _parent_id, tenant_id, now,
-                    )
-    except Exception:
-        pass  # Aggregation is best-effort
+        finally:
+            await _client.close()
+        _parent = _entity.get("hasAgriParcel")
+        if isinstance(_parent, dict):
+            _parent_id = _parent.get("object")
+        else:
+            _parent_id = _parent
+        if _parent_id and "AgriParcel" in str(_parent_id):
+            await _aggregate_parent_composite(
+                _parent_id, tenant_id, now,
+            )
+    except Exception as exc:
+        logger.warning("pipeline: parent composite aggregation failed for parcel %s — skipped: %s", effective_parcel, exc)
 
     return assessment
 
@@ -777,32 +777,24 @@ async def _aggregate_parent_composite(
     area-weighted composite index for the parent.
     """
     try:
-        import httpx
         from app.config import get_settings as _gs
+        from nkz_platform_sdk.orion import OrionClient
 
         settings = _gs()
-        orion_url = settings.orion_ld_url
 
-        async with httpx.AsyncClient(timeout=15.0) as client:
+        client = OrionClient(
+            tenant_id,
+            base_url=settings.orion_ld_url,
+            context_url=settings.orion_ld_context,
+        )
+        try:
             # Find all child parcels
-            children_resp = await client.get(
-                f"{orion_url}/ngsi-ld/v1/entities",
-                params={
-                    "type": "AgriParcel",
-                    "q": f'hasAgriParcel=="{parent_parcel_id}"',
-                    "limit": 20,
-                    "options": "keyValues",
-                },
-                headers={
-                    "Accept": "application/ld+json",
-                    "NGSILD-Tenant": tenant_id,
-                    "Fiware-Service": tenant_id,
-                    "Fiware-ServicePath": "/",
-                } if tenant_id else {"Accept": "application/ld+json"},
+            children = await client.query_entities(
+                type="AgriParcel",
+                q=f'hasAgriParcel=="{parent_parcel_id}"',
+                limit=20,
+                options="keyValues",
             )
-            if children_resp.status_code != 200:
-                return
-            children = children_resp.json()
             if not isinstance(children, list) or len(children) < 2:
                 return
 
@@ -823,22 +815,19 @@ async def _aggregate_parent_composite(
                     continue
                 total_area += child_area
 
-                assess_resp = await client.get(
-                    f"{orion_url}/ngsi-ld/v1/entities",
-                    params={
-                        "type": "CropHealthAssessment",
-                        "q": f'hasAgriParcel=="{child_id}"',
-                        "limit": 1,
-                        "options": "keyValues",
-                    },
-                    headers={
-                        "Accept": "application/ld+json",
-                        "NGSILD-Tenant": tenant_id,
-                    } if tenant_id else {"Accept": "application/ld+json"},
-                )
-                if assess_resp.status_code != 200:
+                try:
+                    child_assessments = await client.query_entities(
+                        type="CropHealthAssessment",
+                        q=f'hasAgriParcel=="{child_id}"',
+                        limit=1,
+                        options="keyValues",
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "aggregate: child %s assessment query failed: %s",
+                        child_id, e,
+                    )
                     continue
-                child_assessments = assess_resp.json()
                 if isinstance(child_assessments, list) and child_assessments:
                     ca = child_assessments[0]
                     csi = ca.get("compositeStressIndex")
@@ -893,20 +882,19 @@ async def _aggregate_parent_composite(
                 },
             }
 
-            await client.post(
-                f"{orion_url}/ngsi-ld/v1/entities",
-                json=body,
-                headers={
-                    "Content-Type": "application/ld+json",
-                    "NGSILD-Tenant": tenant_id,
-                    "Fiware-Service": tenant_id,
-                    "Fiware-ServicePath": "/",
-                } if tenant_id else {"Content-Type": "application/ld+json"},
-            )
-            logger.info(
-                "Parent parcel %s composite aggregated from %d children: %.1f",
-                parent_parcel_id, count, parent_composite,
-            )
+            result = await client.upsert_entities_batch([body])
+            if result.get("errors"):
+                logger.warning(
+                    "Parent composite upsert partial failure for %s: %s",
+                    parent_parcel_id, result["errors"][:3],
+                )
+            else:
+                logger.info(
+                    "Parent parcel %s composite aggregated from %d children: %.1f",
+                    parent_parcel_id, count, parent_composite,
+                )
+        finally:
+            await client.close()
 
     except Exception as exc:
         logger.warning(
@@ -923,8 +911,8 @@ async def _publish_redis_event(stream: str, event: dict) -> None:
         payload = __import__("json").dumps(event)
         await r.xadd(stream, {"payload": payload}, maxlen=1000)
         await r.aclose()
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("_publish_redis_event: failed to publish to stream %s — dropped: %s", stream, exc)
 
 
 async def _fetch_gdd(tenant_id: str, season_start: str, base_temp: float = 10.0) -> dict | None:
@@ -941,79 +929,65 @@ async def _fetch_gdd(tenant_id: str, season_start: str, base_temp: float = 10.0)
             )
             if resp.status_code == 200:
                 return resp.json()
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("_fetch_gdd: failed for tenant %s season_start=%s — returning None: %s", tenant_id, season_start, exc)
     return None
 
 
 async def _fetch_parcel_ndvi(parcel_id: str, tenant_id: str) -> float | None:
     """Fetch latest NDVI value for a parcel from Orion-LD VegetationIndex entities."""
     try:
-        settings = __import__("app.config", fromlist=["get_settings"]).get_settings()
-        orion_url = settings.orion_ld_url
-        async with __import__("httpx").AsyncClient(timeout=10.0) as client:
-            resp = await client.get(
-                f"{orion_url}/ngsi-ld/v1/entities",
-                params={
-                    "type": "EOProduct",
-                    "q": f'hasAgriParcel==\"urn:ngsi-ld:AgriParcel:{parcel_id}\";productType==\"NDVI\"',
-                    "limit": 1,
-                    "options": "keyValues",
-                },
-                headers={
-                    "Accept": "application/ld+json",
-                    "NGSILD-Tenant": tenant_id,
-                    "Fiware-Service": tenant_id,
-                    "Fiware-ServicePath": "/",
-                } if tenant_id else {"Accept": "application/ld+json"},
+        from app.config import get_settings
+        from nkz_platform_sdk.orion import OrionClient
+        settings = get_settings()
+        client = OrionClient(tenant_id, base_url=settings.orion_ld_url, context_url=settings.orion_ld_context)
+        try:
+            entities = await client.query_entities(
+                type="EOProduct",
+                q=f'hasAgriParcel==\"urn:ngsi-ld:AgriParcel:{parcel_id}\";productType==\"NDVI\"',
+                limit=1,
+                options="keyValues",
             )
-            if resp.status_code == 200:
-                entities = resp.json()
-                if entities and isinstance(entities, list):
-                    e = entities[0]
-                    ndvi = e.get("ndviValue") or e.get("value")
-                    if ndvi is not None:
-                        return float(ndvi)
-    except Exception:
-        pass
+        finally:
+            await client.close()
+        if entities and isinstance(entities, list):
+            e = entities[0]
+            ndvi = e.get("ndviValue") or e.get("value")
+            if ndvi is not None:
+                return float(ndvi)
+    except Exception as exc:
+        logger.warning("_fetch_parcel_ndvi: failed for parcel %s — returning None: %s", parcel_id, exc)
     return None
 
 
 async def _fetch_parcel_sar(parcel_id: str, tenant_id: str) -> tuple[float, float] | None:
     """Fetch latest SAR backscatter (VV, VH) for a parcel from Orion-LD.
-    
+
     Queries EOProduct entities (FIWARE Smart Data Model) filtered by
     productType=GRD (Sentinel-1 Ground Range Detected).
     """
     try:
-        settings = __import__("app.config", fromlist=["get_settings"]).get_settings()
-        orion_url = settings.orion_ld_url
-        async with __import__("httpx").AsyncClient(timeout=10.0) as client:
-            resp = await client.get(
-                f"{orion_url}/ngsi-ld/v1/entities",
-                params={
-                    "type": "EOProduct",
-                    "q": f'hasAgriParcel==\"urn:ngsi-ld:AgriParcel:{parcel_id}\";productType==\"GRD\"',
-                    "limit": 1,
-                    "options": "keyValues",
-                },
-                headers={
-                    "Accept": "application/ld+json",
-                    "NGSILD-Tenant": tenant_id,
-                    "Fiware-Service": tenant_id,
-                    "Fiware-ServicePath": "/",
-                } if tenant_id else {"Accept": "application/ld+json"},
+        from app.config import get_settings
+        from nkz_platform_sdk.orion import OrionClient
+        settings = get_settings()
+        client = OrionClient(tenant_id, base_url=settings.orion_ld_url, context_url=settings.orion_ld_context)
+        try:
+            entities = await client.query_entities(
+                type="EOProduct",
+                q=f'hasAgriParcel==\"urn:ngsi-ld:AgriParcel:{parcel_id}\";productType==\"GRD\"',
+                limit=1,
+                options="keyValues",
             )
-            if resp.status_code == 200:
-                entities = resp.json()
-                if entities and isinstance(entities, list):
-                    e = entities[0]
-                    vv = e.get("backscatterVV")
-                    vh = e.get("backscatterVH")
-                    if vv is not None and vh is not None:
-                        return float(vv), float(vh)
-    except Exception:
-        pass
+        finally:
+            await client.close()
+        if entities and isinstance(entities, list):
+            e = entities[0]
+            vv = e.get("backscatterVV")
+            vh = e.get("backscatterVH")
+            if vv is not None and vh is not None:
+                return float(vv), float(vh)
+    except Exception as exc:
+        logger.warning("_fetch_parcel_sar: failed for parcel %s — returning None: %s", parcel_id, exc)
     return None
 
 

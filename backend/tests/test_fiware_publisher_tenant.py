@@ -1,24 +1,43 @@
-"""Regression: assessment publisher must send the tenant to Orion AS-IS.
+"""Regression: assessment publisher must hand Orion the tenant AS-IS.
 
-The canonical tenant format is hyphenated and the SDK OrionClient sends it
-verbatim. fiware_publisher._make_headers used to underscore the tenant
-(`replace("-", "_")`), routing CropHealthAssessment writes to a phantom
-tenant for hyphenated (paying) tenants — e.g. asociacion-allotarra ->
-asociacion_allotarra.
+The canonical tenant format is hyphenated; OrionClient sends NGSILD-Tenant
+verbatim. An earlier _make_headers underscored the tenant, routing writes to a
+phantom tenant for hyphenated (paying) tenants (asociacion-allotarra ->
+asociacion_allotarra). This test pins that publish_assessment constructs
+OrionClient with the tenant unchanged.
 """
 
-from app.services.fiware_publisher import _make_headers
+from unittest.mock import patch
+
+import pytest
+
+from app.schemas import CropHealthAssessment
 
 HYPHEN_TENANT = "asociacion-allotarra"
 
 
-def test_hyphen_tenant_preserved_in_orion_headers():
-    headers = _make_headers(HYPHEN_TENANT)
-    assert headers["NGSILD-Tenant"] == HYPHEN_TENANT
-    assert headers["Fiware-Service"] == HYPHEN_TENANT
+@pytest.mark.asyncio
+async def test_publish_constructs_orionclient_with_tenant_as_is():
+    captured = {}
 
+    class _FakeClient:
+        def __init__(self, tenant_id, *a, **k):
+            captured["tenant"] = tenant_id
+        async def upsert_entities_batch(self, entities):
+            return {"upserted": 1, "errors": [], "entity_ids": [entities[0]["id"]]}
+        async def close(self):
+            pass
 
-def test_no_underscore_introduced():
-    headers = _make_headers("a-b-c-d")
-    assert "_" not in headers["NGSILD-Tenant"]
-    assert "_" not in headers["Fiware-Service"]
+    import app.services.fiware_publisher as fp
+    with patch.object(fp, "OrionClient", _FakeClient), \
+         patch.object(CropHealthAssessment, "to_ngsi_ld",
+                      return_value={"id": "urn:ngsi-ld:CropHealthAssessment:P1-latest",
+                                    "type": "CropHealthAssessment"}):
+        ok = await fp.publish_assessment(
+            CropHealthAssessment.model_construct(id="urn:ngsi-ld:CropHealthAssessment:P1-latest"),
+            tenant_id=HYPHEN_TENANT,
+        )
+
+    assert ok is True
+    assert captured["tenant"] == HYPHEN_TENANT
+    assert "_" not in captured["tenant"]

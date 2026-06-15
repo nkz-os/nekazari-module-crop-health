@@ -27,7 +27,7 @@ spec:
     spec:
       containers:
         - name: backend
-          image: ghcr.io/nkz-os/nekazari-module-crop-health@sha256:df63b3a83e6e6cccbcd471e761632755b191d82cbeb4343b8dcb8dc2d6823d72  # bcfd206 #5 SDK-conformance (all Orion via SDK, DeviceMeasurement sub, config/fail-safe)
+          image: ghcr.io/nkz-os/nekazari-module-crop-health@sha256:078e50c491652713a4f5e1a59befd69576af974aa510ec797e02b599fbbfdc00  # 469ae2a redis auth (REDIS_PASSWORD) + #5 SDK-conformance
           imagePullPolicy: Always
           ports:
             - name: http

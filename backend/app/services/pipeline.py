@@ -907,7 +907,9 @@ async def _publish_redis_event(stream: str, event: dict) -> None:
     """Publish an event to Redis Streams (best-effort)."""
     try:
         import redis.asyncio as aioredis
-        r = aioredis.Redis.from_url("redis://redis-service:6379/0")
+        from app.config import get_settings
+        _s = get_settings()
+        r = aioredis.Redis.from_url(_s.redis_url, password=_s.redis_password or None)
         payload = __import__("json").dumps(event)
         await r.xadd(stream, {"payload": payload}, maxlen=1000)
         await r.aclose()

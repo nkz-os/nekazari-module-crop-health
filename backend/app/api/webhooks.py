@@ -19,6 +19,9 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, BackgroundTasks, Request, Response
 
+from fastapi import HTTPException
+
+from app.config import get_settings
 from app.schemas import MetricType
 from app.services import pipeline
 
@@ -32,6 +35,16 @@ _TRACKED_ATTRIBUTES = {
     "trunkDiameter": MetricType.TRUNK_DIAMETER,
     "soilMoisture": MetricType.SOIL_MOISTURE,
 }
+
+
+def _validate_webhook_secret(request: Request) -> None:
+    """Validate X-Orion-Webhook-Secret if configured (defense-in-depth)."""
+    secret = get_settings().orion_webhook_secret
+    if not secret:
+        return
+    provided = request.headers.get("X-Orion-Webhook-Secret", "")
+    if provided != secret:
+        raise HTTPException(status_code=403, detail="Invalid webhook secret")
 
 
 @router.post("/webhooks/fiware-sensors", status_code=204)
@@ -54,6 +67,7 @@ async def receive_sensor_data(
         ]
     }
     """
+    _validate_webhook_secret(request)
     try:
         body = await request.json()
     except Exception as exc:

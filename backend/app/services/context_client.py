@@ -329,7 +329,7 @@ async def get_agri_crop(
     try:
         entities = await client.query_entities(
             type="AgriCrop",
-            q=f'hasAgriParcel==\"urn:ngsi-ld:AgriParcel:{parcel_id}\"',
+            q=f'hasAgriParcel==\"urn:ngsi-ld:AgriParcel:{parcel_id}\"|refAgriParcel==\"urn:ngsi-ld:AgriParcel:{parcel_id}\"',
             limit=1,
             options="keyValues",
         )
@@ -695,7 +695,7 @@ async def get_multiyear_vigor_anomaly(
         # Query all CropHealthAssessment entities for this parcel
         entities = await client.query_entities(
             type="CropHealthAssessment",
-            q=f'hasAgriParcel==\"urn:ngsi-ld:AgriParcel:{parcel_id}\"',
+            q=f'hasAgriParcel==\"urn:ngsi-ld:AgriParcel:{parcel_id}\"|refAgriParcel==\"urn:ngsi-ld:AgriParcel:{parcel_id}\"',
             limit=500,
             options="keyValues",
         )
@@ -813,12 +813,11 @@ async def get_penetrometer_data(
     """
     settings = get_settings()
 
-    # TODO(naming-2026-06-07): cross-module query filters hasAgriParcel only; legacy refAgriParcel data (if any) is missed
     client = OrionClient(tenant_id, base_url=settings.orion_ld_url, context_url=settings.orion_ld_context)
     try:
         entities = await client.query_entities(
             type="SoilSamplingPoint",
-            q=f'hasAgriParcel==\"urn:ngsi-ld:AgriParcel:{parcel_id}\"',
+            q=f'hasAgriParcel==\"urn:ngsi-ld:AgriParcel:{parcel_id}\"|refAgriParcel==\"urn:ngsi-ld:AgriParcel:{parcel_id}\"',
             limit=50,
             options="keyValues",
         )
@@ -898,12 +897,11 @@ async def get_ndvi_climatology(
     if not orion_url:
         return _climatology_unavailable("ORION_LD_URL not configured")
 
-    # TODO(naming-2026-06-07): cross-module query filters hasAgriParcel only; legacy refAgriParcel data (if any) is missed
     client = OrionClient(tenant_id, base_url=orion_url, context_url=settings.orion_ld_context)
     try:
         entities = await client.query_entities(
             type="VegetationIndex",
-            q=f'hasAgriParcel=="urn:ngsi-ld:AgriParcel:{parcel_id}"',
+            q=f'hasAgriParcel=="urn:ngsi-ld:AgriParcel:{parcel_id}"|refAgriParcel=="urn:ngsi-ld:AgriParcel:{parcel_id}"',
             limit=500,
             options="keyValues",
         )

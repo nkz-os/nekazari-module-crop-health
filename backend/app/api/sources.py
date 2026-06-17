@@ -206,6 +206,7 @@ async def _detail_sources(request: Request, parcelId: str) -> dict:
         _query("AgriCrop", rel_q, 1),
         _query("VegetationIndex", rel_q, 1),
         _query("WeatherObserved", f'locatedAt=="{parcel_urn}"', 1),
+        _query("EOProduct", f'{rel_q};productType=="GRD"', 1),
         return_exceptions=True,
     )
 
@@ -215,6 +216,7 @@ async def _detail_sources(request: Request, parcelId: str) -> dict:
     agri_crops = results[3] if not isinstance(results[3], BaseException) else []
     vi_fallback = results[4] if not isinstance(results[4], BaseException) else []
     weather_obs = results[5] if not isinstance(results[5], BaseException) else []
+    sar_products = results[6] if not isinstance(results[6], BaseException) else []
 
     assessment = assessments[0] if assessments else {}
 
@@ -318,11 +320,19 @@ async def _detail_sources(request: Request, parcelId: str) -> dict:
         "lastValue": ndvi_val,
     }
 
+    # SAR (Sentinel-1 GRD products)
+    sar_val = None
+    sar_ts = None
+    if sar_products:
+        sp = sar_products[0]
+        sar_val = sp.get("backscatterVH") or sp.get("backscatterVV") or sp.get("value")
+        sar_ts = sp.get("dateObserved") or sp.get("sensingDate")
     sar = {
-        "status": "unavailable",
-        "freshness": "none",
-        "lastDataAt": None,
-        "reason": "no_entity" if ndvi_val is not None else "no_parcel_data",
+        "status": "ok" if sar_val is not None else "unavailable",
+        "freshness": _freshness(sar_ts) if isinstance(sar_ts, str) else "none",
+        "lastDataAt": sar_ts if isinstance(sar_ts, str) else None,
+        "lastValue": sar_val,
+        "reason": None if sar_val is not None else ("no_entity" if sar_products else "no_parcel_data"),
     }
 
     # ── Crop ───────────────────────────────────────────────────────────

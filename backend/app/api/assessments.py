@@ -368,8 +368,10 @@ async def list_parcels(request: Request):
     seen: set[str] = set()
 
     for pid, a in assessment_by_parcel.items():
+        if pid not in parcel_info:
+            continue  # ghost: assessment references a deleted/non-existent AgriParcel
         seen.add(pid)
-        info = parcel_info.get(pid, {})
+        info = parcel_info[pid]
         name_val = info.get("name")
         if isinstance(name_val, dict):
             name_val = name_val.get("value")

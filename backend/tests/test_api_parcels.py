@@ -117,8 +117,13 @@ class TestParcels:
                         "assessedAt": "2026-06-03T10:00:00Z",
                     },
                 ]))
-            else:
-                return MagicMock(status_code=200, json=MagicMock(return_value=[]))
+            else:  # AgriParcel query — both parcels exist (live)
+                return MagicMock(status_code=200, json=MagicMock(return_value=[
+                    {"id": "urn:ngsi-ld:AgriParcel:parcel-low", "type": "AgriParcel",
+                     "name": {"type": "Property", "value": "parcel-low"}},
+                    {"id": "urn:ngsi-ld:AgriParcel:parcel-crit", "type": "AgriParcel",
+                     "name": {"type": "Property", "value": "parcel-crit"}},
+                ]))
 
         with patch("httpx.AsyncClient.get", side_effect=mock_get):
             resp = client.get("/api/crop-health/parcels")
@@ -133,3 +138,27 @@ class TestParcels:
             assert resp.status_code == 200
             data = resp.json()
             assert data == {"parcels": []}
+
+    def test_parcels_excludes_ghost_without_agriparcel(self, client):
+        """An assessment referencing a parcel with no live AgriParcel must NOT appear."""
+        call_count = [0]
+
+        def mock_get(*args, **kwargs):
+            call_count[0] += 1
+            if call_count[0] == 1:  # CropHealthAssessment query
+                return MagicMock(status_code=200, json=MagicMock(return_value=[
+                    {
+                        "id": "urn:ngsi-ld:CropHealthAssessment:ghost",
+                        "type": "CropHealthAssessment",
+                        "hasAgriParcel": {"type": "Relationship", "object": "urn:ngsi-ld:AgriParcel:Ghost-1"},
+                        "overallSeverity": {"type": "Property", "value": "HIGH"},
+                        "assessedAt": {"type": "Property", "value": "2026-04-22T00:00:00Z"},
+                    }
+                ]))
+            else:  # AgriParcel query — Ghost-1 does NOT exist
+                return MagicMock(status_code=200, json=MagicMock(return_value=[]))
+
+        with patch("httpx.AsyncClient.get", side_effect=mock_get):
+            resp = client.get("/api/crop-health/parcels")
+            assert resp.status_code == 200
+            assert resp.json() == {"parcels": []}

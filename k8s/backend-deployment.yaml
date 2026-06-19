@@ -27,7 +27,7 @@ spec:
     spec:
       containers:
         - name: backend
-          image: ghcr.io/nkz-os/nekazari-module-crop-health@sha256:078e50c491652713a4f5e1a59befd69576af974aa510ec797e02b599fbbfdc00  # 469ae2a redis auth (REDIS_PASSWORD) + #5 SDK-conformance
+          image: ghcr.io/nkz-os/nekazari-module-crop-health@sha256:5b504bc192c8157ad04a3b1af18be8e5812b884ede974ae3dabd832de63f9ed3  # v1.2.1 ghost-parcel fix + SAR GRD + SDK conformance (#14, #16)
           imagePullPolicy: Always
           ports:
             - name: http

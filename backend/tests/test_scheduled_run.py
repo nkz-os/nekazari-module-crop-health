@@ -82,3 +82,22 @@ def test_per_parcel_error_isolation(client, monkeypatch):
     assert body["written"] == 1
     assert len(body["errors"]) == 1
     assert body["next_cursor"] is None
+
+
+import asyncio
+from scripts import cron_scheduled_assessments as driver
+
+
+def test_driver_follows_cursor(monkeypatch):
+    pages = [{"next_cursor": "c2", "written": 2, "processed": 2, "errors": []},
+             {"next_cursor": None, "written": 1, "processed": 1, "errors": []}]
+    seen_cursors = []
+
+    async def _post(tenant, cursor, base_url, secret):
+        seen_cursors.append(cursor)
+        return pages.pop(0)
+
+    monkeypatch.setattr(driver, "_post_page", _post)
+    total = asyncio.run(driver.run_tenant("t", base_url="http://x", secret="s"))
+    assert seen_cursors == [None, "c2"]   # starts null, follows next_cursor
+    assert total["written"] == 3

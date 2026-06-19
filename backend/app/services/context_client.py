@@ -59,6 +59,44 @@ _DEFAULT_PARAMS = PhenologyParams(
 )
 
 
+# Generic FAO-style maize-like fallback (GDD base 10°C). Used when BioOrch
+# has no stage table for the species. Honest, coarse default.
+_DEFAULT_STAGE_TABLE: dict[str, tuple[float, float]] = {
+    "emergence": (0.0, 90.0),
+    "vegetative": (90.0, 520.0),
+    "flowering": (520.0, 1100.0),
+    "maturity": (1100.0, 1600.0),
+}
+
+
+async def get_phenology_stages(species: str) -> dict[str, tuple[float, float]]:
+    """Full {stage: (gdd_min, gdd_max)} table from BioOrch; default on miss.
+
+    Calls GET /api/graph/phenology-stages?species=... (Task 0). Falls back
+    to _DEFAULT_STAGE_TABLE when bioorchestrator_url is not configured, the
+    service is unreachable/errors, or the response has no stages — never
+    raises (fail-safe).
+    """
+    settings = get_settings()
+    if not settings.bioorchestrator_url:
+        return _DEFAULT_STAGE_TABLE
+    url = f"{settings.bioorchestrator_url}/api/graph/phenology-stages"
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(url, params={"species": species})
+            if resp.status_code == 200:
+                stages = resp.json().get("stages") or []
+                table = {
+                    s["stage"]: (float(s["gddMin"]), float(s["gddMax"]))
+                    for s in stages
+                    if s.get("gddMin") is not None and s.get("gddMax") is not None
+                }
+                return table or _DEFAULT_STAGE_TABLE
+    except Exception as exc:  # noqa: BLE001 — fail-safe to default
+        logger.warning("get_phenology_stages failed for %s — default table: %s", species, exc)
+    return _DEFAULT_STAGE_TABLE
+
+
 async def get_phenology_params(
     species: str = "generic",
     stage: str = "vegetative",

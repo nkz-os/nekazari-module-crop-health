@@ -26,6 +26,7 @@ COPY --from=builder /install /usr/local
 
 # Copy application code
 COPY app/ /app/app/
+COPY scripts/ /app/scripts/
 
 # Non-root user
 RUN groupadd -r nkz && useradd -r -g nkz nkz

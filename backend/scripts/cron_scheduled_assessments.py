@@ -35,7 +35,7 @@ async def run_tenant(tenant: str, base_url: str, secret: str) -> dict:
 
 
 async def main() -> None:
-    base_url = os.environ.get("SELF_URL", "http://crop-health-backend-service:8000")
+    base_url = os.environ.get("SELF_URL", "http://crop-health-api-service:8000")
     secret = os.environ["INTERNAL_SERVICE_SECRET"]
     tenants = [t.strip() for t in os.environ.get("SCHEDULED_TENANTS", "").split(",") if t.strip()]
     for tenant in tenants:

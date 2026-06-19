@@ -363,6 +363,12 @@ class CropHealthAssessment(BaseModel):
     recommended_action: RecommendedAction = RecommendedAction.NO_ACTION
     phenology_source: str = "default"
     data_fidelity: str = "regional_proxy"  # onsite_calibrated | local_proxy | regional_proxy | modeled_opendata
+    # Frozen keel-contract meteo fidelity vocab (resolve_meteo_context):
+    # iot_sensor > parcel_weather > regional_proxy > unavailable. SEPARATE from
+    # data_fidelity (engine vocab) — do not conflate.
+    meteo_fidelity: str = "unavailable"
+    # Season start (ISO date) — surfaced as keel-contract seasonStart.
+    season_start: str | None = None
     soil_ph: float | None = None
     soil_ec: float | None = None
     soil_moisture_pct: float | None = None
@@ -475,6 +481,19 @@ class CropHealthAssessment(BaseModel):
             entity["varietyName"] = {"type": "Property", "value": self.variety_name}
         if self.phenology_stage is not None:
             entity["phenologyStage"] = {"type": "Property", "value": self.phenology_stage}
+        if self.phenology_progress is not None:
+            if self.phenology_progress.deviation is not None:
+                entity["phenologyDeviation"] = {"type": "Property", "value": self.phenology_progress.deviation}
+            if self.phenology_progress.progress_pct is not None:
+                entity["stageProgressPct"] = {
+                    "type": "Property",
+                    "value": round(self.phenology_progress.progress_pct, 1),
+                    "unitCode": "P1",
+                }
+        if self.meteo_fidelity is not None:
+            entity["meteoFidelity"] = {"type": "Property", "value": self.meteo_fidelity}
+        if self.season_start is not None:
+            entity["seasonStart"] = {"type": "Property", "value": self.season_start}
         if self.gdd_accumulated is not None:
             entity["gddAccumulated"] = {"type": "Property", "value": self.gdd_accumulated, "unitCode": "DD"}
         if self.kc is not None:

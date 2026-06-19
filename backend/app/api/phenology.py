@@ -82,7 +82,12 @@ def _build_status_from_dict(latest: dict, thresholds: dict[str, tuple[float, flo
         "seasonStart": _unwrap(latest.get("seasonStart")),
         "currentStage": _unwrap(latest.get("phenologyStage")) or "unknown",
         "gdd": {"accumulated": float(gdd)} if gdd is not None else None,
-        "dataFidelity": _unwrap(latest.get("dataFidelity")) or "regional_proxy",
+        # Keel-contract fidelity comes from the persisted meteoFidelity; fall
+        # back to the engine-vocab dataFidelity (sensor-only path didn't set it).
+        "dataFidelity": _unwrap(latest.get("meteoFidelity"))
+        or _unwrap(latest.get("dataFidelity"))
+        or "regional_proxy",
+        "deviation": _unwrap(latest.get("phenologyDeviation")) or "on_track",
         "stages": stages,
     }
 
@@ -98,13 +103,20 @@ def _build_status_from_assessment(assessment, thresholds: dict[str, tuple[float,
         if gdd is not None and thresholds
         else []
     )
+    deviation = (
+        assessment.phenology_progress.deviation
+        if assessment.phenology_progress else "on_track"
+    )
     return {
         "parcelId": assessment.parcel_id,
         "asOf": today.isoformat(),
-        "seasonStart": None,
+        "seasonStart": assessment.season_start,
         "currentStage": assessment.phenology_stage or "unknown",
         "gdd": {"accumulated": gdd} if gdd is not None else None,
-        "dataFidelity": assessment.data_fidelity,
+        "dataFidelity": assessment.meteo_fidelity
+        if assessment.meteo_fidelity and assessment.meteo_fidelity != "unavailable"
+        else assessment.data_fidelity,
+        "deviation": deviation,
         "stages": stages,
     }
 

@@ -14,6 +14,7 @@ from nkz_platform_sdk.activation import ModuleActivation
 from nkz_platform_sdk.subscriptions import SubscriptionRegistrar
 
 from app.config import get_settings
+from app.services.pipeline import compute_assessment
 
 logger = logging.getLogger(__name__)
 
@@ -92,4 +93,67 @@ async def setup_parcel(request: Request, body: SetupParcelRequest):
         "created": result["created"],
         "skipped": result["skipped"],
         "entity_ids": result["entity_ids"],
+    }
+
+
+class ScheduledRunRequest(BaseModel):
+    tenant_id: str
+    cursor: str | None = None
+    batch_size: int = 200
+
+
+async def _list_active_crop_parcels(tenant_id: str, cursor: str | None, batch_size: int):
+    """One bounded page of AgriParcel with an active hasAgriCrop. Returns (ids, next_cursor)."""
+    from nkz_platform_sdk.orion import OrionClient
+
+    settings = get_settings()
+    offset = int(cursor) if cursor else 0
+    client = OrionClient(
+        tenant_id, base_url=settings.orion_ld_url, context_url=settings.orion_ld_context
+    )
+    try:
+        rows = await client.query_entities(
+            type="AgriParcel",
+            q="hasAgriCrop",
+            limit=batch_size,
+            offset=offset,
+            options="keyValues",
+        )
+    finally:
+        await client.close()
+    ids = [r["id"] for r in rows]
+    next_cursor = str(offset + batch_size) if len(ids) == batch_size else None
+    return ids, next_cursor
+
+
+@router.post("/run-scheduled-assessments")
+async def run_scheduled_assessments(request: Request, body: ScheduledRunRequest):
+    secret = request.headers.get("X-Internal-Service-Secret", "")
+    if not INTERNAL_SECRET or secret != INTERNAL_SECRET:
+        logger.warning(
+            "Unauthorized internal run-scheduled-assessments call from %s", request.client
+        )
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    ids, next_cursor = await _list_active_crop_parcels(
+        body.tenant_id, body.cursor, body.batch_size
+    )
+    written, errors = 0, []
+    for parcel_id in ids:
+        try:
+            result = await compute_assessment(parcel_id, body.tenant_id)
+            if result is not None:
+                written += 1
+        except Exception as exc:  # noqa: BLE001 — isolate per parcel, never abort the batch
+            logger.exception(
+                "run-scheduled-assessments: parcel %s tenant=%s failed",
+                parcel_id, body.tenant_id,
+            )
+            errors.append({"parcel": parcel_id, "error": str(exc)[:200]})
+
+    return {
+        "processed": len(ids),
+        "written": written,
+        "errors": errors,
+        "next_cursor": next_cursor,
     }

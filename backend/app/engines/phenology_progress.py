@@ -56,13 +56,35 @@ def evaluate_phenology_progress(
             if gdd_remaining > 0 and mean_daily_gdd > 0:
                 result.days_to_next_stage = round(gdd_remaining / mean_daily_gdd, 1)
 
-    # Check if GDD suggests a different stage than what's declared
-    for stage_name, (gdd_min, gdd_max) in stage_gdd_thresholds.items():
-        if gdd_min <= gdd_accumulated < gdd_max and stage_name != current_stage:
-            if stage_name > current_stage:
-                result.deviation = "behind"  # GDD says ahead but stage says behind
-            else:
-                result.deviation = "ahead"
-            return result
+    # Check if GDD suggests a different stage than what's declared (order by gdd_min)
+    ordered = sorted(stage_gdd_thresholds.items(), key=lambda kv: kv[1][0])
+    names_in_order = [n for n, _ in ordered]
+    gdd_stage = derive_stage_from_gdd(gdd_accumulated, stage_gdd_thresholds)
+    if gdd_stage != "unknown" and gdd_stage != current_stage and current_stage in names_in_order:
+        if names_in_order.index(gdd_stage) > names_in_order.index(current_stage):
+            result.deviation = "ahead"   # GDD has advanced beyond the declared stage
+        else:
+            result.deviation = "behind"
+        return result
 
     return result
+
+
+def derive_stage_from_gdd(
+    gdd: float, thresholds: dict[str, tuple[float, float]]
+) -> str:
+    """Authoritative current stage from accumulated GDD. Never raises.
+
+    - gdd < first.gdd_min  → first stage
+    - gdd >= last.gdd_max   → final stage (held indefinitely past maturity)
+    - empty thresholds      → "unknown"
+    """
+    if not thresholds:
+        return "unknown"
+    ordered = sorted(thresholds.items(), key=lambda kv: kv[1][0])
+    if gdd < ordered[0][1][0]:
+        return ordered[0][0]
+    for name, (gdd_min, gdd_max) in ordered:
+        if gdd_min <= gdd < gdd_max:
+            return name
+    return ordered[-1][0]

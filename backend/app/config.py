@@ -40,6 +40,7 @@ class Settings(BaseSettings):
     orion_ld_context: str = "http://api-gateway-service:5000/ngsi-ld-context.json"
     bioorchestrator_url: str = "http://bioorchestrator-api-service:8420"
     weather_api_url: str = "http://timeseries-reader-service:5000"
+    weather_map_url: str = "http://weather-map-backend-service:8000"  # parcel-level weather stats (sensorless meteo)
     weather_db_url: str = ""  # deprecated — use weather_api_url instead
     soil_module_url: str = "http://soil-module-service:8000"
     self_url: str = "http://crop-health-backend-service:8000"  # this module's in-cluster base URL (for Orion notification callbacks)

@@ -107,7 +107,17 @@ async def _list_active_crop_parcels(tenant_id: str, cursor: str | None, batch_si
     from nkz_platform_sdk.orion import OrionClient
 
     settings = get_settings()
-    offset = int(cursor) if cursor else 0
+    # Never 500 on a malformed cursor: coerce a non-numeric/negative cursor to
+    # offset 0 rather than letting int() raise before the per-parcel loop.
+    try:
+        offset = int(cursor) if cursor else 0
+        if offset < 0:
+            offset = 0
+    except (TypeError, ValueError):
+        logger.warning("run-scheduled-assessments: non-numeric cursor %r — offset 0", cursor)
+        offset = 0
+    # Clamp batch size to a sane maximum to bound Orion query cost.
+    batch_size = min(max(int(batch_size), 1), 500)
     client = OrionClient(
         tenant_id, base_url=settings.orion_ld_url, context_url=settings.orion_ld_context
     )

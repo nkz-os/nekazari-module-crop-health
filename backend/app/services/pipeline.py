@@ -227,6 +227,15 @@ async def trigger(
 
     phenology = await get_phenology_params(species=species, gdd=gdd)
 
+    # Full ordered stage table for the resolved species — shared with
+    # _run_engines so the GDD-derived stage and phenology-progress deviation
+    # are computed identically to the scheduled compute_assessment path.
+    try:
+        stage_table = await context_client.get_phenology_stages(species)
+    except Exception as exc:
+        logger.warning("pipeline: get_phenology_stages failed for %s — empty table: %s", species, exc)
+        stage_table = {}
+
     from app.services.context_client import _resolve_parcel_coords
     coords = await _resolve_parcel_coords(effective_parcel, tenant_id)
     if coords:
@@ -300,6 +309,7 @@ async def trigger(
         sw_yesterday=sw_yesterday,
         irrigation_mm=irrigation_mm,
         now=now,
+        stage_table=stage_table,
     )
 
 
@@ -322,6 +332,7 @@ async def _run_engines(
     sw_yesterday,
     irrigation_mm: float,
     now: datetime,
+    stage_table: dict[str, tuple[float, float]] | None = None,
     publish: bool = True,
 ) -> CropHealthAssessment:
     """Shared engine-fusion core.
@@ -338,6 +349,14 @@ async def _run_engines(
     metric-gated branches simply do not fire, which is the intended degraded
     behaviour for a parcel with no IoT sensors.
     """
+
+    # ── 1b. Authoritative phenology stage (shared by BOTH write paths) ────
+    # When GDD and the full ordered stage table are available, the current
+    # stage is derived from GDD — deterministic regardless of which path
+    # (sensor webhook vs scheduled compute) writes the daily-keyed entity.
+    stage_table = stage_table or {}
+    if gdd is not None and stage_table:
+        assessment.phenology_stage = derive_stage_from_gdd(gdd, stage_table)
 
     # ── 2. Execute engines ───────────────────────────────────────────────
 
@@ -642,13 +661,17 @@ async def _run_engines(
 
     try:
         from app.engines.phenology_progress import evaluate_phenology_progress
-        if gdd is not None and phenology:
-            stage_name = phenology.stage if phenology else "vegetative"
-            thresholds: dict[str, tuple[float, float]] = {}
-            if phenology.stage_gdd_min is not None and phenology.stage_gdd_max is not None:
-                thresholds[stage_name] = (phenology.stage_gdd_min, phenology.stage_gdd_max)
+        if gdd is not None and stage_table:
+            # Declared stage drives deviation (ahead/behind vs declared); fall
+            # back to the GDD-derived stage when no declared stage is available.
+            declared_stage = (
+                phenology.stage if (phenology and phenology.stage)
+                else derive_stage_from_gdd(gdd, stage_table)
+            )
             assessment.phenology_progress = evaluate_phenology_progress(
-                gdd_accumulated=gdd, current_stage=stage_name, stage_gdd_thresholds=thresholds,
+                gdd_accumulated=gdd,
+                current_stage=declared_stage,
+                stage_gdd_thresholds=stage_table,
             )
     except Exception as exc:
         logger.warning("pipeline: phenology progress evaluation failed for parcel %s — skipped: %s", effective_parcel, exc)
@@ -1035,10 +1058,14 @@ async def compute_assessment(
         variety_name=variety_name,
         gdd_accumulated=gdd,
         kc=phenology.kc if phenology else None,
+        season_start=season_start,
+        meteo_fidelity=meteo.dominant_fidelity,
     )
 
     # Authoritative current stage from GDD (overrides phenology-param stage).
-    if gdd is not None:
+    # _run_engines also derives this from the shared stage table; set it here
+    # too so the value is correct even when stage_table is empty.
+    if gdd is not None and thresholds:
         assessment.phenology_stage = derive_stage_from_gdd(gdd, thresholds)
     elif phenology:
         assessment.phenology_stage = phenology.stage
@@ -1068,13 +1095,9 @@ async def compute_assessment(
         sw_yesterday=None,
         irrigation_mm=0.0,
         now=now,
+        stage_table=thresholds,
         publish=False,
     )
-
-    # _run_engines may overwrite phenology_stage via phenology params; keep the
-    # GDD-derived stage authoritative for the daily snapshot.
-    if gdd is not None and thresholds:
-        assessment.phenology_stage = derive_stage_from_gdd(gdd, thresholds)
 
     await _publish_assessment(assessment.to_ngsi_ld(), tenant_id)
     return assessment

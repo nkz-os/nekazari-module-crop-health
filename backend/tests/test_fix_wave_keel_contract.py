@@ -29,10 +29,11 @@ def _patch_common(monkeypatch, *, gdd=300.0, meteo=None):
         return {"species": "Zea mays", "plantingDate": "2026-04-15", "variety": "MAS 26 T"}
 
     async def _stages(species):
-        return dict(_STAGE_TABLE)
+        from app.schemas import StageTable
+        return StageTable(stages=dict(_STAGE_TABLE))
 
-    async def _gdd(tenant, season_start, base):
-        return {"gdd": gdd, "mean_daily_gdd": 10.0}
+    async def _gdd(tenant, season_start, parcel_id, base_temp=10.0, upper_cutoff=None):
+        return {"gdd_total": gdd, "mean_daily_gdd": 10.0}
 
     captured = {}
 
@@ -67,7 +68,7 @@ async def test_both_paths_derive_same_stage_from_gdd(monkeypatch):
     assert scheduled.phenology_stage == "flowering"
 
     # Sensor path: drive _run_engines directly with the same gdd + full table.
-    from app.schemas import CropHealthAssessment
+    from app.schemas import CropHealthAssessment, StageTable
     from datetime import datetime, timezone
 
     phenology = await pipeline.get_phenology_params(species="Zea mays", gdd=gdd)
@@ -94,7 +95,7 @@ async def test_both_paths_derive_same_stage_from_gdd(monkeypatch):
         sw_yesterday=None,
         irrigation_mm=0.0,
         now=datetime.now(timezone.utc),
-        stage_table=dict(_STAGE_TABLE),
+        stage_table=StageTable(stages=dict(_STAGE_TABLE)),
         publish=False,
     )
     assert sensor_assessment.phenology_stage == scheduled.phenology_stage == "flowering"

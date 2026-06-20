@@ -26,8 +26,8 @@ async def test_sets_stage_from_gdd_and_writes(monkeypatch):
             "maturity": (1100.0, 1600.0),
         })
 
-    async def _gdd(tenant, season_start, base):
-        return {"gdd": 300.0, "mean_daily_gdd": 10.0}
+    async def _gdd(tenant, season_start, parcel_id, base_temp=10.0, upper_cutoff=None):
+        return {"gdd_total": 300.0, "mean_daily_gdd": 10.0}
 
     written = {}
 

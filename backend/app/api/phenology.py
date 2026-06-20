@@ -16,6 +16,7 @@ from datetime import date
 
 from fastapi import APIRouter, Request
 
+from app.schemas import StageTable
 from app.services import context_client
 from app.services.pipeline import compute_assessment
 
@@ -61,10 +62,12 @@ def _unwrap(value):
     return value
 
 
-def _build_status_from_dict(latest: dict, thresholds: dict[str, tuple[float, float]]) -> dict:
+def _build_status_from_dict(latest: dict, thresholds: dict[str, tuple[float, float]] | StageTable) -> dict:
     """Project the phenology status from a serialised assessment (dict)."""
     from app.engines.phenology_progress import project_stage_timeline
 
+    if isinstance(thresholds, StageTable):
+        thresholds = thresholds.stages
     gdd = _unwrap(latest.get("gddAccumulated"))
     today = date.today()
     stages = (
@@ -92,10 +95,12 @@ def _build_status_from_dict(latest: dict, thresholds: dict[str, tuple[float, flo
     }
 
 
-def _build_status_from_assessment(assessment, thresholds: dict[str, tuple[float, float]]) -> dict:
+def _build_status_from_assessment(assessment, thresholds: dict[str, tuple[float, float]] | StageTable) -> dict:
     """Project the phenology status from a live ``CropHealthAssessment`` model."""
     from app.engines.phenology_progress import project_stage_timeline
 
+    if isinstance(thresholds, StageTable):
+        thresholds = thresholds.stages
     gdd = assessment.gdd_accumulated
     today = date.today()
     stages = (

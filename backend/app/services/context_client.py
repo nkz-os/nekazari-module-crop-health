@@ -47,6 +47,13 @@ _yield_baseline_cache: TTLCache[tuple[str, str], float] = TTLCache(
 )
 
 
+# Cache for StageTable results (keyed by species)
+_stages_cache: TTLCache[str, StageTable] = TTLCache(
+    maxsize=64,
+    ttl=get_settings().phenology_cache_ttl,
+)
+
+
 # ── Default phenology parameters (fallback) ──────────────────────────────────
 # Conservative defaults for generic crop when bioorchestrator unavailable.
 _DEFAULT_PARAMS = PhenologyParams(
@@ -83,8 +90,12 @@ async def get_phenology_stages(species: str) -> StageTable:
     service is unreachable/errors, or the response has no stages — never
     raises (fail-safe).
     """
+    cached = _stages_cache.get(species)
+    if cached is not None:
+        return cached
     settings = get_settings()
     if not settings.bioorchestrator_url:
+        _stages_cache[species] = _DEFAULT_STAGE_TABLE
         return _DEFAULT_STAGE_TABLE
     url = f"{settings.bioorchestrator_url}/api/graph/phenology-stages"
     try:
@@ -98,6 +109,7 @@ async def get_phenology_stages(species: str) -> StageTable:
                     if s.get("gddMin") is not None and s.get("gddMax") is not None
                 }
                 if not table:
+                    _stages_cache[species] = _DEFAULT_STAGE_TABLE
                     return _DEFAULT_STAGE_TABLE
                 base_temp = None
                 for s in stages:
@@ -105,14 +117,17 @@ async def get_phenology_stages(species: str) -> StageTable:
                     if bt is not None:
                         base_temp = float(bt)
                         break
-                return StageTable(
+                result = StageTable(
                     stages=table,
-                    base_temp=base_temp or _DEFAULT_STAGE_TABLE.base_temp,
+                    base_temp=base_temp if base_temp is not None else _DEFAULT_STAGE_TABLE.base_temp,
                     upper_cutoff=_DEFAULT_STAGE_TABLE.upper_cutoff,
                     gdd_method=_DEFAULT_STAGE_TABLE.gdd_method,
                 )
+                _stages_cache[species] = result
+                return result
     except Exception as exc:  # noqa: BLE001 — fail-safe to default
         logger.warning("get_phenology_stages failed for %s — default table: %s", species, exc)
+    _stages_cache[species] = _DEFAULT_STAGE_TABLE
     return _DEFAULT_STAGE_TABLE
 
 

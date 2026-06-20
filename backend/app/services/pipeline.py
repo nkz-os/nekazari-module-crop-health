@@ -26,6 +26,7 @@ from app.schemas import (
     MetricType,
     RecommendedAction,
     Severity,
+    StageTable,
     ThermalStressResult,
     VHIClimatologyWindow,
     VigorResult as VigorResultSchema,
@@ -332,7 +333,7 @@ async def _run_engines(
     sw_yesterday,
     irrigation_mm: float,
     now: datetime,
-    stage_table: dict[str, tuple[float, float]] | None = None,
+    stage_table: StageTable | dict[str, tuple[float, float]] | None = None,
     publish: bool = True,
 ) -> CropHealthAssessment:
     """Shared engine-fusion core.

@@ -40,3 +40,4 @@ htmlcov/
 apikey_*.txt
 *.apikey
 *-secret*
+*_api_key.txt

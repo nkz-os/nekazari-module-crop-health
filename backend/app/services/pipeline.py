@@ -930,17 +930,28 @@ async def _publish_assessment(entity: dict, tenant_id: str) -> bool:
 
 
 async def _weather_map_meteo(parcel_id: str, tenant_id: str) -> dict:
-    """Parcel-level meteo from the weather-map module (fail-safe {})."""
+    """Parcel-level meteo from the weather-map module (fail-safe {}).
+
+    Live contract (verified 2026-06-20 against weather-map-backend:8080):
+    - GET /api/weather-map/stats/{parcel_urn}?metrics=<csv>, X-Tenant-ID header required.
+    - Valid metric names: temperature_avg, temperature_min, solar_radiation, eto,
+      water_balance, frost_risk, soil_moisture. NO humidity metric exists.
+    - Response: {"error"?, "metrics": {name: {"mean", "min", "max", ...}}, "parcel_id", ...}.
+      When no COG tiles exist for the parcel: {"error": "No COG data available", "metrics": {}}.
+    Maps: air_temp_c <- temperature_avg.mean ; et0_mm <- eto.mean. rh_pct is not
+    available from weather-map (resolver leaves it to the regional/unavailable tier).
+    """
     try:
         from app.config import get_settings
         settings = get_settings()
         if not settings.weather_map_url:
             return {}
-        parcel_short = parcel_id.split(":")[-1] if parcel_id.startswith("urn:") else parcel_id
+        # weather-map resolves the parcel geometry from Orion by its full URN.
+        parcel_urn = parcel_id if parcel_id.startswith("urn:") else f"urn:ngsi-ld:AgriParcel:{parcel_id}"
         async with __import__("httpx").AsyncClient(timeout=10.0) as client:
             resp = await client.get(
-                f"{settings.weather_map_url}/api/weather-map/stats/{parcel_short}",
-                params={"metrics": "temperature,humidity,et0"},
+                f"{settings.weather_map_url}/api/weather-map/stats/{parcel_urn}",
+                params={"metrics": "temperature_avg,eto"},
                 headers={"X-Tenant-ID": tenant_id} if tenant_id else {},
             )
             if resp.status_code != 200:
@@ -950,26 +961,24 @@ async def _weather_map_meteo(parcel_id: str, tenant_id: str) -> dict:
         logger.warning("_weather_map_meteo: failed for %s — {}: %s", parcel_id, exc)
         return {}
 
-    def _stat(d, *keys):
-        for k in keys:
-            v = d.get(k)
-            if isinstance(v, dict):
-                v = v.get("mean", v.get("value"))
+    metrics = data.get("metrics") or {}  # empty when error/"No COG data available"
+
+    def _mean(name: str):
+        m = metrics.get(name)
+        if isinstance(m, dict):
+            v = m.get("mean", m.get("value"))
             if v is not None:
                 try:
                     return float(v)
                 except (TypeError, ValueError):
-                    continue
+                    return None
         return None
 
     out: dict = {}
-    air = _stat(data, "temperature", "air_temp_c", "temp")
-    rh = _stat(data, "humidity", "rh_pct", "relativeHumidity")
-    et0 = _stat(data, "et0", "et0_mm", "eto")
+    air = _mean("temperature_avg")
+    et0 = _mean("eto")
     if air is not None:
         out["air_temp_c"] = air
-    if rh is not None:
-        out["rh_pct"] = rh
     if et0 is not None:
         out["et0_mm"] = et0
     return out

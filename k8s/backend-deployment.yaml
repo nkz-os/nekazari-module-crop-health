@@ -27,7 +27,7 @@ spec:
     spec:
       containers:
         - name: backend
-          image: ghcr.io/nkz-os/nekazari-module-crop-health@sha256:e0e58db9580c12847268521c1dc094cec79143c06901aa9775c218f2a7fb8bf2  # foundation e2e: phenology-status + scheduled assessments + meteo resolver + weather-map contract fix (ffad11c)
+          image: ghcr.io/nkz-os/nekazari-module-crop-health@sha256:11a4495814d9ded74e65a22a525761cfab2f8504c69cfc133c1efbba11728ce8  # SP2 next-actions worker (engine + IO + CronJob) (v1.2.2)
           imagePullPolicy: Always
           ports:
             - name: http

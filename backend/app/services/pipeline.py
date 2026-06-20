@@ -208,7 +208,16 @@ async def trigger(
     except Exception as exc:
         logger.warning("pipeline: crop_context fetch failed for parcel %s — using defaults: %s", effective_parcel, exc)
 
-    # GDD with real season start from AgriCrop
+    # Full ordered stage table for the resolved species — shared with
+    # _run_engines so the GDD-derived stage and phenology-progress deviation
+    # are computed identically to the scheduled compute_assessment path.
+    try:
+        stage_table = await context_client.get_phenology_stages(species)
+    except Exception as exc:
+        logger.warning("pipeline: get_phenology_stages failed for %s — empty table: %s", species, exc)
+        stage_table = {}
+
+    # GDD with real season start from AgriCrop — uses crop-specific base_temp/upper_cutoff
     gdd = None
     try:
         from datetime import date
@@ -220,7 +229,13 @@ async def trigger(
         else:
             season_start = date(date.today().year, 3, 1).isoformat()
 
-        gdd_data = await _fetch_gdd(tenant_id, season_start, 10.0)
+        gdd_base_temp = stage_table.base_temp if stage_table else 10.0
+        gdd_upper_cutoff = stage_table.upper_cutoff if stage_table else None
+        gdd_data = await _fetch_gdd(
+            tenant_id, season_start, effective_parcel,
+            base_temp=gdd_base_temp,
+            upper_cutoff=gdd_upper_cutoff,
+        )
         if gdd_data and gdd_data.get("gdd_total"):
             gdd = float(gdd_data["gdd_total"])
     except Exception as exc:
@@ -228,14 +243,7 @@ async def trigger(
 
     phenology = await get_phenology_params(species=species, gdd=gdd)
 
-    # Full ordered stage table for the resolved species — shared with
-    # _run_engines so the GDD-derived stage and phenology-progress deviation
-    # are computed identically to the scheduled compute_assessment path.
-    try:
-        stage_table = await context_client.get_phenology_stages(species)
-    except Exception as exc:
-        logger.warning("pipeline: get_phenology_stages failed for %s — empty table: %s", species, exc)
-        stage_table = {}
+
 
     from app.services.context_client import _resolve_parcel_coords
     coords = await _resolve_parcel_coords(effective_parcel, tenant_id)
@@ -1019,12 +1027,14 @@ async def compute_assessment(
     variety_name = crop.get("variety")
     season_start = crop.get("plantingDate") or date(date.today().year, 3, 1).isoformat()
 
-    # Seasonal GDD (authoritative stage source)
+    # Seasonal GDD (authoritative stage source) — uses crop-specific base_temp/upper_cutoff
     thresholds = await context_client.get_phenology_stages(species)
-    gdd_data = await _fetch_gdd(tenant_id, season_start, 10.0) or {}
-    gdd = gdd_data.get("gdd")
-    if gdd is None:
-        gdd = gdd_data.get("gdd_total")
+    gdd_data = await _fetch_gdd(
+        tenant_id, season_start, parcel_id,
+        base_temp=thresholds.base_temp if thresholds else 10.0,
+        upper_cutoff=thresholds.upper_cutoff if thresholds else None,
+    ) or {}
+    gdd = gdd_data.get("gdd_total")
     if gdd is not None:
         gdd = float(gdd)
 
@@ -1297,22 +1307,50 @@ async def _publish_redis_event(stream: str, event: dict) -> None:
         logger.warning("_publish_redis_event: failed to publish to stream %s — dropped: %s", stream, exc)
 
 
-async def _fetch_gdd(tenant_id: str, season_start: str, base_temp: float = 10.0) -> dict | None:
-    """Fetch accumulated GDD from the weather API."""
+async def _fetch_gdd(
+    tenant_id: str,
+    season_start: str,
+    parcel_id: str,
+    base_temp: float = 10.0,
+    upper_cutoff: float | None = None,
+) -> dict | None:
+    """Fetch accumulated GDD from the weather API (timeseries-reader).
+
+    Args:
+        tenant_id: Tenant identifier.
+        season_start: ISO date of season start.
+        parcel_id: Parcel URN (resolved to lat/lon by the endpoint).
+        base_temp: Base temperature for GDD computation (per crop).
+        upper_cutoff: Cap Tmax before averaging (per crop; default 30°C on endpoint side).
+    """
     try:
         settings = __import__("app.config", fromlist=["get_settings"]).get_settings()
         if not settings.weather_api_url:
             return None
+        params: dict[str, str] = {
+            "season_start": season_start,
+            "base_temp": str(base_temp),
+            "parcel_id": parcel_id,
+        }
+        if upper_cutoff is not None:
+            params["upper_cutoff"] = str(upper_cutoff)
         async with __import__("httpx").AsyncClient(timeout=10.0) as client:
             resp = await client.get(
                 f"{settings.weather_api_url}/api/weather/gdd",
-                params={"season_start": season_start, "base_temp": base_temp},
+                params=params,
                 headers={"X-Tenant-ID": tenant_id},
             )
             if resp.status_code == 200:
                 return resp.json()
+            logger.warning(
+                "_fetch_gdd: HTTP %d for tenant %s season_start=%s parcel=%s",
+                resp.status_code, tenant_id, season_start, parcel_id,
+            )
     except Exception as exc:
-        logger.warning("_fetch_gdd: failed for tenant %s season_start=%s — returning None: %s", tenant_id, season_start, exc)
+        logger.warning(
+            "_fetch_gdd: failed for tenant %s season_start=%s — returning None: %s",
+            tenant_id, season_start, exc,
+        )
     return None
 
 

@@ -33,3 +33,10 @@ docker-compose.override.yml
 .pytest_cache/
 .coverage
 htmlcov/
+
+# Security: sensitive files
+*.pem
+*.key
+apikey_*.txt
+*.apikey
+*-secret*

@@ -1,0 +1,63 @@
+# =============================================================================
+# Crop Health Engine — Action Rules CronJob
+# =============================================================================
+# Drives POST /internal/run-action-rules in-cluster (NOT via the public
+# gateway), one POST per tenant (the endpoint processes all parcels for the
+# tenant in a single call — no cursor/pagination).
+# Tenant enumeration is env-driven for the cimiento (ACTION_RULE_TENANTS);
+# wiring to a tenant registry is a follow-up.
+# =============================================================================
+
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: crop-health-action-rules
+  namespace: nekazari
+  labels:
+    app: crop-health-backend
+    component: cronjob
+    module: crop-health
+spec:
+  schedule: "0 */8 * * *"          # every 8h
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 3600
+      template:
+        metadata:
+          labels:
+            app: crop-health-backend
+            component: cronjob
+            module: crop-health
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: action-rules
+              # SHA-pin at deploy time — never :latest (see CLAUDE.md K8s rules).
+              image: ghcr.io/nkz-os/nekazari-module-crop-health@sha256:REPLACE_AT_DEPLOY
+              command: ["python", "-m", "scripts.cron_action_rules"]
+              # NOTE: the backend Dockerfile sets WORKDIR /app and copies
+              # app/ -> /app/app/ and scripts/ -> /app/scripts/ (no nested
+              # /app/backend in the image), so workingDir is /app.
+              workingDir: /app
+              env:
+                - name: SELF_URL
+                  value: "http://crop-health-api-service:8000"
+                - name: ACTION_RULE_TENANTS
+                  value: "montiko"     # cimiento: env-driven; wire to registry later
+                - name: INTERNAL_SERVICE_SECRET
+                  valueFrom:
+                    secretKeyRef:
+                      name: internal-service-secret
+                      key: INTERNAL_SERVICE_SECRET
+              securityContext:
+                runAsNonRoot: true
+                runAsUser: 999
+                readOnlyRootFilesystem: true
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop:
+                    - ALL

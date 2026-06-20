@@ -46,3 +46,18 @@ async def test_evaluate_parcel_creates_op_when_rule_matches(monkeypatch):
 
     await io.evaluate_parcel("urn:ngsi-ld:AgriParcel:montiko:p1", "montiko")
     assert created == ["cover_crop_termination_flowering"]
+
+
+import asyncio
+from scripts import cron_action_rules as driver
+
+
+def test_driver_calls_endpoint_per_tenant(monkeypatch):
+    seen = []
+    async def _post(tenant, base_url, secret):
+        seen.append(tenant); return {"parcels": 1, "operations_created": 1, "errors": []}
+    monkeypatch.setattr(driver, "_post_tenant", _post)
+    monkeypatch.setenv("ACTION_RULE_TENANTS", "montiko,allotarra")
+    monkeypatch.setenv("INTERNAL_SERVICE_SECRET", "s")
+    asyncio.run(driver.main())
+    assert seen == ["montiko", "allotarra"]

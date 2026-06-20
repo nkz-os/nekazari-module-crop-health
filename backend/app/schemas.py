@@ -702,3 +702,20 @@ class CropContext(BaseModel):
     phenology_source: str = "default"
     match_level: str = "none"
     provenance: dict | None = None
+
+
+# ── StageTable (GDD thresholds with crop parameters) ───────────────────────
+
+
+class StageTable(BaseModel):
+    """Phenological stage thresholds with GDD computation parameters per crop.
+
+    stages: {stage_name: (gdd_min, gdd_max)} for derive_stage_from_gdd.
+    base_temp: Base temperature for GDD computation (e.g. 10°C maize, 4°C wheat).
+    upper_cutoff: Maximum temperature cap before averaging (e.g. 30°C maize).
+    gdd_method: Standard method identifier (only 'simple_avg_capped' supported).
+    """
+    stages: dict[str, tuple[float, float]] = Field(default_factory=dict)
+    base_temp: float = 10.0
+    upper_cutoff: float | None = 30.0
+    gdd_method: str = "simple_avg_capped"

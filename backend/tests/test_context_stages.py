@@ -10,8 +10,8 @@ async def test_returns_table_from_bioorch(monkeypatch):
         status_code = 200
         def json(self):
             return {"species": "Zea mays", "stages": [
-                {"stage": "emergence", "gddMin": 0, "gddMax": 90},
-                {"stage": "vegetative", "gddMin": 90, "gddMax": 520},
+                {"stage": "emergence", "gddMin": 0, "gddMax": 90, "baseTemp": 10.0},
+                {"stage": "vegetative", "gddMin": 90, "gddMax": 520, "baseTemp": 10.0},
             ]}
     class _Client:
         def __init__(self, *a, **k): pass
@@ -21,8 +21,9 @@ async def test_returns_table_from_bioorch(monkeypatch):
     monkeypatch.setattr(context_client.httpx, "AsyncClient", _Client)
     monkeypatch.setattr(context_client.get_settings(), "bioorchestrator_url", "http://bio", raising=False)
     table = await context_client.get_phenology_stages("Zea mays")
-    assert table["emergence"] == (0.0, 90.0)
-    assert table["vegetative"] == (90.0, 520.0)
+    assert table.stages["emergence"] == (0.0, 90.0)
+    assert table.stages["vegetative"] == (90.0, 520.0)
+    assert table.base_temp == 10.0
 
 
 @pytest.mark.asyncio

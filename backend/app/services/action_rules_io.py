@@ -1,10 +1,15 @@
 """IO for the action-rules worker: read plan from Orion, rules from BioOrch."""
 import logging
 import uuid
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 import httpx
 from nkz_platform_sdk.orion import OrionClient
 from app.config import get_settings
+from app.api.phenology import _read_latest_assessment, _build_status_from_dict
+from app.services import context_client
+from app.services.context_client import get_phenology_stages, get_soil_properties
+from app.services.pipeline import _fetch_parcel_ndvi
+from app.engines.action_rules import evaluate_conditions, build_context
 
 logger = logging.getLogger(__name__)
 
@@ -120,3 +125,86 @@ async def _create_operation(parcel_id, seg, rule, ctx, tenant_id, today) -> str 
         return None
     finally:
         await client.close()
+
+
+async def get_weather_snapshot(parcel_id: str, tenant_id: str = ""):
+    """Worker-facing weather lookup: (parcel_id, tenant_id) -> WeatherSnapshot | None.
+
+    ``context_client.get_weather_snapshot`` takes (latitude, longitude, tenant_id)
+    — it has no notion of a parcel. Adapt here by resolving the parcel centroid
+    first; fail-safe to None (build_context tolerates a None weather input) if
+    coords can't be resolved, matching the sensorless-capable design.
+    """
+    parcel_short = parcel_id.split(":")[-1] if parcel_id.startswith("urn:") else parcel_id
+    coords = await context_client._resolve_parcel_coords(parcel_short, tenant_id)
+    if not coords:
+        return None
+    latitude, longitude = coords
+    return await context_client.get_weather_snapshot(
+        latitude=latitude, longitude=longitude, tenant_id=tenant_id,
+    )
+
+
+def today_utc():
+    return datetime.now(timezone.utc).date()
+
+
+async def evaluate_parcel(parcel_id: str, tenant_id: str) -> int:
+    """Per-parcel action-rules loop: plan -> phenology -> rules -> create ops.
+
+    Best-effort context: phenology is the key input (drives the rule-fetch
+    hint); weather/soil/ndvi/stress degrade gracefully to None on any failure
+    so a missing data source never blocks rule evaluation.
+    """
+    plan = await _read_crop_plan(parcel_id, tenant_id)
+    segments = [s for s in plan if s.get("status") in ("planned", "active")]
+    seg = next((s for s in segments if s.get("status") == "active"), segments[0] if segments else None)
+    if not seg:
+        return 0
+
+    latest = await _read_latest_assessment(parcel_id, tenant_id)
+    if latest:
+        stages = await get_phenology_stages(seg.get("species", "generic"))
+        phenology = _build_status_from_dict(latest, stages)
+        stress = {"composite_index": latest.get("compositeStressIndex"),
+                  "dominant_stressor": latest.get("dominantStressor"),
+                  "condition": latest.get("stressCondition")}
+    else:
+        phenology, stress = {}, None
+
+    weather = await get_weather_snapshot(parcel_id, tenant_id)
+    soil = await get_soil_properties(parcel_id, tenant_id)
+    ndvi = await _fetch_parcel_ndvi(parcel_id, tenant_id)
+
+    today = today_utc()
+    ctx = build_context(seg, phenology, weather, soil, ndvi, stress, today)
+    # Rule-fetch hint: phenology dict here is _build_status_from_dict's output,
+    # which uses camelCase `currentStage` — NOT build_context's snake_case
+    # `current_stage` (that key only exists inside ctx["phenology"]). The hint
+    # is permissive (BioOrch ignores stage server-side); precise matching
+    # happens via build_context + evaluate_conditions below.
+    stage_hint = phenology.get("currentStage") if isinstance(phenology, dict) else None
+    rules = await get_action_rules(seg.get("species"), stage_hint, seg.get("role"), tenant_id)
+
+    created = 0
+    for rule in sorted(rules, key=lambda r: r.get("priority", 0), reverse=True):
+        if not evaluate_conditions(rule.get("conditions", {}), ctx):
+            continue
+        if await _operation_exists(parcel_id, rule["id"], today, tenant_id):
+            continue
+        if await _create_operation(parcel_id, seg, rule, ctx, tenant_id, today):
+            created += 1
+    return created
+
+
+async def run_action_rules_for_tenant(tenant_id: str) -> dict:
+    """Find active parcels and evaluate each; per-parcel error isolation."""
+    parcels = await _find_active_parcels(tenant_id)
+    created, errors = 0, []
+    for p in parcels:
+        try:
+            created += await evaluate_parcel(p, tenant_id)
+        except Exception as exc:  # noqa: BLE001 — isolate per parcel, never abort the batch
+            logger.exception("run_action_rules_for_tenant: parcel %s tenant=%s failed", p, tenant_id)
+            errors.append({"parcel": p, "error": str(exc)[:160]})
+    return {"parcels": len(parcels), "operations_created": created, "errors": errors}

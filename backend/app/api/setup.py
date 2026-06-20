@@ -167,3 +167,19 @@ async def run_scheduled_assessments(request: Request, body: ScheduledRunRequest)
         "errors": errors,
         "next_cursor": next_cursor,
     }
+
+
+class ActionRulesRunRequest(BaseModel):
+    tenant_id: str
+
+
+@router.post("/run-action-rules")
+async def run_action_rules(request: Request, body: ActionRulesRunRequest):
+    secret = request.headers.get("X-Internal-Service-Secret", "")
+    if not INTERNAL_SECRET or secret != INTERNAL_SECRET:
+        logger.warning("Unauthorized internal run-action-rules call from %s", request.client)
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    from app.services.action_rules_io import run_action_rules_for_tenant
+
+    return await run_action_rules_for_tenant(body.tenant_id)

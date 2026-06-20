@@ -25,7 +25,7 @@ class PhenologyProgressResult:
 def evaluate_phenology_progress(
     gdd_accumulated: float,
     current_stage: str,
-    stage_gdd_thresholds: dict[str, tuple[float, float]],
+    stage_gdd_thresholds: dict[str, tuple[float, float]] | StageTable,
     mean_daily_gdd: float = 8.0,
     fidelity: str = "regional_proxy",
 ) -> PhenologyProgressResult:
@@ -42,6 +42,8 @@ def evaluate_phenology_progress(
     Returns:
         PhenologyProgressResult with progress and deviation
     """
+    if isinstance(stage_gdd_thresholds, StageTable):
+        stage_gdd_thresholds = stage_gdd_thresholds.stages
     result = PhenologyProgressResult(
         gdd_accumulated=gdd_accumulated,
         current_stage=current_stage,
@@ -97,12 +99,14 @@ def derive_stage_from_gdd(
 
 def project_stage_timeline(
     gdd: float,
-    thresholds: dict[str, tuple[float, float]],
+    thresholds: dict[str, tuple[float, float]] | StageTable,
     mean_daily_gdd: float,
     today: date,
 ) -> list[dict]:
     """Project the full stage timeline. Future stages get a projectedDate from
     GDD distance / mean_daily_gdd. Never raises."""
+    if isinstance(thresholds, StageTable):
+        thresholds = thresholds.stages
     if not thresholds:
         return []
     ordered = sorted(thresholds.items(), key=lambda kv: kv[1][0])

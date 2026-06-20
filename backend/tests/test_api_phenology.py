@@ -30,7 +30,8 @@ def test_get_is_read_only_no_orion_writes(client, monkeypatch):
         }
 
     async def _stages(species):
-        return {"emergence": (0.0, 90.0), "vegetative": (90.0, 520.0)}
+        from app.schemas import StageTable
+        return StageTable(stages={"emergence": (0.0, 90.0), "vegetative": (90.0, 520.0)})
 
     async def _no_write(*args, **kwargs):
         writes.append("x")
@@ -87,7 +88,8 @@ def test_sync_calls_compute_assessment_and_returns_status(client, monkeypatch):
         )
 
     async def _stages(species):
-        return {"emergence": (0.0, 90.0), "vegetative": (90.0, 520.0)}
+        from app.schemas import StageTable
+        return StageTable(stages={"emergence": (0.0, 90.0), "vegetative": (90.0, 520.0)})
 
     monkeypatch.setattr(phenology, "compute_assessment", _compute)
     monkeypatch.setattr(phenology.context_client, "get_phenology_stages", _stages)

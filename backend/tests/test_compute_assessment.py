@@ -18,12 +18,13 @@ async def test_sets_stage_from_gdd_and_writes(monkeypatch):
         return {"species": "Zea mays", "plantingDate": "2026-04-15", "variety": "MAS 26 T"}
 
     async def _stages(species):
-        return {
+        from app.schemas import StageTable
+        return StageTable(stages={
             "emergence": (0.0, 90.0),
             "vegetative": (90.0, 520.0),
             "flowering": (520.0, 1100.0),
             "maturity": (1100.0, 1600.0),
-        }
+        })
 
     async def _gdd(tenant, season_start, base):
         return {"gdd": 300.0, "mean_daily_gdd": 10.0}

@@ -26,6 +26,7 @@ from app.schemas import (
     PhenologyAlternative,
     PhenologyParams,
     PhenologyProvenance,
+    StageTable,
     WeatherSnapshot,
 )
 
@@ -61,15 +62,20 @@ _DEFAULT_PARAMS = PhenologyParams(
 
 # Generic FAO-style maize-like fallback (GDD base 10°C). Used when BioOrch
 # has no stage table for the species. Honest, coarse default.
-_DEFAULT_STAGE_TABLE: dict[str, tuple[float, float]] = {
-    "emergence": (0.0, 90.0),
-    "vegetative": (90.0, 520.0),
-    "flowering": (520.0, 1100.0),
-    "maturity": (1100.0, 1600.0),
-}
+_DEFAULT_STAGE_TABLE = StageTable(
+    stages={
+        "emergence": (0.0, 90.0),
+        "vegetative": (90.0, 520.0),
+        "flowering": (520.0, 1100.0),
+        "maturity": (1100.0, 1600.0),
+    },
+    base_temp=10.0,
+    upper_cutoff=30.0,
+    gdd_method="simple_avg_capped",
+)
 
 
-async def get_phenology_stages(species: str) -> dict[str, tuple[float, float]]:
+async def get_phenology_stages(species: str) -> StageTable:
     """Full {stage: (gdd_min, gdd_max)} table from BioOrch; default on miss.
 
     Calls GET /api/graph/phenology-stages?species=... (Task 0). Falls back
@@ -91,7 +97,20 @@ async def get_phenology_stages(species: str) -> dict[str, tuple[float, float]]:
                     for s in stages
                     if s.get("gddMin") is not None and s.get("gddMax") is not None
                 }
-                return table or _DEFAULT_STAGE_TABLE
+                if not table:
+                    return _DEFAULT_STAGE_TABLE
+                base_temp = None
+                for s in stages:
+                    bt = s.get("baseTemp")
+                    if bt is not None:
+                        base_temp = float(bt)
+                        break
+                return StageTable(
+                    stages=table,
+                    base_temp=base_temp or _DEFAULT_STAGE_TABLE.base_temp,
+                    upper_cutoff=_DEFAULT_STAGE_TABLE.upper_cutoff,
+                    gdd_method=_DEFAULT_STAGE_TABLE.gdd_method,
+                )
     except Exception as exc:  # noqa: BLE001 — fail-safe to default
         logger.warning("get_phenology_stages failed for %s — default table: %s", species, exc)
     return _DEFAULT_STAGE_TABLE

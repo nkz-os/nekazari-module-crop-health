@@ -9,6 +9,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, timedelta
 
+from app.schemas import StageTable
+
 
 @dataclass
 class PhenologyProgressResult:
@@ -72,7 +74,7 @@ def evaluate_phenology_progress(
 
 
 def derive_stage_from_gdd(
-    gdd: float, thresholds: dict[str, tuple[float, float]]
+    gdd: float, thresholds: dict[str, tuple[float, float]] | StageTable
 ) -> str:
     """Authoritative current stage from accumulated GDD. Never raises.
 
@@ -80,6 +82,8 @@ def derive_stage_from_gdd(
     - gdd >= last.gdd_max   → final stage (held indefinitely past maturity)
     - empty thresholds      → "unknown"
     """
+    if isinstance(thresholds, StageTable):
+        thresholds = thresholds.stages
     if not thresholds:
         return "unknown"
     ordered = sorted(thresholds.items(), key=lambda kv: kv[1][0])

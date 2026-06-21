@@ -107,3 +107,68 @@ async def resolve_zones(parcel_id: str, tenant_id: str, parcel_geometry: dict) -
     if not zones:
         return [Zone(zone_id="parcel", geometry=parcel_geometry)]
     return sorted(zones, key=lambda z: z.zone_id)
+
+
+def point_in_polygon(lon: float, lat: float, geometry: dict) -> bool:
+    """Ray-casting point-in-polygon for a GeoJSON Polygon/MultiPolygon (outer ring)."""
+    def _ring(ring) -> bool:
+        inside = False
+        n = len(ring)
+        j = n - 1
+        for i in range(n):
+            xi, yi = ring[i][0], ring[i][1]
+            xj, yj = ring[j][0], ring[j][1]
+            if ((yi > lat) != (yj > lat)) and (
+                lon < (xj - xi) * (lat - yi) / (yj - yi) + xi
+            ):
+                inside = not inside
+            j = i
+        return inside
+
+    gtype = geometry.get("type")
+    coords = geometry.get("coordinates", [])
+    if gtype == "Polygon":
+        return _ring(coords[0]) if coords else False
+    if gtype == "MultiPolygon":
+        return any(poly and _ring(poly[0]) for poly in coords)
+    return False
+
+
+def sensors_in_zone(zone: Zone, sensors: list[dict]) -> list[dict]:
+    """Sensors whose (lon, lat) fall inside the zone polygon.
+
+    Sensors without coordinates cannot be spatially assigned and are skipped
+    (in the whole-parcel fallback the polygon is the parcel, so every located
+    sensor of the parcel falls in — capturing the multi-sensor case there too).
+    """
+    out = []
+    for s in sensors:
+        lon, lat = s.get("lon"), s.get("lat")
+        if lon is None or lat is None:
+            continue
+        if point_in_polygon(float(lon), float(lat), zone.geometry):
+            out.append(s)
+    return out
+
+
+_NON_METRIC = {"id", "lon", "lat", "dateObserved"}
+
+
+def consolidate_sensor_readings(sensors: list[dict]) -> dict:
+    """Mean per numeric metric across a zone's sensors.
+
+    This is the intrazone last-write-wins fix: when ≥2 sensors share a zone the
+    assessment represents the zone's consolidated state, not the last reading.
+    """
+    if not sensors:
+        return {}
+    acc: dict[str, list[float]] = {}
+    for s in sensors:
+        for k, v in s.items():
+            if k in _NON_METRIC:
+                continue
+            if isinstance(v, bool):
+                continue
+            if isinstance(v, (int, float)):
+                acc.setdefault(k, []).append(float(v))
+    return {k: sum(vs) / len(vs) for k, vs in acc.items() if vs}

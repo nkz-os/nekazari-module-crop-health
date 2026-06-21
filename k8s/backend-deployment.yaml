@@ -27,7 +27,7 @@ spec:
     spec:
       containers:
         - name: backend
-          image: ghcr.io/nkz-os/nekazari-module-crop-health@sha256:4251d16a2c537c606710da92e183a08c5301f30445fcab2be9443cc1240e84fb  # P1: AgronomicValue envelope on phenology-status (main 6d4fee4)
+          image: ghcr.io/nkz-os/nekazari-module-crop-health@sha256:ac1f73d046fa81dda80cbd5322aa97d0044b2c9f2dfcb9264bad4866b9c53102  # zonal synthesis Spec 1 (main 67d6bb6)
           imagePullPolicy: Always
           ports:
             - name: http

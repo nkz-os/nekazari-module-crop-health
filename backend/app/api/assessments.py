@@ -163,7 +163,7 @@ async def ndvi_cwsi_correlation(
         try:
             vi_data = await client.query_entities(
                 type="EOProduct",
-                q=f'hasAgriParcel=="urn:ngsi-ld:AgriParcel:{parcelId}";productType=="NDVI"',
+                q=f'(hasAgriParcel=="urn:ngsi-ld:AgriParcel:{parcelId}"|refAgriParcel=="urn:ngsi-ld:AgriParcel:{parcelId}");productType=="NDVI"',
                 limit=30,
                 options="keyValues",
             )
@@ -257,7 +257,7 @@ async def export_assessments(
     ])
 
     try:
-        q = f'hasAgriParcel=="urn:ngsi-ld:AgriParcel:{parcelId}"' if parcelId else None
+        q = f'(hasAgriParcel=="urn:ngsi-ld:AgriParcel:{parcelId}"|refAgriParcel=="urn:ngsi-ld:AgriParcel:{parcelId}")' if parcelId else None
         client = OrionClient(tenant_id, base_url=settings.orion_ld_url, context_url=settings.orion_ld_context)
         try:
             entities = await client.query_entities(type="CropHealthAssessment", q=q, limit=100, options="keyValues")

@@ -68,7 +68,7 @@ async def _read_latest_assessment(parcel_id: str, tenant_id: str) -> dict | None
         parcel_short = parcel_id.split(":")[-1] if parcel_id.startswith("urn:") else parcel_id
         rows = await client.query_entities(
             type="CropHealthAssessment",
-            q=f'hasAgriParcel=="urn:ngsi-ld:AgriParcel:{parcel_short}"',
+            q=f'(hasAgriParcel=="urn:ngsi-ld:AgriParcel:{parcel_short}"|refAgriParcel=="urn:ngsi-ld:AgriParcel:{parcel_short}")',
             limit=1,
             options="keyValues",
         )

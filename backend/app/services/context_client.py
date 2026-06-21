@@ -260,7 +260,8 @@ async def get_weather_snapshot(
     """Get current weather data from the platform Weather API.
 
     Queries the timeseries-reader /api/weather/current endpoint.
-    Falls back to direct DB query if weather_api_url is not configured.
+    Returns None if the Weather API is unconfigured/unreachable (no direct-DB
+    fallback — that violated the zero-direct-timeseries-read policy).
     """
     settings = get_settings()
 
@@ -292,42 +293,9 @@ async def get_weather_snapshot(
         except Exception as e:
             logger.error("Weather API error: %s", e)
 
-    # Priority 2: Direct DB (legacy fallback — remove after API proven)
-    if settings.weather_db_url:
-        try:
-            import asyncpg
-            conn = await asyncpg.connect(settings.weather_db_url)
-            try:
-                row = await conn.fetchrow(
-                    """
-                    SELECT temp_avg AS temp_air,
-                           humidity_avg AS humidity_pct,
-                           COALESCE(precip_mm, 0) AS precip_mm,
-                           COALESCE(eto_mm, 0) AS eto_mm,
-                           solar_rad_w_m2 AS radiation_wm2
-                    FROM weather_observations
-                    WHERE tenant_id = $1
-                    ORDER BY observed_at DESC
-                    LIMIT 1
-                    """,
-                    tenant_id,
-                )
-                if row is None:
-                    return None
-                return WeatherSnapshot(
-                    temp_air=float(row["temp_air"]),
-                    humidity_pct=float(row["humidity_pct"]),
-                    precip_mm=float(row["precip_mm"]),
-                    eto_mm=float(row["eto_mm"]),
-                    radiation_wm2=float(row["radiation_wm2"]) if row["radiation_wm2"] else None,
-                )
-            finally:
-                await conn.close()
-        except ImportError:
-            pass
-        except Exception as exc:
-            logger.error("Weather DB fallback failed: %s", exc)
-
+    # No direct-DB fallback: timeseries reads MUST go through the platform
+    # Weather API (timeseries-reader). Direct asyncpg to weather_observations
+    # violated the platform's zero-direct-timeseries-read policy and is removed.
     return None
 
 

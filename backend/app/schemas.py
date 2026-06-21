@@ -385,6 +385,17 @@ class CropHealthAssessment(BaseModel):
     soil_water_balance: SoilWaterBalanceResult | None = None
     waterlogging_risk: WaterloggingRiskResult | None = None
     soil_properties: SoilProperties | None = None
+    # ── Zone (management-zone) context ──
+    # When set, the assessment represents a single AgriParcelZone of the parcel
+    # and is serialised via ``to_zone_ngsi_ld`` under the SEPARATE
+    # ``CropHealthZoneAssessment`` type. ``None`` → parcel-level rollup (legacy).
+    zone_id: str | None = None
+    zone_geometry: dict | None = None
+    # Full AgriParcelZone URN of the source zone (weather-map mints it as
+    # ``urn:ngsi-ld:AgriParcelZone:{tenant}:{parcel}:{zoneId}``). When present it
+    # is used verbatim for the ``hasAgriParcelZone`` relationship so the ref
+    # matches the real entity; otherwise a best-effort URN is reconstructed.
+    zone_urn: str | None = None
 
     def to_ngsi_ld(self) -> dict[str, Any]:
         """Serialise to NGSI-LD entity payload."""
@@ -533,6 +544,29 @@ class CropHealthAssessment(BaseModel):
             entity["soilMoisturePct"] = {"type": "Property", "value": self.soil_moisture_pct}
         if self.soil_temperature_c is not None:
             entity["soilTemperatureC"] = {"type": "Property", "value": self.soil_temperature_c}
+        return entity
+
+    def to_zone_ngsi_ld(self) -> dict[str, Any]:
+        """Serialise as a ``CropHealthZoneAssessment`` (per-zone).
+
+        Uses a DISTINCT type so legacy ``CropHealthAssessment`` consumers
+        (phenology-status, listing, SP2 action-rules) never receive zone
+        entities. Reuses ``to_ngsi_ld`` for all measurement attributes +
+        envelope, then overrides id/type and adds the zone relationship.
+        """
+        entity = self.to_ngsi_ld()
+        date_str = self.assessed_at.strftime("%Y%m%d")
+        zone = self.zone_id or "parcel"
+        entity["id"] = (
+            f"urn:ngsi-ld:CropHealthZoneAssessment:{self.parcel_id}-{zone}-{date_str}"
+        )
+        entity["type"] = "CropHealthZoneAssessment"
+        zone_urn = self.zone_urn or f"urn:ngsi-ld:AgriParcelZone:{self.parcel_id}-{zone}"
+        entity["hasAgriParcelZone"] = {
+            "type": "Relationship",
+            "object": zone_urn,
+        }
+        entity["zoneId"] = {"type": "Property", "value": zone}
         return entity
 
 

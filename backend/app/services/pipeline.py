@@ -1181,7 +1181,7 @@ async def _aggregate_parent_composite(
             # Find all child parcels
             children = await client.query_entities(
                 type="AgriParcel",
-                q=f'hasAgriParcel=="{parent_parcel_id}"',
+                q=f'(hasAgriParcel=="{parent_parcel_id}"|refAgriParcel=="{parent_parcel_id}")',
                 limit=20,
                 options="keyValues",
             )
@@ -1208,7 +1208,7 @@ async def _aggregate_parent_composite(
                 try:
                     child_assessments = await client.query_entities(
                         type="CropHealthAssessment",
-                        q=f'hasAgriParcel=="{child_id}"',
+                        q=f'(hasAgriParcel=="{child_id}"|refAgriParcel=="{child_id}")',
                         limit=1,
                         options="keyValues",
                     )
@@ -1364,7 +1364,7 @@ async def _fetch_parcel_ndvi(parcel_id: str, tenant_id: str) -> float | None:
         try:
             entities = await client.query_entities(
                 type="EOProduct",
-                q=f'hasAgriParcel==\"urn:ngsi-ld:AgriParcel:{parcel_id}\";productType==\"NDVI\"',
+                q=f'(hasAgriParcel==\"urn:ngsi-ld:AgriParcel:{parcel_id}\"|refAgriParcel==\"urn:ngsi-ld:AgriParcel:{parcel_id}\");productType==\"NDVI\"',
                 limit=1,
                 options="keyValues",
             )
@@ -1394,7 +1394,7 @@ async def _fetch_parcel_sar(parcel_id: str, tenant_id: str) -> tuple[float, floa
         try:
             entities = await client.query_entities(
                 type="EOProduct",
-                q=f'hasAgriParcel==\"urn:ngsi-ld:AgriParcel:{parcel_id}\";productType==\"GRD\"',
+                q=f'(hasAgriParcel==\"urn:ngsi-ld:AgriParcel:{parcel_id}\"|refAgriParcel==\"urn:ngsi-ld:AgriParcel:{parcel_id}\");productType==\"GRD\"',
                 limit=1,
                 options="keyValues",
             )

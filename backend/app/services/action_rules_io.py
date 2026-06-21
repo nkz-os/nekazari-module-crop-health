@@ -18,7 +18,7 @@ async def _read_crop_plan(parcel_id: str, tenant_id: str) -> list[dict]:
     client = OrionClient(tenant_id)
     try:
         return await client.query_entities(
-            type="AgriCrop", q=f'hasAgriParcel=="{parcel_id}"', limit=50, options="keyValues"
+            type="AgriCrop", q=f'(hasAgriParcel=="{parcel_id}"|refAgriParcel=="{parcel_id}")', limit=50, options="keyValues"
         ) or []
     except Exception as exc:  # noqa: BLE001 — fail-safe
         logger.warning("_read_crop_plan failed for %s: %s", parcel_id, exc)
@@ -98,7 +98,7 @@ async def _operation_exists(parcel_id, rule_id, today, tenant_id) -> bool:
     try:
         rows = await client.query_entities(
             type="AgriParcelOperation",
-            q=f'hasAgriParcel=="{parcel_id}";sourceRule=="{rule_id}";dateCreated>="{today.isoformat()}T00:00:00Z"',
+            q=f'(hasAgriParcel=="{parcel_id}"|refAgriParcel=="{parcel_id}");sourceRule=="{rule_id}";dateCreated>="{today.isoformat()}T00:00:00Z"',
             limit=1, options="keyValues",
         )
         return bool(rows)

@@ -16,6 +16,10 @@ from datetime import date
 
 from fastapi import APIRouter, Request
 
+from nkz_platform_sdk.agronomy import (
+    AgronomicValue, Source, confidence_from_fidelity,
+)
+
 from app.schemas import StageTable
 from app.services import context_client
 from app.services.pipeline import compute_assessment
@@ -24,6 +28,28 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["phenology"])
 
 _MEAN_DAILY_GDD_DEFAULT = 8.0  # Mediterranean default mean daily GDD
+_METEO_VOCAB = {"iot_sensor", "parcel_weather", "regional_proxy", "unavailable"}
+
+
+def _status_agronomic(status: dict) -> dict:
+    """Build the additive `agronomic` map for phenology-status (P1 contract)."""
+    fidelity = status.get("dataFidelity") or "regional_proxy"
+    conf = confidence_from_fidelity(fidelity)
+    src = Source(short=status.get("phenologySource") or "default")
+    # meteo-vocab fidelity values are the only ones valid on the envelope's
+    # `fidelity` field; engine-vocab values are carried as confidence only.
+    env_fidelity = fidelity if fidelity in _METEO_VOCAB else None
+    stage_notes = ["Estadio asumido, sin dato meteo"] if fidelity == "unavailable" else []
+    return {
+        "currentStage": AgronomicValue(
+            value=status.get("currentStage"), source=src,
+            confidence=conf, fidelity=env_fidelity, notes=stage_notes,
+        ).model_dump(),
+        "deviation": AgronomicValue(
+            value=status.get("deviation"), source=src,
+            confidence=conf, fidelity=env_fidelity,
+        ).model_dump(),
+    }
 
 
 async def _read_latest_assessment(parcel_id: str, tenant_id: str) -> dict | None:
@@ -79,7 +105,7 @@ def _build_status_from_dict(latest: dict, thresholds: dict[str, tuple[float, flo
     if isinstance(parcel_ref, dict):
         parcel_ref = parcel_ref.get("object")
 
-    return {
+    status = {
         "parcelId": parcel_ref,
         "asOf": today.isoformat(),
         "seasonStart": _unwrap(latest.get("seasonStart")),
@@ -91,8 +117,11 @@ def _build_status_from_dict(latest: dict, thresholds: dict[str, tuple[float, flo
         or _unwrap(latest.get("dataFidelity"))
         or "regional_proxy",
         "deviation": _unwrap(latest.get("phenologyDeviation")) or "on_track",
+        "phenologySource": _unwrap(latest.get("phenologySource")) or "default",
         "stages": stages,
     }
+    status["agronomic"] = _status_agronomic(status)
+    return status
 
 
 def _build_status_from_assessment(assessment, thresholds: dict[str, tuple[float, float]] | StageTable) -> dict:
@@ -112,7 +141,7 @@ def _build_status_from_assessment(assessment, thresholds: dict[str, tuple[float,
         assessment.phenology_progress.deviation
         if assessment.phenology_progress else "on_track"
     )
-    return {
+    status = {
         "parcelId": assessment.parcel_id,
         "asOf": today.isoformat(),
         "seasonStart": assessment.season_start,
@@ -122,8 +151,11 @@ def _build_status_from_assessment(assessment, thresholds: dict[str, tuple[float,
         if assessment.meteo_fidelity and assessment.meteo_fidelity != "unavailable"
         else assessment.data_fidelity,
         "deviation": deviation,
+        "phenologySource": assessment.phenology_source or "default",
         "stages": stages,
     }
+    status["agronomic"] = _status_agronomic(status)
+    return status
 
 
 @router.get("/parcels/{parcel_id}/phenology-status")

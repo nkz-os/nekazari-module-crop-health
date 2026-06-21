@@ -391,6 +391,11 @@ class CropHealthAssessment(BaseModel):
     # ``CropHealthZoneAssessment`` type. ``None`` → parcel-level rollup (legacy).
     zone_id: str | None = None
     zone_geometry: dict | None = None
+    # Full AgriParcelZone URN of the source zone (weather-map mints it as
+    # ``urn:ngsi-ld:AgriParcelZone:{tenant}:{parcel}:{zoneId}``). When present it
+    # is used verbatim for the ``hasAgriParcelZone`` relationship so the ref
+    # matches the real entity; otherwise a best-effort URN is reconstructed.
+    zone_urn: str | None = None
 
     def to_ngsi_ld(self) -> dict[str, Any]:
         """Serialise to NGSI-LD entity payload."""
@@ -556,9 +561,10 @@ class CropHealthAssessment(BaseModel):
             f"urn:ngsi-ld:CropHealthZoneAssessment:{self.parcel_id}-{zone}-{date_str}"
         )
         entity["type"] = "CropHealthZoneAssessment"
+        zone_urn = self.zone_urn or f"urn:ngsi-ld:AgriParcelZone:{self.parcel_id}-{zone}"
         entity["hasAgriParcelZone"] = {
             "type": "Relationship",
-            "object": f"urn:ngsi-ld:AgriParcelZone:{self.parcel_id}-{zone}",
+            "object": zone_urn,
         }
         entity["zoneId"] = {"type": "Property", "value": zone}
         return entity

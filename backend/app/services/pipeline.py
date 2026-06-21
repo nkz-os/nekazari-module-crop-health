@@ -36,6 +36,14 @@ from app.services.context_client import get_phenology_params, get_weather_snapsh
 from app.services.fiware_publisher import publish_assessment
 from app.services.meteo_context import resolve_meteo_context
 from app.services.redis_state import RedisState
+from app.services.zonation import (
+    resolve_zones,
+    is_whole_parcel,
+    sensors_in_zone,
+    consolidate_sensor_readings,
+    point_in_polygon,
+    Zone,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -261,18 +269,25 @@ async def trigger(
     )
 
     now = datetime.now(timezone.utc)
-    assessment = CropHealthAssessment(
-        parcel_id=effective_parcel,
-        assessed_at=now,
-        phenology_source=crop_context.phenology_source if crop_context else "default",
-        crop_species=species if species != "generic" else None,
-        crop_name=crop_context.crop.name if crop_context and crop_context.crop else None,
-        variety_name=variety_name,
-        phenology_stage=phenology.stage if phenology else None,
-        gdd_accumulated=gdd,
-        kc=phenology.kc if phenology else None,
-        management=management,
-    )
+
+    def _mk_assessment(zone: Zone | None) -> CropHealthAssessment:
+        a = CropHealthAssessment(
+            parcel_id=effective_parcel,
+            assessed_at=now,
+            phenology_source=crop_context.phenology_source if crop_context else "default",
+            crop_species=species if species != "generic" else None,
+            crop_name=crop_context.crop.name if crop_context and crop_context.crop else None,
+            variety_name=variety_name,
+            phenology_stage=phenology.stage if phenology else None,
+            gdd_accumulated=gdd,
+            kc=phenology.kc if phenology else None,
+            management=management,
+        )
+        if zone is not None:
+            a.zone_id = zone.zone_id
+            a.zone_urn = zone.urn
+            a.zone_geometry = zone.geometry
+        return a
 
     # ── Soil properties (benefits 1+2) ───────────────────────────────────
     from app.services.context_client import get_soil_properties
@@ -300,26 +315,94 @@ async def trigger(
         except Exception as exc:
             logger.warning("pipeline: redis get_irrigation_24h failed for entity %s — irrigation_mm=0: %s", entity_id, exc)
 
-    return await _run_engines(
-        assessment,
-        metric_type=metric_type,
-        weather=weather,
-        phenology=phenology,
-        redis_state=redis_state,
-        entity_id=entity_id,
-        effective_parcel=effective_parcel,
-        tenant_id=tenant_id,
-        species=species,
-        crop_context=crop_context,
-        variety_name=variety_name,
-        gdd=gdd,
-        soil=soil,
-        root_depth_mm=root_depth_mm,
-        sw_yesterday=sw_yesterday,
-        irrigation_mm=irrigation_mm,
-        now=now,
-        stage_table=stage_table,
+    # ── Resolve management zones (weather-map AgriParcelZone) ─────────────
+    # Whole-parcel mode (current production reality — no zones exist until
+    # weather-map zoning is enabled) is byte-identical to the legacy behaviour:
+    # one parcel-level CropHealthAssessment, sensor engines + side-effects via
+    # _run_engines(publish=True). The zonal branch only activates once zones
+    # exist, attributing the device's window-engines (CWSI/MDS) to the device's
+    # zone (point-in-polygon) and publishing per-zone + worst-zone rollup.
+    parcel_geom = await context_client._resolve_parcel_geometry(effective_parcel, tenant_id)
+    zones = await resolve_zones(effective_parcel, tenant_id, parcel_geom or {})
+
+    if is_whole_parcel(zones):
+        assessment = _mk_assessment(None)
+        return await _run_engines(
+            assessment,
+            metric_type=metric_type,
+            weather=weather,
+            phenology=phenology,
+            redis_state=redis_state,
+            entity_id=entity_id,
+            effective_parcel=effective_parcel,
+            tenant_id=tenant_id,
+            species=species,
+            crop_context=crop_context,
+            variety_name=variety_name,
+            gdd=gdd,
+            soil=soil,
+            root_depth_mm=root_depth_mm,
+            sw_yesterday=sw_yesterday,
+            irrigation_mm=irrigation_mm,
+            now=now,
+            stage_table=stage_table,
+            publish=True,
+        )
+
+    # Zonal: the device's window-engines run for its zone; others sensorless.
+    device_coords = await _resolve_device_coords(entity_id, tenant_id)
+    if device_coords is None:
+        logger.warning(
+            "trigger: no coordinates for device %s — its window engines (CWSI/MDS) "
+            "are not attributed to a zone this event (readings persisted in Redis)",
+            entity_id,
+        )
+
+    zone_results: list[CropHealthAssessment] = []
+    for z in zones:
+        is_sensor = device_coords is not None and point_in_polygon(
+            device_coords[0], device_coords[1], z.geometry
+        )
+        a = _mk_assessment(z)
+        try:
+            await _run_engines(
+                a,
+                metric_type=metric_type if is_sensor else "",
+                weather=weather,
+                phenology=phenology,
+                redis_state=redis_state if is_sensor else None,
+                entity_id=entity_id if is_sensor else effective_parcel,
+                effective_parcel=effective_parcel,
+                tenant_id=tenant_id,
+                species=species,
+                crop_context=crop_context,
+                variety_name=variety_name,
+                gdd=gdd,
+                soil=soil,
+                root_depth_mm=root_depth_mm,
+                sw_yesterday=sw_yesterday if is_sensor else None,
+                irrigation_mm=irrigation_mm if is_sensor else 0.0,
+                now=now,
+                stage_table=stage_table,
+                publish=False,
+            )
+        except Exception as exc:
+            logger.warning("trigger: zone %s failed for %s — skipped: %s", z.zone_id, effective_parcel, exc)
+            continue
+        zone_results.append(a)
+        await _publish_assessment(a.to_zone_ngsi_ld(), tenant_id)
+
+    if not zone_results:
+        logger.warning("trigger: all zones failed for %s — no assessment", effective_parcel)
+        return None
+
+    rollup = _aggregate_rollup(effective_parcel, zone_results)
+    await _publish_assessment(rollup.to_ngsi_ld(), tenant_id)
+    # Preserve the sensor-path derived events + parent aggregation on the rollup.
+    await _emit_assessment_side_effects(
+        rollup, tenant_id, now, rollup.phenology_stage or "vegetative"
     )
+    return rollup
 
 
 async def _run_engines(
@@ -798,69 +881,85 @@ async def _run_engines(
 
     # ── 5/6. Event bus + parent aggregation (sensor-publish side-effects) ──
     # Skipped when ``publish`` is False; compute_assessment owns its own write
-    # and emits no derived events for the daily snapshot path.
+    # and emits no derived events for the daily snapshot path. The zonal sensor
+    # rollup re-uses this helper so the webhook path keeps emitting them.
     if publish:
-        # ── 5. Publish to platform event bus ─────────────────────────────
-        try:
-            import json as _json
-            event = {
-                "event_type": "crop.assessment.completed",
+        await _emit_assessment_side_effects(assessment, tenant_id, now, stage_name)
+
+    return assessment
+
+
+async def _emit_assessment_side_effects(
+    assessment: CropHealthAssessment,
+    tenant_id: str,
+    now: datetime,
+    stage_name: str,
+) -> None:
+    """Platform event-bus publish + parent-parcel composite aggregation.
+
+    Extracted verbatim from the sensor-publish tail of ``_run_engines`` so the
+    zonal sensor rollup can emit the same derived events. Best-effort: every
+    failure is logged and swallowed (fail-safe).
+    """
+    effective_parcel = assessment.parcel_id
+    # ── 5. Publish to platform event bus ─────────────────────────────
+    try:
+        event = {
+            "event_type": "crop.assessment.completed",
+            "tenant_id": tenant_id,
+            "parcel_id": effective_parcel,
+            "stage": stage_name,
+            "cwsi": assessment.cwsi.cwsi if assessment.cwsi else None,
+            "mds_severity": assessment.mds.severity.value if assessment.mds else None,
+            "overall_severity": assessment.overall_severity.value,
+            "recommended_action": assessment.recommended_action.value,
+            "phenology_source": assessment.phenology_source,
+            "timestamp": now.isoformat(),
+        }
+        await _publish_redis_event("crop:events", event)
+
+        if assessment.overall_severity.value in ("HIGH", "CRITICAL"):
+            breach = {
+                "event_type": "crop.stress.breach",
                 "tenant_id": tenant_id,
                 "parcel_id": effective_parcel,
                 "stage": stage_name,
-                "cwsi": assessment.cwsi.cwsi if assessment.cwsi else None,
-                "mds_severity": assessment.mds.severity.value if assessment.mds else None,
                 "overall_severity": assessment.overall_severity.value,
                 "recommended_action": assessment.recommended_action.value,
-                "phenology_source": assessment.phenology_source,
                 "timestamp": now.isoformat(),
             }
-            await _publish_redis_event("crop:events", event)
+            await _publish_redis_event("crop:events", breach)
+    except Exception as exc:
+        logger.warning("pipeline: redis event publish failed for parcel %s — event dropped: %s", effective_parcel, exc)
 
-            if assessment.overall_severity.value in ("HIGH", "CRITICAL"):
-                breach = {
-                    "event_type": "crop.stress.breach",
-                    "tenant_id": tenant_id,
-                    "parcel_id": effective_parcel,
-                    "stage": stage_name,
-                    "overall_severity": assessment.overall_severity.value,
-                    "recommended_action": assessment.recommended_action.value,
-                    "timestamp": now.isoformat(),
-                }
-                await _publish_redis_event("crop:events", breach)
-        except Exception as exc:
-            logger.warning("pipeline: redis event publish failed for parcel %s — event dropped: %s", effective_parcel, exc)
-
-        # ── 6. Aggregate parent parcel if this is a child ──────────────────
+    # ── 6. Aggregate parent parcel if this is a child ──────────────────
+    try:
+        from app.config import get_settings as _gs
+        from nkz_platform_sdk.orion import OrionClient
+        _settings = _gs()
+        _client = OrionClient(
+            tenant_id,
+            base_url=_settings.orion_ld_url,
+            context_url=_settings.orion_ld_context,
+        )
         try:
-            from app.config import get_settings as _gs
-            from nkz_platform_sdk.orion import OrionClient
-            _settings = _gs()
-            _client = OrionClient(
-                tenant_id,
-                base_url=_settings.orion_ld_url,
-                context_url=_settings.orion_ld_context,
+            _entity = await _client.get_entity(
+                f"urn:ngsi-ld:AgriParcel:{effective_parcel}",
+                options="keyValues",
             )
-            try:
-                _entity = await _client.get_entity(
-                    f"urn:ngsi-ld:AgriParcel:{effective_parcel}",
-                    options="keyValues",
-                )
-            finally:
-                await _client.close()
-            _parent = _entity.get("hasAgriParcel")
-            if isinstance(_parent, dict):
-                _parent_id = _parent.get("object")
-            else:
-                _parent_id = _parent
-            if _parent_id and "AgriParcel" in str(_parent_id):
-                await _aggregate_parent_composite(
-                    _parent_id, tenant_id, now,
-                )
-        except Exception as exc:
-            logger.warning("pipeline: parent composite aggregation failed for parcel %s — skipped: %s", effective_parcel, exc)
-
-    return assessment
+        finally:
+            await _client.close()
+        _parent = _entity.get("hasAgriParcel")
+        if isinstance(_parent, dict):
+            _parent_id = _parent.get("object")
+        else:
+            _parent_id = _parent
+        if _parent_id and "AgriParcel" in str(_parent_id):
+            await _aggregate_parent_composite(
+                _parent_id, tenant_id, now,
+            )
+    except Exception as exc:
+        logger.warning("pipeline: parent composite aggregation failed for parcel %s — skipped: %s", effective_parcel, exc)
 
 
 async def _read_assigned_crop(parcel_id: str, tenant_id: str) -> dict | None:
@@ -1003,19 +1102,183 @@ async def _regional_meteo(parcel_id: str, tenant_id: str) -> dict:
     return {}
 
 
+# Severity ordering for the worst-zone rollup (fail-safe: parcel risk = its
+# most-compromised zone). Keys are the Severity enum *values* (uppercase).
+_SEV_ORDER = {"LOW": 0, "MEDIUM": 1, "HIGH": 2, "CRITICAL": 3}
+
+
+def _sev_rank(assessment: CropHealthAssessment) -> int:
+    sev = getattr(assessment.overall_severity, "value", assessment.overall_severity)
+    return _SEV_ORDER.get(str(sev), 0)
+
+
+async def _resolve_device_coords(entity_id: str, tenant_id: str) -> tuple[float, float] | None:
+    """Best-effort (lon, lat) of the device/measurement, for zone attribution.
+
+    Reads the entity's ``location`` (Point) from Orion-LD. Returns ``None`` when
+    unavailable — the caller then leaves the device's window-engines unattributed
+    for that event (zonal mode only; whole-parcel mode never calls this). Richer
+    device-location resolution arrives with the QR/GPS onboarding flow.
+    """
+    try:
+        from app.config import get_settings
+        from nkz_platform_sdk.orion import OrionClient
+        settings = get_settings()
+        client = OrionClient(tenant_id, base_url=settings.orion_ld_url, context_url=settings.orion_ld_context)
+        try:
+            data = await client.get_entity(entity_id, options="keyValues")
+        finally:
+            await client.close()
+        loc = data.get("location") if isinstance(data, dict) else None
+        if isinstance(loc, dict):
+            if loc.get("type") == "GeoProperty":
+                loc = loc.get("value")
+            if isinstance(loc, dict) and loc.get("type") == "Point":
+                coords = loc.get("coordinates")
+                if isinstance(coords, (list, tuple)) and len(coords) >= 2:
+                    return (float(coords[0]), float(coords[1]))  # (lon, lat)
+    except Exception as exc:
+        logger.warning("_resolve_device_coords: failed for %s — None: %s", entity_id, exc)
+    return None
+
+
+async def _gather_parcel_sensors(parcel_id: str, tenant_id: str) -> list[dict]:
+    """Located sensor readings for the parcel, for per-zone consolidation.
+
+    v1: returns ``[]`` — the scheduled path is sensorless and the webhook path
+    supplies its triggering measurement directly via ``sensor_ctx``. Gathering
+    live device coordinates for full multi-device spatial consolidation is a
+    documented follow-up (needs a Device-location query contract).
+    """
+    return []
+
+
+async def _assess_zone(
+    zone: Zone,
+    parcel_id: str,
+    parcel_short: str,
+    tenant_id: str,
+    crop_ctx: dict,
+    sensor_ctx: dict | None,
+    whole: bool,
+) -> CropHealthAssessment:
+    """Compute one zone's assessment, reusing the existing engine core.
+
+    Crop/GDD/phenology are parcel-level (in ``crop_ctx``); meteo is resolved
+    with this zone's (consolidated) ``sensor_ctx``. v1 reuses parcel-level
+    NDVI/SAR/soil for every zone (no zonal raster source yet) — the engine core
+    fetches those by ``effective_parcel``. ``publish=False`` so this function
+    has no Orion/event/parent side-effects (the caller owns writes).
+    """
+    phenology = crop_ctx["phenology"]
+    thresholds = crop_ctx["thresholds"]
+    gdd = crop_ctx["gdd"]
+    species = crop_ctx["species"]
+    variety_name = crop_ctx["variety_name"]
+    now = crop_ctx["now"]
+
+    meteo = await resolve_meteo_context(
+        parcel_id, tenant_id,
+        sensor_ctx=sensor_ctx,
+        weather_map_fn=_weather_map_meteo,
+        regional_fn=_regional_meteo,
+    )
+
+    weather = None
+    if meteo.air_temp_c is not None:
+        from app.schemas import WeatherSnapshot
+        weather = WeatherSnapshot(
+            temp_air=meteo.air_temp_c,
+            humidity_pct=meteo.rh_pct if meteo.rh_pct is not None else 50.0,
+            precip_mm=0.0,
+            eto_mm=meteo.et0_mm if meteo.et0_mm is not None else 0.0,
+        )
+    else:
+        coords = await context_client._resolve_parcel_coords(parcel_short, tenant_id)
+        if coords:
+            latitude, longitude = coords
+            weather = await get_weather_snapshot(
+                latitude=latitude, longitude=longitude, tenant_id=tenant_id,
+            )
+
+    assessment = CropHealthAssessment(
+        parcel_id=parcel_short,
+        assessed_at=now,
+        phenology_source="gdd_derived",
+        crop_species=species,
+        crop_name=species,
+        variety_name=variety_name,
+        gdd_accumulated=gdd,
+        kc=phenology.kc if phenology else None,
+        season_start=crop_ctx["season_start"],
+        meteo_fidelity=meteo.dominant_fidelity,
+        zone_id=None if whole else zone.zone_id,
+        zone_urn=None if whole else zone.urn,
+        zone_geometry=None if whole else zone.geometry,
+    )
+
+    if gdd is not None and thresholds:
+        assessment.phenology_stage = derive_stage_from_gdd(gdd, thresholds)
+    elif phenology:
+        assessment.phenology_stage = phenology.stage
+
+    await _run_engines(
+        assessment,
+        metric_type="",
+        weather=weather,
+        phenology=phenology,
+        redis_state=None,
+        entity_id=parcel_short,
+        effective_parcel=parcel_short,
+        tenant_id=tenant_id,
+        species=species,
+        crop_context=None,
+        variety_name=variety_name,
+        gdd=gdd,
+        soil=crop_ctx["soil"],
+        root_depth_mm=crop_ctx["root_depth_mm"],
+        sw_yesterday=None,
+        irrigation_mm=0.0,
+        now=now,
+        stage_table=thresholds,
+        publish=False,
+    )
+    return assessment
+
+
+def _aggregate_rollup(parcel_short: str, zone_results: list[CropHealthAssessment]) -> CropHealthAssessment:
+    """Parcel rollup = the worst (most severe) zone (fail-safe).
+
+    Returns a copy with zone identity stripped so it serialises as the legacy
+    parcel-level ``CropHealthAssessment`` (back-compat).
+    """
+    worst = max(zone_results, key=_sev_rank)
+    rollup = worst.model_copy()
+    rollup.zone_id = None
+    rollup.zone_urn = None
+    rollup.zone_geometry = None
+    rollup.parcel_id = parcel_short
+    return rollup
+
+
 async def compute_assessment(
     parcel_id: str,
     tenant_id: str,
     *,
     sensor_ctx: dict | None = None,
 ) -> CropHealthAssessment | None:
-    """Parcel-centric daily assessment — runs WITHOUT requiring a sensor.
+    """Parcel assessment, synthesised per management ZONE — sensor-optional.
 
-    Reads the parcel's assigned crop, resolves meteo (sensor > weather-map >
-    regional, sensorless-capable), computes seasonal GDD, derives the current
-    phenology stage authoritatively from GDD, runs the engines via the shared
-    ``_run_engines`` core, and publishes the daily ``CropHealthAssessment`` to
-    Orion-LD. Returns the assessment, or ``None`` when the parcel has no crop.
+    Reads the parcel's assigned crop (parcel-level), resolves zones from
+    weather-map's ``AgriParcelZone`` (fallback: one whole-parcel zone), and for
+    each zone runs the engine core with that zone's (consolidated) meteo. Each
+    zone publishes a ``CropHealthZoneAssessment``; the parcel rollup
+    (worst zone) publishes the legacy ``CropHealthAssessment`` so existing
+    consumers are untouched. Returns the rollup, or ``None`` when no crop.
+
+    In whole-parcel mode (no zones) behaviour is identical to the legacy
+    parcel-level path: exactly one ``CropHealthAssessment`` write, no zone
+    entities.
     """
     crop = await _read_assigned_crop(parcel_id, tenant_id)
     if not crop:
@@ -1041,86 +1304,58 @@ async def compute_assessment(
     # Phenology params (engine inputs: kc, d1/d2, mds_ref, stage thresholds)
     phenology = await get_phenology_params(species=species, gdd=gdd)
 
-    # Meteo: sensor > weather-map > regional. Sensorless-capable.
-    meteo = await resolve_meteo_context(
-        parcel_id, tenant_id,
-        sensor_ctx=sensor_ctx,
-        weather_map_fn=_weather_map_meteo,
-        regional_fn=_regional_meteo,
-    )
-
-    # Adapt meteo → WeatherSnapshot for the engine core. Fall back to the
-    # regional weather snapshot (lat/lon) when meteo has no air temperature.
-    weather = None
-    if meteo.air_temp_c is not None:
-        from app.schemas import WeatherSnapshot
-        weather = WeatherSnapshot(
-            temp_air=meteo.air_temp_c,
-            humidity_pct=meteo.rh_pct if meteo.rh_pct is not None else 50.0,
-            precip_mm=0.0,
-            eto_mm=meteo.et0_mm if meteo.et0_mm is not None else 0.0,
-        )
-    else:
-        coords = await context_client._resolve_parcel_coords(parcel_short, tenant_id)
-        if coords:
-            latitude, longitude = coords
-            weather = await get_weather_snapshot(
-                latitude=latitude, longitude=longitude, tenant_id=tenant_id,
-            )
-
     now = datetime.now(timezone.utc)
-    assessment = CropHealthAssessment(
-        parcel_id=parcel_short,
-        assessed_at=now,
-        phenology_source="gdd_derived",
-        crop_species=species,
-        crop_name=species,
-        variety_name=variety_name,
-        gdd_accumulated=gdd,
-        kc=phenology.kc if phenology else None,
-        season_start=season_start,
-        meteo_fidelity=meteo.dominant_fidelity,
-    )
 
-    # Authoritative current stage from GDD (overrides phenology-param stage).
-    # _run_engines also derives this from the shared stage table; set it here
-    # too so the value is correct even when stage_table is empty.
-    if gdd is not None and thresholds:
-        assessment.phenology_stage = derive_stage_from_gdd(gdd, thresholds)
-    elif phenology:
-        assessment.phenology_stage = phenology.stage
-
-    # Soil + root depth for the water-balance engine.
+    # Soil + root depth for the water-balance engine (parcel-level).
     from app.services.context_client import get_soil_properties
     soil = await get_soil_properties(parcel_id=parcel_short, tenant_id=tenant_id)
     root_depth_mm = _resolve_root_depth(species, gdd, None)
 
-    # Run the shared engine core. No device → no sensor-gated branch fires;
-    # publish=False because we own the Orion write below.
-    await _run_engines(
-        assessment,
-        metric_type="",
-        weather=weather,
-        phenology=phenology,
-        redis_state=None,
-        entity_id=parcel_short,
-        effective_parcel=parcel_short,
-        tenant_id=tenant_id,
-        species=species,
-        crop_context=None,
-        variety_name=variety_name,
-        gdd=gdd,
-        soil=soil,
-        root_depth_mm=root_depth_mm,
-        sw_yesterday=None,
-        irrigation_mm=0.0,
-        now=now,
-        stage_table=thresholds,
-        publish=False,
-    )
+    crop_ctx = {
+        "species": species,
+        "variety_name": variety_name,
+        "season_start": season_start,
+        "gdd": gdd,
+        "phenology": phenology,
+        "thresholds": thresholds,
+        "soil": soil,
+        "root_depth_mm": root_depth_mm,
+        "now": now,
+    }
 
-    await _publish_assessment(assessment.to_ngsi_ld(), tenant_id)
-    return assessment
+    # Resolve management zones (weather-map AgriParcelZone) or whole-parcel.
+    parcel_geom = await context_client._resolve_parcel_geometry(parcel_short, tenant_id)
+    zones = await resolve_zones(parcel_id, tenant_id, parcel_geom or {})
+    whole = is_whole_parcel(zones)
+
+    # Located sensors for per-zone consolidation (v1: [] for scheduled path).
+    all_sensors = await _gather_parcel_sensors(parcel_id, tenant_id)
+
+    zone_results: list[CropHealthAssessment] = []
+    for z in zones:
+        zone_sensor_ctx = sensor_ctx
+        if all_sensors:
+            consolidated = consolidate_sensor_readings(sensors_in_zone(z, all_sensors))
+            if consolidated:
+                zone_sensor_ctx = consolidated
+        try:
+            za = await _assess_zone(
+                z, parcel_id, parcel_short, tenant_id, crop_ctx, zone_sensor_ctx, whole,
+            )
+        except Exception as exc:  # best-effort per zone — one bad zone must not sink the rest
+            logger.warning("compute_assessment: zone %s failed for %s — skipped: %s", z.zone_id, parcel_short, exc)
+            continue
+        zone_results.append(za)
+        if not whole:
+            await _publish_assessment(za.to_zone_ngsi_ld(), tenant_id)
+
+    if not zone_results:
+        logger.warning("compute_assessment: all zones failed for %s — no assessment", parcel_short)
+        return None
+
+    rollup = _aggregate_rollup(parcel_short, zone_results)
+    await _publish_assessment(rollup.to_ngsi_ld(), tenant_id)
+    return rollup
 
 
 async def _build_sensor_ctx(entity_id: str, redis_state) -> dict:

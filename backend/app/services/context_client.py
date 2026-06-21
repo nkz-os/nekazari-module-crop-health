@@ -439,6 +439,32 @@ async def _resolve_parcel_coords(parcel_id: str, tenant_id: str) -> tuple[float,
     return None
 
 
+async def _resolve_parcel_geometry(parcel_id: str, tenant_id: str) -> dict | None:
+    """Resolve a parcel's raw GeoJSON geometry (Polygon/Point) from Orion-LD.
+
+    Used as the whole-parcel fallback zone geometry for zonal synthesis.
+    Returns ``None`` on any failure (caller degrades to parcel-level mode).
+    """
+    settings = get_settings()
+    orion_client = OrionClient(tenant_id, base_url=settings.orion_ld_url, context_url=settings.orion_ld_context)
+    try:
+        data = await orion_client.get_entity(
+            f"urn:ngsi-ld:AgriParcel:{parcel_id}",
+            options="keyValues",
+        )
+        loc = data.get("location")
+        if isinstance(loc, dict):
+            if loc.get("type") == "GeoProperty":
+                loc = loc.get("value")
+            if isinstance(loc, dict) and loc.get("type") in ("Polygon", "MultiPolygon", "Point"):
+                return loc
+    except Exception as exc:
+        logger.warning("_resolve_parcel_geometry: failed for parcel %s: %s", parcel_id, exc)
+    finally:
+        await orion_client.close()
+    return None
+
+
 async def get_soil_properties(parcel_id: str, tenant_id: str = "") -> "SoilProperties":
     """Fetch soil physical properties for a parcel.
 

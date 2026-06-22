@@ -57,7 +57,7 @@ def _current_projected_end(phenology: dict):
     return None
 
 
-def build_context(seg, phenology, weather, soil, ndvi, stress, today) -> dict:
+def build_context(seg, phenology, weather, soil, ndvi, stress, today, crop_requirements=None) -> dict:
     seg = seg or {}
     phenology = phenology or {}
     gdd = (phenology.get("gdd") or {}).get("accumulated") if isinstance(phenology.get("gdd"), dict) else None
@@ -86,4 +86,9 @@ def build_context(seg, phenology, weather, soil, ndvi, stress, today) -> dict:
             "dominant_stressor": (stress or {}).get("dominant_stressor"),
             "condition": (stress or {}).get("condition"),
         },
+        # ── Irrigation & Fertilization (SP4-C) ──
+        "water_deficit_mm": (crop_requirements or {}).get("waterDeficitMm"),
+        "n_requirement_kg_ha": (crop_requirements or {}).get("nRequirementKgHa"),
+        "p_requirement_kg_ha": (crop_requirements or {}).get("p2o5RequirementKgHa"),
+        "k_requirement_kg_ha": (crop_requirements or {}).get("k2oRequirementKgHa"),
     }

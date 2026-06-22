@@ -172,12 +172,15 @@ async def evaluate_parcel(parcel_id: str, tenant_id: str) -> int:
     else:
         phenology, stress = {}, None
 
+    # Extract crop requirements from latest assessment (irrigation + NPK)
+    crop_req = (latest or {}).get("cropRequirements") or {}
+
     weather = await get_weather_snapshot(parcel_id, tenant_id)
     soil = await get_soil_properties(parcel_id, tenant_id)
     ndvi = await _fetch_parcel_ndvi(parcel_id, tenant_id)
 
     today = today_utc()
-    ctx = build_context(seg, phenology, weather, soil, ndvi, stress, today)
+    ctx = build_context(seg, phenology, weather, soil, ndvi, stress, today, crop_requirements=crop_req)
     # Rule-fetch hint: phenology dict here is _build_status_from_dict's output,
     # which uses camelCase `currentStage` — NOT build_context's snake_case
     # `current_stage` (that key only exists inside ctx["phenology"]). The hint

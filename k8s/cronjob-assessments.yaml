@@ -36,7 +36,7 @@ spec:
           containers:
             - name: scheduled-assessments
               # SHA-pin at deploy time — never :latest (see CLAUDE.md K8s rules).
-              image: ghcr.io/nkz-os/nekazari-module-crop-health@sha256:ac1f73d046fa81dda80cbd5322aa97d0044b2c9f2dfcb9264bad4866b9c53102
+              image: ghcr.io/nkz-os/nekazari-module-crop-health@sha256:1e03edc0602bbcd103818a9778b1b3da80f95dc2a55e6b9eac87d1615334afe3
               command: ["python", "-m", "scripts.cron_scheduled_assessments"]
               # NOTE: the backend Dockerfile sets WORKDIR /app and copies
               # app/ -> /app/app/ and scripts/ -> /app/scripts/ (no nested

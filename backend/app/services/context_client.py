@@ -252,6 +252,35 @@ async def get_phenology_params(
     return _DEFAULT_PARAMS
 
 
+async def get_nutrient_recommendation(
+    species: str,
+    stage: str,
+    soil_n: float = 0,
+    soil_p: float = 0,
+    soil_k: float = 0,
+) -> dict | None:
+    """NPK recommendation from BioOrch nutrient-profile + soil levels.
+
+    Follows the same pattern as get_phenology_stages / get_phenology_params.
+    Returns None (no crash) when BioOrch is unreachable or has no data.
+    """
+    settings = get_settings()
+    if not settings.bioorchestrator_url:
+        return None
+    url = f"{settings.bioorchestrator_url}/api/graph/recommendations/fertilizer"
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(url, params={
+                "species": species, "stage": stage,
+                "soil_n": soil_n, "soil_p": soil_p, "soil_k": soil_k,
+            })
+            if resp.status_code == 200:
+                return resp.json()
+    except Exception as exc:
+        logger.warning("get_nutrient_recommendation failed for %s/%s: %s", species, stage, exc)
+    return None
+
+
 async def get_weather_snapshot(
     latitude: float,
     longitude: float,

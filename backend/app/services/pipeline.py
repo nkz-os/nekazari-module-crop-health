@@ -1354,6 +1354,47 @@ async def compute_assessment(
         return None
 
     rollup = _aggregate_rollup(parcel_short, zone_results)
+
+    # ── Nutrient recommendation from BioOrch ──
+    from app.schemas import CropRequirements
+    from app.services.context_client import get_nutrient_recommendation
+
+    soil_data = crop_ctx.get("soil")
+    nutrient_rec = await get_nutrient_recommendation(
+        species=species,
+        stage=rollup.phenology_stage or "vegetative",
+        soil_n=getattr(soil_data, "nitrogen_kg_ha", 0) if soil_data else 0,
+        soil_p=getattr(soil_data, "phosphorus_kg_ha", 0) if soil_data else 0,
+        soil_k=getattr(soil_data, "potassium_kg_ha", 0) if soil_data else 0,
+    )
+
+    # Derive irrigation need from soil_water_balance
+    irrigation_mm = None
+    water_deficit_mm = None
+    if rollup.soil_water_balance:
+        water_deficit_mm = rollup.soil_water_balance.deficit_mm
+        if rollup.soil_water_balance.stress_level in ("high", "critical"):
+            irrigation_mm = water_deficit_mm
+
+    def _extract_npk(rec, element):
+        if not rec or not rec.get("recommendations"):
+            return None
+        for r in rec["recommendations"]:
+            if r.get("element") == element and r.get("status") in ("deficient", "adequate"):
+                return r.get("uptake_kg_ha_day")
+        return None
+
+    rollup.crop_requirements = CropRequirements(
+        irrigation_mm=irrigation_mm,
+        water_deficit_mm=water_deficit_mm,
+        n_kg_ha=_extract_npk(nutrient_rec, "nitrogen"),
+        p2o5_kg_ha=_extract_npk(nutrient_rec, "phosphorus"),
+        k2o_kg_ha=_extract_npk(nutrient_rec, "potassium"),
+        bioorch_recommendations=nutrient_rec.get("recommendations") if nutrient_rec else None,
+        bioorch_species=nutrient_rec.get("species") if nutrient_rec else None,
+        bioorch_stage=nutrient_rec.get("stage") if nutrient_rec else None,
+    )
+
     await _publish_assessment(rollup.to_ngsi_ld(), tenant_id)
     return rollup
 

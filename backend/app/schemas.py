@@ -339,6 +339,24 @@ class CompactionRiskResult(BaseModel):
     data_fidelity: str = "regional_proxy"
 
 
+# ── CropRequirements (irrigation + NPK, embedded as Properties) ────────────
+
+
+class CropRequirements(BaseModel):
+    """Agronomic requirements derived from water balance + BioOrch nutrient demand.
+
+    Embedded as Properties in CropHealthAssessment (not a standalone entity).
+    """
+    irrigation_mm: float | None = None
+    water_deficit_mm: float | None = None
+    n_kg_ha: float | None = None
+    p2o5_kg_ha: float | None = None
+    k2o_kg_ha: float | None = None
+    bioorch_recommendations: list[dict] | None = None
+    bioorch_species: str | None = None
+    bioorch_stage: str | None = None
+
+
 # ── CropHealthAssessment (NGSI-LD output entity) ─────────────────────────────
 
 
@@ -396,6 +414,7 @@ class CropHealthAssessment(BaseModel):
     # is used verbatim for the ``hasAgriParcelZone`` relationship so the ref
     # matches the real entity; otherwise a best-effort URN is reconstructed.
     zone_urn: str | None = None
+    crop_requirements: CropRequirements | None = None
 
     def to_ngsi_ld(self) -> dict[str, Any]:
         """Serialise to NGSI-LD entity payload."""
@@ -544,6 +563,18 @@ class CropHealthAssessment(BaseModel):
             entity["soilMoisturePct"] = {"type": "Property", "value": self.soil_moisture_pct}
         if self.soil_temperature_c is not None:
             entity["soilTemperatureC"] = {"type": "Property", "value": self.soil_temperature_c}
+        if self.crop_requirements:
+            cr = self.crop_requirements
+            if cr.irrigation_mm is not None:
+                entity["irrigationMm"] = {"type": "Property", "value": cr.irrigation_mm, "unitCode": "MMT"}
+            if cr.water_deficit_mm is not None:
+                entity["waterDeficitMm"] = {"type": "Property", "value": cr.water_deficit_mm, "unitCode": "MMT"}
+            if cr.n_kg_ha is not None:
+                entity["nRequirementKgHa"] = {"type": "Property", "value": cr.n_kg_ha, "unitCode": "KGM"}
+            if cr.p2o5_kg_ha is not None:
+                entity["p2o5RequirementKgHa"] = {"type": "Property", "value": cr.p2o5_kg_ha, "unitCode": "KGM"}
+            if cr.k2o_kg_ha is not None:
+                entity["k2oRequirementKgHa"] = {"type": "Property", "value": cr.k2o_kg_ha, "unitCode": "KGM"}
         return entity
 
     def to_zone_ngsi_ld(self) -> dict[str, Any]:

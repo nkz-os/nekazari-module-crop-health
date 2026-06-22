@@ -1093,13 +1093,65 @@ async def _weather_map_meteo(parcel_id: str, tenant_id: str) -> dict:
 
 
 async def _regional_meteo(parcel_id: str, tenant_id: str) -> dict:
-    """Regional fallback meteo. Stub (fail-safe {}).
+    """Regional fallback meteo from Orion WeatherObserved (fail-safe {}).
 
-    Seasonal GDD already flows via ``_fetch_gdd``; the snapshot regional proxy
-    falls back to ``get_weather_snapshot`` inside ``compute_assessment`` when
-    no parcel-level/sensor meteo is available, so this stub returns {} for now.
+    Queries the latest WeatherObserved for this parcel via Orion-LD.
+    Falls back to {} when no data exists or Orion is unreachable.
     """
-    return {}
+    try:
+        from nkz_platform_sdk.orion import OrionClient
+        from app.config import get_settings
+        settings = get_settings()
+        parcel_urn = parcel_id if parcel_id.startswith("urn:") else f"urn:ngsi-ld:AgriParcel:{parcel_id}"
+        client = OrionClient(tenant_id, base_url=settings.orion_ld_url, context_url=settings.orion_ld_context)
+        try:
+            # Try finding by relationship first (hasAgriParcel or refAgriParcel)
+            rel_q = f'(refAgriParcel=="{parcel_urn}"|hasAgriParcel=="{parcel_urn}")'
+            entities = await client.query_entities(
+                type="WeatherObserved", q=rel_q,
+                limit=1, options="keyValues",
+            )
+            # Fallback: latest WeatherObserved in the tenant
+            if not entities:
+                entities = await client.query_entities(
+                    type="WeatherObserved", limit=1, options="keyValues",
+                )
+        finally:
+            await client.close()
+
+        if not entities:
+            return {}
+
+        wo = entities[0]
+        out: dict = {}
+        temp = wo.get("temperature")
+        if temp is not None:
+            try:
+                out["air_temp_c"] = float(temp)
+            except (TypeError, ValueError):
+                pass
+        et0 = wo.get("et0")
+        if et0 is not None:
+            try:
+                out["et0_mm"] = float(et0)
+            except (TypeError, ValueError):
+                pass
+        rh = wo.get("relativeHumidity")
+        if rh is not None:
+            try:
+                out["rh_pct"] = float(rh)
+            except (TypeError, ValueError):
+                pass
+        precip = wo.get("precipitation")
+        if precip is not None:
+            try:
+                out["precip_mm"] = float(precip)
+            except (TypeError, ValueError):
+                pass
+        return out
+    except Exception as exc:  # noqa: BLE001 -- fail-safe
+        logger.warning("_regional_meteo: failed for %s — %s", parcel_id, exc)
+        return {}
 
 
 # Severity ordering for the worst-zone rollup (fail-safe: parcel risk = its

@@ -1099,25 +1099,38 @@ async def _regional_meteo(parcel_id: str, tenant_id: str) -> dict:
     Falls back to {} when no data exists or Orion is unreachable.
     """
     try:
-        from nkz_platform_sdk.orion import OrionClient
+        # NOTE: using raw httpx because OrionClient.query_entities does not
+        # expose orderBy. The HTTP call uses canonical FIWARE headers
+        # (NGSILD-Tenant + Link for context expansion) — same as SDK does.
+        import httpx as _httpx
         from app.config import get_settings
         settings = get_settings()
         parcel_urn = parcel_id if parcel_id.startswith("urn:") else f"urn:ngsi-ld:AgriParcel:{parcel_id}"
-        client = OrionClient(tenant_id, base_url=settings.orion_ld_url, context_url=settings.orion_ld_context)
-        try:
-            # Try finding by relationship first (hasAgriParcel or refAgriParcel)
+        link_hdr = f'<{settings.orion_ld_context}>; rel="http://www.w3.org/ns/json-ld#context"; type="application/ld+json"'
+        headers = {"NGSILD-Tenant": tenant_id, "Accept": "application/json", "Link": link_hdr}
+        base = settings.orion_ld_url
+
+        async with _httpx.AsyncClient(timeout=8.0) as cl:
+            # Try finding by relationship first, ordered by most recent
             rel_q = f'(refAgriParcel=="{parcel_urn}"|hasAgriParcel=="{parcel_urn}")'
-            entities = await client.query_entities(
-                type="WeatherObserved", q=rel_q,
-                limit=1, options="keyValues",
+            resp = await cl.get(
+                f"{base}/ngsi-ld/v1/entities",
+                params={"type": "WeatherObserved", "q": rel_q,
+                        "limit": 1, "options": "keyValues",
+                        "orderBy": "!dateObserved"},
+                headers=headers,
             )
+            entities = resp.json() if resp.status_code == 200 else []
             # Fallback: latest WeatherObserved in the tenant
             if not entities:
-                entities = await client.query_entities(
-                    type="WeatherObserved", limit=1, options="keyValues",
+                resp = await cl.get(
+                    f"{base}/ngsi-ld/v1/entities",
+                    params={"type": "WeatherObserved",
+                            "limit": 1, "options": "keyValues",
+                            "orderBy": "!dateObserved"},
+                    headers=headers,
                 )
-        finally:
-            await client.close()
+                entities = resp.json() if resp.status_code == 200 else []
 
         if not entities:
             return {}

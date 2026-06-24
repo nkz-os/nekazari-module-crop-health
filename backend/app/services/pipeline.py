@@ -1696,7 +1696,14 @@ async def _fetch_gdd(
 
 
 async def _fetch_parcel_ndvi(parcel_id: str, tenant_id: str) -> float | None:
-    """Fetch latest NDVI value for a parcel from Orion-LD VegetationIndex entities."""
+    """Fetch latest NDVI mean for a parcel from canonical EOProduct entities.
+
+    Canonical contract (vegetation-health CONTRACT.md): one EOProduct per
+    (parcel, sensingDate); NDVI is the named lowercased `ndvi` Property whose
+    `value` is the zonal mean. There is no `productType` discriminator on
+    optical products and no `ndviMean`/`ndviValue`. Newest by sensingDate wins;
+    SAR EOProducts (no `ndvi` attribute) are skipped.
+    """
     try:
         from app.config import get_settings
         from nkz_platform_sdk.orion import OrionClient
@@ -1705,17 +1712,21 @@ async def _fetch_parcel_ndvi(parcel_id: str, tenant_id: str) -> float | None:
         try:
             entities = await client.query_entities(
                 type="EOProduct",
-                q=f'(hasAgriParcel==\"urn:ngsi-ld:AgriParcel:{parcel_id}\"|refAgriParcel==\"urn:ngsi-ld:AgriParcel:{parcel_id}\");productType==\"NDVI\"',
-                limit=1,
+                q=f'hasAgriParcel=="urn:ngsi-ld:AgriParcel:{parcel_id}"|refAgriParcel=="urn:ngsi-ld:AgriParcel:{parcel_id}"',
+                limit=100,
                 options="keyValues",
             )
         finally:
             await client.close()
         if entities and isinstance(entities, list):
-            e = entities[0]
-            ndvi = e.get("ndviValue") or e.get("value")
-            if ndvi is not None:
-                return float(ndvi)
+            with_ndvi = [e for e in entities if e.get("ndvi") is not None]
+            if with_ndvi:
+                latest = max(with_ndvi, key=lambda e: str(e.get("sensingDate", "")))
+                ndvi = latest.get("ndvi")
+                if isinstance(ndvi, dict):  # non-keyValues fallback
+                    ndvi = ndvi.get("value")
+                if ndvi is not None:
+                    return float(ndvi)
     except Exception as exc:
         logger.warning("_fetch_parcel_ndvi: failed for parcel %s — returning None: %s", parcel_id, exc)
     return None

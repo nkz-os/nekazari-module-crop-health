@@ -148,7 +148,7 @@ async def ndvi_cwsi_correlation(
 ):
     """Return paired NDVI/CWSI data points for correlation analysis.
 
-    Queries VegetationIndex from Orion-LD and CropHealthAssessment
+    Queries EOProduct (canonical NDVI) from Orion-LD and CropHealthAssessment
     from telemetry_events, aligns by date.
     """
     if not parcelId:
@@ -163,7 +163,7 @@ async def ndvi_cwsi_correlation(
         try:
             vi_data = await client.query_entities(
                 type="EOProduct",
-                q=f'(hasAgriParcel=="urn:ngsi-ld:AgriParcel:{parcelId}"|refAgriParcel=="urn:ngsi-ld:AgriParcel:{parcelId}");productType=="NDVI"',
+                q=f'hasAgriParcel=="urn:ngsi-ld:AgriParcel:{parcelId}"|refAgriParcel=="urn:ngsi-ld:AgriParcel:{parcelId}"',
                 limit=30,
                 options="keyValues",
             )
@@ -201,10 +201,12 @@ async def ndvi_cwsi_correlation(
             finally:
                 await conn.close()
 
-            # Align satellite and ground data
+            # Align satellite and ground data (EOProduct: ndvi Property + sensingDate)
             for vi in vi_data:
-                date_str = str(vi.get("dateObserved", ""))[:10]
-                ndvi_val = vi.get("ndviValue")
+                if vi.get("ndvi") is None:
+                    continue  # skip non-optical EOProducts (e.g. SAR/GRD)
+                date_str = str(vi.get("sensingDate", ""))[:10]
+                ndvi_val = vi.get("ndvi")
                 if isinstance(ndvi_val, dict):
                     ndvi_val = ndvi_val.get("value")
                 cwsi_val = cwsi_by_date.get(date_str)

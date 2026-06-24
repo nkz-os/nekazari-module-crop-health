@@ -202,9 +202,11 @@ async def _detail_sources(request: Request, parcelId: str) -> dict:
     results = await asyncio.gather(
         _query("CropHealthAssessment", rel_q, 1),
         _query("DeviceMeasurement", rel_q, 20),
-        _query("EOProduct", f'{rel_q};productType=="NDVI"', 1),
+        # Canonical optical vegetation: one EOProduct per acquisition (no
+        # productType discriminator). Fetch the recent set and pick the latest
+        # one that carries an `ndvi` attribute (SAR EOProducts have none).
+        _query("EOProduct", rel_q, 100),
         _query("AgriCrop", rel_q, 1),
-        _query("VegetationIndex", rel_q, 1),
         _query("WeatherObserved", f'locatedAt=="{parcel_urn}"', 1),
         _query("EOProduct", f'{rel_q};productType=="GRD"', 1),
         return_exceptions=True,
@@ -214,9 +216,8 @@ async def _detail_sources(request: Request, parcelId: str) -> dict:
     iot_devices = results[1] if not isinstance(results[1], BaseException) else []
     veg_indices = results[2] if not isinstance(results[2], BaseException) else []
     agri_crops = results[3] if not isinstance(results[3], BaseException) else []
-    vi_fallback = results[4] if not isinstance(results[4], BaseException) else []
-    weather_obs = results[5] if not isinstance(results[5], BaseException) else []
-    sar_products = results[6] if not isinstance(results[6], BaseException) else []
+    weather_obs = results[4] if not isinstance(results[4], BaseException) else []
+    sar_products = results[5] if not isinstance(results[5], BaseException) else []
 
     assessment = assessments[0] if assessments else {}
 
@@ -303,16 +304,15 @@ async def _detail_sources(request: Request, parcelId: str) -> dict:
     # ── Satellite ──────────────────────────────────────────────────────
     ndvi_val = None
     ndvi_ts = None
-    # Primary: EOProduct with productType=NDVI
-    if veg_indices:
-        vi = veg_indices[0]
-        ndvi_val = vi.get("ndviMean") or vi.get("ndviValue") or vi.get("value")
-        ndvi_ts = vi.get("dateObserved") or vi.get("sensingDate")
-    # Fallback: legacy VegetationIndex during migration window
-    if ndvi_val is None and vi_fallback:
-        fb = vi_fallback[0]
-        ndvi_val = fb.get("ndviMean") or fb.get("ndviMax")
-        ndvi_ts = fb.get("sensingDate")
+    # Latest EOProduct acquisition that carries an `ndvi` Property (value = mean).
+    with_ndvi = [e for e in veg_indices if e.get("ndvi") is not None]
+    if with_ndvi:
+        latest = max(with_ndvi, key=lambda e: str(e.get("sensingDate", "")))
+        nd = latest.get("ndvi")
+        if isinstance(nd, dict):  # non-keyValues fallback
+            nd = nd.get("value")
+        ndvi_val = nd
+        ndvi_ts = latest.get("sensingDate")
     ndvi = {
         "status": "ok" if ndvi_val is not None else "unavailable",
         "freshness": _freshness(ndvi_ts) if isinstance(ndvi_ts, str) else "none",

@@ -995,20 +995,24 @@ async def get_ndvi_climatology(
     client = OrionClient(tenant_id, base_url=orion_url, context_url=settings.orion_ld_context)
     try:
         entities = await client.query_entities(
-            type="VegetationIndex",
+            type="EOProduct",
             q=f'hasAgriParcel=="urn:ngsi-ld:AgriParcel:{parcel_id}"|refAgriParcel=="urn:ngsi-ld:AgriParcel:{parcel_id}"',
             limit=500,
             options="keyValues",
         )
+        # Keep only optical acquisitions that actually carry an ndvi value
+        # (SAR EOProducts share the type but have no `ndvi` attribute).
+        if isinstance(entities, list):
+            entities = [e for e in entities if e.get("ndvi") is not None]
         if not isinstance(entities, list) or len(entities) < 3:
             return _climatology_unavailable(
-                f"Only {len(entities) if isinstance(entities, list) else 0} VegetationIndex records"
+                f"Only {len(entities) if isinstance(entities, list) else 0} EOProduct NDVI records"
             )
 
-        # Filter by month +-1
+        # Filter by month +-1 (EOProduct carries the acquisition as sensingDate)
         month_entities = []
         for e in entities:
-            assessed = e.get("dateObserved") or e.get("observedAt")
+            assessed = e.get("sensingDate") or e.get("dateObserved") or e.get("observedAt")
             if isinstance(assessed, dict):
                 assessed = assessed.get("value")
             if not assessed:
@@ -1078,7 +1082,7 @@ async def get_ndvi_climatology(
 
 
 def _extract_ndvi_values(entities: list) -> list[float]:
-    """Extract NDVI values from VegetationIndex entities."""
+    """Extract NDVI values from EOProduct entities (keyValues `ndvi` scalar)."""
     values = []
     for _, e in entities:
         ndvi = e.get("NDVI") or e.get("ndvi")

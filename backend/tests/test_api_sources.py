@@ -101,14 +101,16 @@ async def test_sources_detail_returns_source_status():
                 "dateObserved": "2026-06-07T10:25:00Z",
             }
         ])
-        # Real VegetationIndex entities (vegetation module
-        # fiware_integration.py) carry ndviMean/Min/Max/StdDev + sensingDate,
-        # not ndviValue/dateObserved.
-        mock.get(url__regex=r".*type=VegetationIndex.*hasAgriParcel.*").respond(json=[
+        # Canonical EOProduct (vegetation-health CONTRACT.md): one per
+        # acquisition, NDVI as the named `ndvi` Property (value = mean), no
+        # productType discriminator. SAR (productType=GRD) is a separate family.
+        mock.get(url__regex=r".*type=EOProduct.*productType.*GRD.*").respond(json=[])
+        mock.get(url__regex=r".*type=EOProduct.*").respond(json=[
             {
-                "id": "urn:ngsi-ld:VegetationIndex:vi-1",
-                "ndviMean": 0.72,
-                "sensingDate": "2026-06-05T10:30:00Z",
+                "id": "urn:ngsi-ld:EOProduct:montiko:Parcela-4:2026-06-05",
+                "hasAgriParcel": "urn:ngsi-ld:AgriParcel:Parcela-4",
+                "sensingDate": "2026-06-05",
+                "ndvi": 0.72,
             }
         ])
         mock.get(url__regex=r".*type=AgriCrop.*hasAgriParcel.*").respond(json=[

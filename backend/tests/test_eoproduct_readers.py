@@ -4,7 +4,7 @@ Contract (vegetation-health CONTRACT.md): one EOProduct per (parcel, sensingDate
 each index is a named lowercased Property (`ndvi`, value = zonal mean). No
 `productType` discriminator and no `ndviMean`/`ndviValue` on optical products.
 """
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 

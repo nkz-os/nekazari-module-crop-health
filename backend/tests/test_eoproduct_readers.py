@@ -67,7 +67,6 @@ async def test_ndvi_climatology_reads_eoproduct_history():
 @pytest.mark.asyncio
 async def test_ndvi_cwsi_correlation_reads_eoproduct():
     """The NDVI/CWSI correlation endpoint must read EOProduct (ndvi + sensingDate)."""
-    from datetime import date
     from types import SimpleNamespace
     from app.api import assessments
 
@@ -77,20 +76,25 @@ async def test_ndvi_cwsi_correlation_reads_eoproduct():
     ])
     orion.close = AsyncMock()
 
-    conn = AsyncMock()
-    conn.fetch = AsyncMock(return_value=[{"date": date(2026, 6, 5), "cwsi": 0.42}])
-    conn.close = AsyncMock()
+    # Mock the timeseries-reader HTTP call (replaces asyncpg.connect)
+    http_response = AsyncMock()
+    http_response.raise_for_status = Mock()
+    http_response.json = Mock(return_value={
+        "data": [{"observed_at": "2026-06-05T00:00:00", "cwsiValue": 0.42}]
+    })
 
-    import asyncpg
     req = SimpleNamespace(state=SimpleNamespace(tenant_id="montiko"))
     fake_settings = SimpleNamespace(
         orion_ld_url="http://orion", orion_ld_context="http://ctx",
-        weather_db_url="postgresql://x",
+        weather_api_url="http://timeseries-reader:5000",
     )
 
     with patch("app.api.assessments.OrionClient", return_value=orion), \
          patch("app.api.assessments.get_settings", return_value=fake_settings), \
-         patch.object(asyncpg, "connect", AsyncMock(return_value=conn)):
+         patch("httpx.AsyncClient") as mock_client:
+        mock_client.return_value.__aenter__ = AsyncMock(return_value=AsyncMock(
+            get=AsyncMock(return_value=http_response)
+        ))
         out = await assessments.ndvi_cwsi_correlation(req, parcelId="p", days=30)
 
     # No productType discriminator in the EOProduct query

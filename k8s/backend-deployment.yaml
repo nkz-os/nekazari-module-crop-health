@@ -27,7 +27,7 @@ spec:
     spec:
       containers:
         - name: backend
-          image: ghcr.io/nkz-os/nekazari-module-crop-health@sha256:3c2fe79b187ed16313e0f6da777b1e4f3bbdf224de723788fdc45f7f8466dd61  # SP4-C: irrigation + fertilization from BioOrch (main ac19471)
+          image: ghcr.io/nkz-os/nekazari-module-crop-health@sha256:084376078031bed8f8645a99cad9d3e8245ce022b960409d8629f12df02b1e56  # main 66608a4: zonal synthesis + no asyncpg + test fixes
           imagePullPolicy: Always
           ports:
             - name: http

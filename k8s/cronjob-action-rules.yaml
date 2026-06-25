@@ -37,7 +37,7 @@ spec:
           containers:
             - name: action-rules
               # SHA-pin at deploy time — never :latest (see CLAUDE.md K8s rules).
-              image: ghcr.io/nkz-os/nekazari-module-crop-health@sha256:3c2fe79b187ed16313e0f6da777b1e4f3bbdf224de723788fdc45f7f8466dd61
+              image: ghcr.io/nkz-os/nekazari-module-crop-health@sha256:084376078031bed8f8645a99cad9d3e8245ce022b960409d8629f12df02b1e56  # main 66608a4
               command: ["python", "-m", "scripts.cron_action_rules"]
               # NOTE: the backend Dockerfile sets WORKDIR /app and copies
               # app/ -> /app/app/ and scripts/ -> /app/scripts/ (no nested

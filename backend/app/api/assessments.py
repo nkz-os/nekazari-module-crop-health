@@ -91,50 +91,36 @@ async def assessment_history(
 ):
     """Return CWSI/MDS/water balance time series for a parcel.
 
-    Queries telemetry_events for CropHealthAssessment entities
-    filtered by parcel ID and time range.
+    Queries timeseries-reader (no direct DB access).
     """
     if not parcelId:
         return {"points": []}
 
     try:
-        import asyncpg
-        weather_db = get_settings().weather_db_url
-        if not weather_db:
-            logger.warning("WEATHER_DB_URL not configured — history unavailable")
-            return {"points": []}
+        settings = get_settings()
+        url = (
+            f"{settings.weather_api_url}/api/timeseries/type/CropHealthAssessment"
+            f"/parcel/{parcelId}/data"
+            f"?attrs=cwsiValue,mdsValue,waterBalanceDeficit"
+            f"&limit=500"
+        )
+        import httpx
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(url)
+            resp.raise_for_status()
+            result = resp.json()
 
-        conn = await asyncpg.connect(weather_db)
-        try:
-            rows = await conn.fetch(
-                """
-                SELECT observed_at,
-                       payload->'measurements'->>'cwsiValue' AS cwsi,
-                       payload->'measurements'->>'mdsValue' AS mds,
-                       payload->'measurements'->>'waterBalanceDeficit' AS balance
-                FROM telemetry_events
-                WHERE entity_type = 'CropHealthAssessment'
-                  AND payload->'measurements'->>'parcelId' = $1
-                  AND observed_at > NOW() - ($2 || ' days')::INTERVAL
-                ORDER BY observed_at ASC
-                """,
-                parcelId, str(days),
-            )
-            points = [
-                {
-                    "date": str(row["observed_at"]),
-                    "cwsi": float(row["cwsi"]) if row["cwsi"] else None,
-                    "mds": float(row["mds"]) if row["mds"] else None,
-                    "balance": float(row["balance"]) if row["balance"] else None,
-                }
-                for row in rows
-            ]
-            return {"points": points}
-        finally:
-            await conn.close()
-    except ImportError:
-        logger.warning("asyncpg not available — history endpoint disabled")
-        return {"points": []}
+        points = [
+            {
+                "date": p.get("observed_at", ""),
+                "cwsi": p.get("cwsiValue"),
+                "mds": p.get("mdsValue"),
+                "balance": p.get("waterBalanceDeficit"),
+            }
+            for p in result.get("data", [])
+        ]
+        points.sort(key=lambda p: p["date"])
+        return {"points": points}
     except Exception as e:
         logger.error("History query failed: %s", e)
         return {"points": []}
@@ -171,35 +157,27 @@ async def ndvi_cwsi_correlation(
             logger.warning("ndvi_cwsi_correlation Orion query failed: %s", e)
             vi_data = []
         finally:
-            # close() runs here (before the asyncpg block below), so the outer
-            # except ImportError/Exception branches never see an open client.
+            # Ensure OrionClient is always closed
             await client.close()
 
-        # Query CropHealthAssessment from telemetry_events
-        import asyncpg
-        weather_db = get_settings().weather_db_url
-        if weather_db:
-            conn = await asyncpg.connect(weather_db)
-            try:
-                rows = await conn.fetch(
-                    """
-                    SELECT observed_at::date AS date,
-                           AVG((payload->'measurements'->>'cwsiValue')::float) AS cwsi
-                    FROM telemetry_events
-                    WHERE entity_type = 'CropHealthAssessment'
-                      AND payload->'measurements'->>'parcelId' = $1
-                      AND observed_at > NOW() - ($2 || ' days')::INTERVAL
-                    GROUP BY observed_at::date
-                    ORDER BY date ASC
-                    """,
-                    parcelId, str(days),
-                )
-                cwsi_by_date = {
-                    str(row["date"]): float(row["cwsi"])
-                    for row in rows if row["cwsi"]
-                }
-            finally:
-                await conn.close()
+        # Query CropHealthAssessment from timeseries-reader (no direct DB)
+        settings = get_settings()
+        url = (
+            f"{settings.weather_api_url}/api/timeseries/type/CropHealthAssessment"
+            f"/parcel/{parcelId}/data"
+            f"?attrs=cwsiValue&limit=500"
+        )
+        import httpx as _httpx
+        cwsi_by_date = {}
+        async with _httpx.AsyncClient(timeout=10.0) as http_client:
+            resp = await http_client.get(url)
+            resp.raise_for_status()
+            result = resp.json()
+            for p in result.get("data", []):
+                date_str = str(p.get("observed_at", ""))[:10]
+                cwsi_val = p.get("cwsiValue")
+                if date_str and cwsi_val is not None:
+                    cwsi_by_date[date_str] = float(cwsi_val)
 
             # Align satellite and ground data (EOProduct: ndvi Property + sensingDate)
             for vi in vi_data:
@@ -216,8 +194,6 @@ async def ndvi_cwsi_correlation(
                     "cwsi": cwsi_val,
                 })
 
-    except ImportError:
-        logger.warning("asyncpg not available — correlation disabled")
     except Exception as e:
         logger.error("Correlation query failed: %s", e)
 

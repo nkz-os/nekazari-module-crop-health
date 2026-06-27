@@ -44,8 +44,12 @@ def _patch_common(monkeypatch, *, gdd=300.0, meteo=None):
     async def _meteo(*args, **kwargs):
         return meteo if meteo is not None else MeteoContext(dominant_fidelity="unavailable")
 
+    async def _resolve_season(parcel_id, tenant_id):
+        return "2026-04-15"
+
     monkeypatch.setattr(pipeline, "_read_assigned_crop", _read_crop, raising=False)
     monkeypatch.setattr(pipeline.context_client, "get_phenology_stages", _stages)
+    monkeypatch.setattr(pipeline.context_client, "resolve_season_start", _resolve_season)
     monkeypatch.setattr(pipeline, "_fetch_gdd", _gdd, raising=False)
     monkeypatch.setattr(pipeline, "_publish_assessment", _write, raising=False)
     monkeypatch.setattr(pipeline, "resolve_meteo_context", _meteo, raising=False)

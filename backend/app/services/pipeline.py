@@ -225,17 +225,12 @@ async def trigger(
         logger.warning("pipeline: get_phenology_stages failed for %s — empty table: %s", species, exc)
         stage_table = {}
 
-    # GDD with real season start from AgriCrop — uses crop-specific base_temp/upper_cutoff
+    # GDD with resolved season start (field-op reality > AgriCrop plan > default)
     gdd = None
     try:
-        from datetime import date
-        from app.services.context_client import get_agri_crop as fetch_agri_crop
+        from app.services.context_client import resolve_season_start
 
-        agri_crop = await fetch_agri_crop(effective_parcel, tenant_id)
-        if agri_crop and agri_crop.get("plantingDate"):
-            season_start = agri_crop["plantingDate"]
-        else:
-            season_start = date(date.today().year, 3, 1).isoformat()
+        season_start = await resolve_season_start(effective_parcel, tenant_id)
 
         gdd_base_temp = stage_table.base_temp if stage_table else 10.0
         gdd_upper_cutoff = stage_table.upper_cutoff if stage_table else None
@@ -1353,7 +1348,8 @@ async def compute_assessment(
     parcel_short = parcel_id.split(":")[-1] if parcel_id.startswith("urn:") else parcel_id
     species = crop["species"]
     variety_name = crop.get("variety")
-    season_start = crop.get("plantingDate") or date(date.today().year, 3, 1).isoformat()
+    from app.services.context_client import resolve_season_start
+    season_start = await resolve_season_start(parcel_short, tenant_id)
 
     # Seasonal GDD (authoritative stage source) — uses crop-specific base_temp/upper_cutoff
     thresholds = await context_client.get_phenology_stages(species)

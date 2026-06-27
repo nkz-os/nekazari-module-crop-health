@@ -138,7 +138,7 @@ const CropStatusSnapshot: React.FC<CropStatusSnapshotProps> = ({ parcelId, parce
       try {
         const [aRes, cRes] = await Promise.allSettled([
           fetch(`/api/crop-health/assessments/latest?parcelId=${parcelId}`).then(r => r.ok ? r.json() : null),
-          fetch(`/api/bioorchestrator/api/graph/agriculture/crop-context?parcel_id=${parcelId}`).then(r => r.ok ? r.json() : null),
+          fetch(`https://nkz.robotika.cloud/api/graph/agriculture/crop-context?parcel_id=${parcelId}`).then(r => r.ok ? r.json() : null),
         ]);
 
         const a = aRes.status === 'fulfilled' ? aRes.value?.assessments?.[0] : null;

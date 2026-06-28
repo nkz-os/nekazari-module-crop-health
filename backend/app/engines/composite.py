@@ -74,7 +74,11 @@ def evaluate_composite_stress(
     # Water stress: combine CWSI + MDS + water balance
     if cwsi is not None:
         # Satellite CWSI gets 0.7× weight vs IoT (1.0×) — lower confidence
-        cwsi_weight = 0.7 if fidelity == "modeled_opendata" else 1.0
+        try:
+            from nkz_platform_sdk.constants import SensorFidelity
+            cwsi_weight = 0.7 if fidelity == SensorFidelity.MODELED_OPENDATA else 1.0
+        except ImportError:
+            cwsi_weight = 0.7 if fidelity == "modeled_opendata" else 1.0
         water_score += cwsi * 100 * cwsi_weight  # 0-100 scale
         count += 1
     if mds_ratio is not None:

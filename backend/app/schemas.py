@@ -459,13 +459,22 @@ class CropHealthAssessment(BaseModel):
         if self.thermal:
             entity["thermalCondition"] = {"type": "Property", "value": self.thermal.condition}
             entity["thermalSeverity"] = {"type": "Property", "value": self.thermal.severity}
+            entity["heatStressHours"] = {"type": "Property", "value": self.thermal.heat_stress_hours, "unitCode": "HUR"}
+            entity["frostHours"] = {"type": "Property", "value": self.thermal.frost_hours, "unitCode": "HUR"}
+            entity["thermalDataFidelity"] = {"type": "Property", "value": self.thermal.data_fidelity}
         if self.vigor:
             entity["vigorIndex"] = {"type": "Property", "value": round(self.vigor.vigor_index, 3)}
             entity["vigorCondition"] = {"type": "Property", "value": self.vigor.condition}
             entity["vigorIndexUsed"] = {"type": "Property", "value": self.vigor.index_used}
+            entity["growthAnomaly"] = {"type": "Property", "value": round(self.vigor.growth_anomaly, 3)}
+            entity["vigorDataFidelity"] = {"type": "Property", "value": self.vigor.data_fidelity}
         if self.composite_stress:
             entity["compositeStressIndex"] = {"type": "Property", "value": self.composite_stress.composite_index}
             entity["dominantStressor"] = {"type": "Property", "value": self.composite_stress.dominant_stressor}
+            entity["compositeWaterContribution"] = {"type": "Property", "value": round(self.composite_stress.water_contribution, 2)}
+            entity["compositeThermalContribution"] = {"type": "Property", "value": round(self.composite_stress.thermal_contribution, 2)}
+            entity["compositeVigorContribution"] = {"type": "Property", "value": round(self.composite_stress.vigor_contribution, 2)}
+            entity["compositeStageKy"] = {"type": "Property", "value": self.composite_stress.stage_ky}
         if self.vhi:
             if self.vhi.vhi is not None:
                 entity["vhi"] = {"type": "Property", "value": self.vhi.vhi}
@@ -493,15 +502,18 @@ class CropHealthAssessment(BaseModel):
         if self.compaction_risk:
             entity["compactionRiskLevel"] = {"type": "Property", "value": self.compaction_risk.risk_level}
             entity["compactionRiskScore"] = {"type": "Property", "value": self.compaction_risk.risk_score}
+            entity["compactionSusceptibilityScore"] = {"type": "Property", "value": self.compaction_risk.susceptibility_score}
             entity["compactionRiskFactors"] = {"type": "Property", "value": self.compaction_risk.contributing_factors}
             entity["compactionMoistureWarning"] = {"type": "Property", "value": self.compaction_risk.moisture_warning}
             entity["compactionVigorConcern"] = {"type": "Property", "value": self.compaction_risk.vigor_concern}
             entity["compactionRequiresVerification"] = {"type": "Property", "value": self.compaction_risk.requires_field_verification}
+            entity["compactionAdvisory"] = {"type": "Property", "value": self.compaction_risk.advisory}
         if self.sar:
             entity["sarIsFlooded"] = {"type": "Property", "value": self.sar.is_flooded}
             entity["sarFloodStage"] = {"type": "Property", "value": self.sar.flood_stage}
             entity["sarSurfaceMoisture"] = {"type": "Property", "value": self.sar.surface_moisture_index}
             entity["sarWaterloggingRisk"] = {"type": "Property", "value": self.sar.waterlogging_risk}
+            entity["sarDataFidelity"] = {"type": "Property", "value": self.sar.data_fidelity}
         entity["dataFidelity"] = {"type": "Property", "value": self.data_fidelity}
         if self.crop_species is not None:
             entity["cropSpecies"] = {"type": "Property", "value": self.crop_species}
@@ -546,8 +558,10 @@ class CropHealthAssessment(BaseModel):
             entity["soilAWCmm"] = {"type": "Property", "value": swb.awc_mm, "unitCode": "MMT"}
             entity["soilWaterRatio"] = {"type": "Property", "value": round(swb.sw_ratio, 3)}
             entity["soilWaterConfidence"] = {"type": "Property", "value": swb.soil_moisture_confidence}
+            entity["soilStressLevel"] = {"type": "Property", "value": swb.stress_level}
             # FAO-56 extensions
             entity["soilRAWmm"] = {"type": "Property", "value": swb.raw_mm, "unitCode": "MMT"}
+            entity["depletionFractionP"] = {"type": "Property", "value": swb.depletion_fraction_p}
             entity["stressCoefficientKs"] = {"type": "Property", "value": round(swb.stress_coefficient_ks, 3)}
             entity["actualETmm"] = {"type": "Property", "value": swb.actual_et_mm, "unitCode": "MMT"}
             entity["deepPercolationMm"] = {"type": "Property", "value": swb.deep_percolation_mm, "unitCode": "MMT"}
@@ -555,6 +569,8 @@ class CropHealthAssessment(BaseModel):
             wlr = self.waterlogging_risk
             entity["waterloggingRiskLevel"] = {"type": "Property", "value": wlr.risk_level}
             entity["waterloggingSaturationHours"] = {"type": "Property", "value": wlr.saturation_hours, "unitCode": "HUR"}
+            entity["waterloggingExcessMm"] = {"type": "Property", "value": wlr.excess_mm, "unitCode": "MMT"}
+            entity["waterloggingDrainageRateMmH"] = {"type": "Property", "value": wlr.drainage_rate_mm_h, "unitCode": "MMH"}
         if self.soil_ph is not None:
             entity["soilPh"] = {"type": "Property", "value": self.soil_ph}
         if self.soil_ec is not None:

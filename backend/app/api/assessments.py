@@ -4,8 +4,13 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Query, Request
 
+from app.api.assessment_mapper import (
+    dedupe_latest_per_parcel,
+    map_entity_to_assessment,
+    prop_value,
+)
 from app.config import get_settings
 from nkz_platform_sdk.orion import OrionClient
 
@@ -14,73 +19,90 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
-@router.get("/assessments/latest")
-async def latest_assessments(request: Request):
-    """Return the latest CropHealthAssessment per parcel.
-
-    Queries Orion-LD for CropHealthAssessment entities ordered by
-    assessedAt descending, grouped by parcel.
-    """
-    tenant_id = getattr(request.state, "tenant_id", "")
+async def _fetch_assessment_entities(tenant_id: str, parcel_id: str = "", limit: int = 100) -> list[dict]:
     settings = get_settings()
     client = OrionClient(tenant_id, base_url=settings.orion_ld_url, context_url=settings.orion_ld_context)
     try:
-        entities = await client.query_entities(type="CropHealthAssessment", limit=10, options="keyValues")
+        q = None
+        if parcel_id:
+            q = (
+                f'(hasAgriParcel=="urn:ngsi-ld:AgriParcel:{parcel_id}"'
+                f'|refAgriParcel=="urn:ngsi-ld:AgriParcel:{parcel_id}")'
+            )
+        return await client.query_entities(
+            type="CropHealthAssessment",
+            q=q,
+            limit=limit,
+            options="keyValues",
+        )
     except Exception as e:
-        logger.warning("latest_assessments Orion query failed: %s", e)
-        entities = []
+        logger.warning("Orion CropHealthAssessment query failed: %s", e)
+        return []
     finally:
         await client.close()
 
-    assessments = []
-    for e in entities:
-        parcel = ""
-        if isinstance(e.get("hasAgriParcel"), dict):
-            parcel = e["hasAgriParcel"].get("object", "").replace("urn:ngsi-ld:AgriParcel:", "")
-        assessments.append({
-            "id": e.get("id", ""),
-            "parcelId": parcel,
-            "cwsiValue": e.get("cwsiValue", {}).get("value") if isinstance(e.get("cwsiValue"), dict) else e.get("cwsiValue"),
-            "mdsValue": e.get("mdsValue", {}).get("value") if isinstance(e.get("mdsValue"), dict) else e.get("mdsValue"),
-            "mdsSeverity": e.get("mdsSeverity", {}).get("value") if isinstance(e.get("mdsSeverity"), dict) else e.get("mdsSeverity"),
-            "waterBalanceDeficit": e.get("waterBalanceDeficit", {}).get("value") if isinstance(e.get("waterBalanceDeficit"), dict) else e.get("waterBalanceDeficit"),
-            "thermalCondition": e.get("thermalCondition", {}).get("value") if isinstance(e.get("thermalCondition"), dict) else e.get("thermalCondition"),
-            "thermalSeverity": e.get("thermalSeverity", {}).get("value") if isinstance(e.get("thermalSeverity"), dict) else e.get("thermalSeverity"),
-            "vigorIndex": e.get("vigorIndex", {}).get("value") if isinstance(e.get("vigorIndex"), dict) else e.get("vigorIndex"),
-            "vigorCondition": e.get("vigorCondition", {}).get("value") if isinstance(e.get("vigorCondition"), dict) else e.get("vigorCondition"),
-            "compositeStressIndex": e.get("compositeStressIndex", {}).get("value") if isinstance(e.get("compositeStressIndex"), dict) else e.get("compositeStressIndex"),
-            "dominantStressor": e.get("dominantStressor", {}).get("value") if isinstance(e.get("dominantStressor"), dict) else e.get("dominantStressor"),
-            "yieldUtilizationPct": e.get("yieldUtilizationPct", {}).get("value") if isinstance(e.get("yieldUtilizationPct"), dict) else e.get("yieldUtilizationPct"),
-            "yieldGapConfidence": e.get("yieldGapConfidence", {}).get("value") if isinstance(e.get("yieldGapConfidence"), dict) else e.get("yieldGapConfidence"),
-            "wueStatus": e.get("wueStatus", {}).get("value") if isinstance(e.get("wueStatus"), dict) else e.get("wueStatus"),
-            "wueKgM3": e.get("wueKgM3", {}).get("value") if isinstance(e.get("wueKgM3"), dict) else e.get("wueKgM3"),
-            "wueBiomassKg": e.get("wueBiomassKg", {}).get("value") if isinstance(e.get("wueBiomassKg"), dict) else e.get("wueBiomassKg"),
-            "wueWaterAppliedMm": e.get("wueWaterAppliedMm", {}).get("value") if isinstance(e.get("wueWaterAppliedMm"), dict) else e.get("wueWaterAppliedMm"),
-            "wueTrend": e.get("wueTrend", {}).get("value") if isinstance(e.get("wueTrend"), dict) else e.get("wueTrend"),
-            "overallSeverity": e.get("overallSeverity", {}).get("value") if isinstance(e.get("overallSeverity"), dict) else e.get("overallSeverity", "LOW"),
-            "recommendedAction": e.get("recommendedAction", {}).get("value") if isinstance(e.get("recommendedAction"), dict) else e.get("recommendedAction", "NO_ACTION"),
-            "assessedAt": e.get("assessedAt", {}).get("value") if isinstance(e.get("assessedAt"), dict) else e.get("assessedAt", ""),
-            "phenologySource": e.get("phenologySource", {}).get("value") if isinstance(e.get("phenologySource"), dict) else e.get("phenologySource", "default"),
-            "dataFidelity": e.get("dataFidelity", {}).get("value") if isinstance(e.get("dataFidelity"), dict) else e.get("dataFidelity"),
-            "cropName": e.get("cropName") if not isinstance(e.get("cropName"), dict) else e.get("cropName", {}).get("value"),
-            "phenologyStage": e.get("phenologyStage") if not isinstance(e.get("phenologyStage"), dict) else e.get("phenologyStage", {}).get("value"),
-            "soilProperties": {
-                "fieldCapacity": e.get("soilFieldCapacity", {}).get("value") if isinstance(e.get("soilFieldCapacity"), dict) else e.get("soilFieldCapacity"),
-                "wiltingPoint": e.get("soilWiltingPoint", {}).get("value") if isinstance(e.get("soilWiltingPoint"), dict) else e.get("soilWiltingPoint"),
-                "ksatMmH": e.get("soilKsatMmH", {}).get("value") if isinstance(e.get("soilKsatMmH"), dict) else e.get("soilKsatMmH"),
-                "scsHydrologicGroup": e.get("soilScsGroup", {}).get("value") if isinstance(e.get("soilScsGroup"), dict) else e.get("soilScsGroup"),
-                "usdaTextureClass": e.get("soilTexture", {}).get("value") if isinstance(e.get("soilTexture"), dict) else e.get("soilTexture"),
-                "source": e.get("soilDataSource", {}).get("value") if isinstance(e.get("soilDataSource"), dict) else e.get("soilDataSource"),
-                "hasData": True,
-            } if (e.get("soilTexture") or e.get("soilFieldCapacity")) else None,
-            "soilWaterMm": e.get("soilWaterMm", {}).get("value") if isinstance(e.get("soilWaterMm"), dict) else e.get("soilWaterMm"),
-            "soilAWCmm": e.get("soilAWCmm", {}).get("value") if isinstance(e.get("soilAWCmm"), dict) else e.get("soilAWCmm"),
-            "soilWaterRatio": e.get("soilWaterRatio", {}).get("value") if isinstance(e.get("soilWaterRatio"), dict) else e.get("soilWaterRatio"),
-            "waterloggingRiskLevel": e.get("waterloggingRiskLevel", {}).get("value") if isinstance(e.get("waterloggingRiskLevel"), dict) else e.get("waterloggingRiskLevel"),
-            "waterloggingSaturationHours": e.get("waterloggingSaturationHours", {}).get("value") if isinstance(e.get("waterloggingSaturationHours"), dict) else e.get("waterloggingSaturationHours"),
-        })
 
+def _linear_regression_stats(pairs: list[dict]) -> dict:
+    valid = [
+        (float(p["ndvi"]), float(p["cwsi"]))
+        for p in pairs
+        if p.get("ndvi") is not None and p.get("cwsi") is not None
+    ]
+    n = len(valid)
+    if n < 3:
+        return {"n": n, "r2": None, "slope": None, "intercept": None}
+
+    xs = [x for x, _ in valid]
+    ys = [y for _, y in valid]
+    mean_x = sum(xs) / n
+    mean_y = sum(ys) / n
+    ss_xx = sum((x - mean_x) ** 2 for x in xs)
+    if ss_xx == 0:
+        return {"n": n, "r2": None, "slope": None, "intercept": None}
+
+    ss_xy = sum((x - mean_x) * (y - mean_y) for x, y in valid)
+    slope = ss_xy / ss_xx
+    intercept = mean_y - slope * mean_x
+
+    ss_tot = sum((y - mean_y) ** 2 for y in ys)
+    ss_res = sum((y - (slope * x + intercept)) ** 2 for x, y in valid)
+    r2 = 1 - (ss_res / ss_tot) if ss_tot else None
+    if r2 is not None and r2 < 0:
+        r2 = 0.0
+
+    return {
+        "n": n,
+        "r2": round(r2, 3) if r2 is not None else None,
+        "slope": round(slope, 4),
+        "intercept": round(intercept, 4),
+    }
+
+
+@router.get("/assessments/latest")
+async def latest_assessments(
+    request: Request,
+    parcelId: str = Query("", alias="parcelId"),
+):
+    """Return the latest CropHealthAssessment per parcel, or for one parcel if filtered."""
+    tenant_id = getattr(request.state, "tenant_id", "")
+    entities = await _fetch_assessment_entities(tenant_id, parcel_id=parcelId, limit=100 if parcelId else 100)
+
+    if parcelId:
+        if not entities:
+            return {"assessments": []}
+        latest = max(entities, key=lambda e: prop_value(e, "assessedAt", ""))
+        return {"assessments": [map_entity_to_assessment(latest)]}
+
+    latest_entities = dedupe_latest_per_parcel(entities)
+    assessments = [map_entity_to_assessment(e) for e in latest_entities]
+    assessments.sort(key=lambda a: a.get("assessedAt", ""), reverse=True)
     return {"assessments": assessments}
+
+
+@router.get("/assessments/all")
+async def all_assessments(request: Request):
+    """Alias for latest assessments without parcel filter (map-layer compat)."""
+    return await latest_assessments(request, parcelId="")
 
 
 @router.get("/assessments/history")
@@ -197,7 +219,8 @@ async def ndvi_cwsi_correlation(
     except Exception as e:
         logger.error("Correlation query failed: %s", e)
 
-    return {"pairs": pairs}
+    stats = _linear_regression_stats(pairs)
+    return {"pairs": pairs, "stats": stats}
 
 
 @router.get("/assessments/export")

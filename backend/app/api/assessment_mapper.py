@@ -161,7 +161,6 @@ def map_entity_to_assessment(entity: dict[str, Any]) -> dict[str, Any]:
         "cwsiTempSource": prop_value(entity, "cwsiTempSource"),
         "cwsiLstDate": prop_value(entity, "cwsiLstDate"),
         "temperatureMeta": {
-            "kind": prop_value(entity, "lstKind", "land_surface_temperature"),
             "source": prop_value(entity, "cwsiTempSource", "none"),
             "fidelity": prop_value(entity, "cwsiDataFidelity", "unavailable"),
         },

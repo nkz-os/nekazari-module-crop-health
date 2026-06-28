@@ -27,7 +27,7 @@ spec:
     spec:
       containers:
         - name: backend
-          image: ghcr.io/nkz-os/nekazari-module-crop-health@sha256:b6d9205ac47e022c4ffc008fed82b93b49aeefd1d6981c17cee55992179084ee  # main 1b9ac8b: assessment API parity mapper
+          image: ghcr.io/nkz-os/nekazari-module-crop-health@sha256:9b849aa868ff53888c7a9e1faf56bc1ceeab130dee4914920703d54f26bf0438  # v1.2.3: add satellite LST source to VHI temperature hierarchy
           imagePullPolicy: Always
           ports:
             - name: http

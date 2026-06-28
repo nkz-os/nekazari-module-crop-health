@@ -1,93 +1,74 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect } from 'react';
+import { useViewer } from '@nekazari/sdk';
+import { cropHealthFetch } from '../api/cropHealthApi';
 
 interface ParcelAssessment {
-    parcelId: string;
-    cwsiValue?: number;
-    overallSeverity: string;
+  parcelId: string;
+  cwsiValue?: number;
+  overallSeverity: string;
 }
 
 const CWSI_COLORS: Record<string, { fill: string; alpha: number }> = {
-    LOW: { fill: '#16a34a', alpha: 0.3 },
-    MEDIUM: { fill: '#d97706', alpha: 0.4 },
-    HIGH: { fill: '#ea580c', alpha: 0.5 },
-    CRITICAL: { fill: '#dc2626', alpha: 0.55 },
+  LOW: { fill: '#16a34a', alpha: 0.3 },
+  MEDIUM: { fill: '#d97706', alpha: 0.4 },
+  HIGH: { fill: '#ea580c', alpha: 0.5 },
+  CRITICAL: { fill: '#dc2626', alpha: 0.55 },
 };
 
 const CropHealthLayer: React.FC = () => {
-    const viewerRef = useRef<any>(null);
+  const { cesiumViewer } = useViewer();
 
-    useEffect(() => {
-        const sdk = (window as any).__NKZ_SDK__;
-        if (!sdk?.useViewer) return;
+  useEffect(() => {
+    if (!cesiumViewer?.entities) return;
 
-        // Try to get viewer instance
-        try {
-            viewerRef.current = sdk.useViewer();
-        } catch {
-            // Not in a viewer context — skip rendering
-            return;
+    const fetchAndRender = async () => {
+      const data = await cropHealthFetch<{ assessments: ParcelAssessment[] }>('/assessments/all');
+      const assessments = data?.assessments ?? [];
+      if (!assessments.length) return;
+
+      cesiumViewer.entities.values.forEach((e: { id?: string }) => {
+        if (e.id?.startsWith('crop-health-')) {
+          cesiumViewer.entities.remove(e);
         }
+      });
 
-        const fetchAndRender = async () => {
-            try {
-                const resp = await fetch('/api/crop-health/assessments/all');
-                if (!resp.ok) return;
-                const { assessments } = await resp.json();
-                if (!assessments?.length) return;
+      for (const a of assessments) {
+        if (a.cwsiValue == null) continue;
 
-                const viewer = viewerRef.current;
-                if (!viewer?.entities) return;
+        const parcelEntity = cesiumViewer.entities.values.find(
+          (e: { id?: string; name?: string }) =>
+            e.id?.includes(a.parcelId) || e.name?.includes(a.parcelId),
+        );
+        if (!parcelEntity?.polygon) continue;
 
-                // Remove existing crop-health entities
-                viewer.entities.values.forEach((e: any) => {
-                    if (e.id?.startsWith('crop-health-')) {
-                        viewer.entities.remove(e);
-                    }
-                });
+        const colors = CWSI_COLORS[a.overallSeverity] || CWSI_COLORS.LOW;
+        const Cesium = (window as { Cesium?: typeof import('cesium') }).Cesium;
+        if (!Cesium) continue;
 
-                // For each parcel with assessment data, try to get its entity from Cesium
-                for (const a of assessments as ParcelAssessment[]) {
-                    if (a.cwsiValue == null) continue;
+        parcelEntity.polygon.material = Cesium.Color.fromCssColorString(colors.fill)?.withAlpha(colors.alpha);
+        parcelEntity.polygon.outline = true;
+        parcelEntity.polygon.outlineColor = Cesium.Color.fromCssColorString(colors.fill);
 
-                    // Find parcel entity in viewer
-                    const parcelEntity = viewer.entities.values.find(
-                        (e: any) => e.id?.includes(a.parcelId) || e.name?.includes(a.parcelId)
-                    );
-                    if (!parcelEntity?.polygon) continue;
+        if (!parcelEntity.label) {
+          parcelEntity.label = {
+            text: `${a.cwsiValue.toFixed(2)}`,
+            font: '12px sans-serif',
+            fillColor: Cesium.Color.WHITE,
+            outlineColor: Cesium.Color.BLACK,
+            outlineWidth: 2,
+            style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+            verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+          };
+        }
+      }
+    };
 
-                    const colors = CWSI_COLORS[a.overallSeverity] || CWSI_COLORS.LOW;
-                    parcelEntity.polygon.material = (window as any).Cesium?.Color.fromCssColorString(
-                        colors.fill
-                    )?.withAlpha(colors.alpha);
-                    parcelEntity.polygon.outline = true;
-                    parcelEntity.polygon.outlineColor = (window as any).Cesium?.Color.fromCssColorString(
-                        colors.fill
-                    );
+    fetchAndRender();
+    const interval = setInterval(fetchAndRender, 5 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, [cesiumViewer]);
 
-                    // Add label
-                    if (!parcelEntity.label) {
-                        parcelEntity.label = {
-                            text: `${a.cwsiValue.toFixed(2)}`,
-                            font: '12px sans-serif',
-                            fillColor: (window as any).Cesium?.Color.WHITE,
-                            outlineColor: (window as any).Cesium?.Color.BLACK,
-                            outlineWidth: 2,
-                            style: (window as any).Cesium?.LabelStyle.FILL_AND_OUTLINE,
-                            verticalOrigin: (window as any).Cesium?.VerticalOrigin.BOTTOM,
-                        };
-                    }
-                }
-            } catch {
-                // Silently fail — layer is non-critical
-            }
-        };
-
-        fetchAndRender();
-        const interval = setInterval(fetchAndRender, 5 * 60 * 1000);
-        return () => clearInterval(interval);
-    }, []);
-
-    return null; // map-layer renders into Cesium, no DOM output
+  return null;
 };
 
 export default CropHealthLayer;

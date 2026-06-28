@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useTranslation } from '@nekazari/sdk';
+import { CROP_CONTEXT_URL, cropHealthFetch } from '../api/cropHealthApi';
 import { SeverityBadge } from './shared/SeverityBadge';
 
 interface CropContext {
@@ -137,8 +138,8 @@ const CropStatusSnapshot: React.FC<CropStatusSnapshotProps> = ({ parcelId, parce
     const fetchData = async () => {
       try {
         const [aRes, cRes] = await Promise.allSettled([
-          fetch(`/api/crop-health/assessments/latest?parcelId=${parcelId}`).then(r => r.ok ? r.json() : null),
-          fetch(`https://nkz.robotika.cloud/api/graph/agriculture/crop-context?parcel_id=${parcelId}`).then(r => r.ok ? r.json() : null),
+          cropHealthFetch<{ assessments: Assessment[] }>(`/assessments/latest?parcelId=${parcelId}`),
+          fetch(`${CROP_CONTEXT_URL}?parcel_id=${parcelId}`).then(r => r.ok ? r.json() : null),
         ]);
 
         const a = aRes.status === 'fulfilled' ? aRes.value?.assessments?.[0] : null;

@@ -607,17 +607,27 @@ async def _run_engines(
             temp_actual = soil_temp_val
             temp_source = "iot_soil"
             fidelity = "onsite_calibrated"
-        elif weather and weather.temp_air is not None:
-            temp_actual = weather.temp_air
-            temp_source = "weather_proxy"
-            fidelity = "regional_proxy"
         else:
-            tirs_client = LandsatTirsClient()
-            lst_val = await tirs_client.get_latest_lst(0.0, 0.0)
+            lst_val = await _fetch_parcel_lst(effective_parcel, tenant_id)
             if lst_val is not None:
                 temp_actual = lst_val
-                temp_source = "landsat_tirs"
+                temp_source = "satellite_lst"
                 fidelity = "modeled_opendata"
+            elif weather and weather.temp_air is not None:
+                temp_actual = weather.temp_air
+                temp_source = "weather_proxy"
+                fidelity = "regional_proxy"
+            else:
+                coords = await context_client._resolve_parcel_coords(
+                    effective_parcel, tenant_id,
+                )
+                if coords:
+                    tirs_client = LandsatTirsClient()
+                    lst_direct = await tirs_client.get_latest_lst(coords[0], coords[1])
+                    if lst_direct is not None:
+                        temp_actual = lst_direct
+                        temp_source = "landsat_tirs"
+                        fidelity = "modeled_opendata"
 
         temp_min_hist = 10.0
         temp_max_hist = 45.0
@@ -1691,6 +1701,50 @@ async def _fetch_gdd(
     return None
 
 
+def _extract_eoproduct_scalar(entity: dict, attr: str) -> float | None:
+    """Read a scalar from a keyValues EOProduct attribute (scalar or Property dict)."""
+    raw = entity.get(attr)
+    if raw is None:
+        return None
+    if isinstance(raw, dict):
+        raw = raw.get("value")
+    if raw is None:
+        return None
+    return float(raw)
+
+
+async def _fetch_parcel_lst(parcel_id: str, tenant_id: str) -> float | None:
+    """Fetch latest LST (°C) for a parcel from EOProduct.lst (vegetation-health).
+
+    Canonical contract: one EOProduct per (parcel, sensingDate); LST is the
+    lowercased `lst` Property with unitCode CEL. Newest by sensingDate wins.
+    """
+    try:
+        from app.config import get_settings
+        from nkz_platform_sdk.orion import OrionClient
+        settings = get_settings()
+        client = OrionClient(tenant_id, base_url=settings.orion_ld_url, context_url=settings.orion_ld_context)
+        try:
+            entities = await client.query_entities(
+                type="EOProduct",
+                q=f'hasAgriParcel=="urn:ngsi-ld:AgriParcel:{parcel_id}"|refAgriParcel=="urn:ngsi-ld:AgriParcel:{parcel_id}"',
+                limit=100,
+                options="keyValues",
+            )
+        finally:
+            await client.close()
+        if entities and isinstance(entities, list):
+            with_lst = [e for e in entities if e.get("lst") is not None]
+            if with_lst:
+                latest = max(with_lst, key=lambda e: str(e.get("sensingDate", "")))
+                lst = _extract_eoproduct_scalar(latest, "lst")
+                if lst is not None:
+                    return lst
+    except Exception as exc:
+        logger.warning("_fetch_parcel_lst: failed for parcel %s — returning None: %s", parcel_id, exc)
+    return None
+
+
 async def _fetch_parcel_ndvi(parcel_id: str, tenant_id: str) -> float | None:
     """Fetch latest NDVI mean for a parcel from canonical EOProduct entities.
 
@@ -1718,11 +1772,9 @@ async def _fetch_parcel_ndvi(parcel_id: str, tenant_id: str) -> float | None:
             with_ndvi = [e for e in entities if e.get("ndvi") is not None]
             if with_ndvi:
                 latest = max(with_ndvi, key=lambda e: str(e.get("sensingDate", "")))
-                ndvi = latest.get("ndvi")
-                if isinstance(ndvi, dict):  # non-keyValues fallback
-                    ndvi = ndvi.get("value")
+                ndvi = _extract_eoproduct_scalar(latest, "ndvi")
                 if ndvi is not None:
-                    return float(ndvi)
+                    return ndvi
     except Exception as exc:
         logger.warning("_fetch_parcel_ndvi: failed for parcel %s — returning None: %s", parcel_id, exc)
     return None

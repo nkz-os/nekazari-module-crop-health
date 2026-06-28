@@ -21,6 +21,7 @@ from cachetools import TTLCache
 logger = logging.getLogger(__name__)
 
 CDSE_STAC_URL = "https://catalogue.dataspace.copernicus.eu/stac"
+LST_COLLECTION = "landsat-c2l2-st"
 
 # Cache: (lat_bin, lon_bin) → bool (scene_available), TTL 48h
 _scene_cache: TTLCache[tuple[float, float], bool] = TTLCache(
@@ -67,7 +68,7 @@ class LandsatTirsClient:
                 resp = await client.post(
                     f"{CDSE_STAC_URL}/search",
                     json={
-                        "collections": ["landsat-c2l2-sr"],
+                        "collections": [LST_COLLECTION],
                         "intersects": {
                             "type": "Point",
                             "coordinates": [longitude, latitude],

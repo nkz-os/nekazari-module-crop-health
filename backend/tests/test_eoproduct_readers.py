@@ -43,6 +43,35 @@ async def test_fetch_parcel_ndvi_reads_latest_eoproduct():
     assert "productType" not in (kwargs.get("q") or "")
 
 
+def _eoproduct_with_lst(sensing_date: str, lst_c: float) -> dict:
+    return {
+        "id": f"urn:ngsi-ld:EOProduct:montiko:da36ccd2e5:{sensing_date}",
+        "type": "EOProduct",
+        "hasAgriParcel": "urn:ngsi-ld:AgriParcel:da36ccd2-85d2-4c76-b552-c5c835a987c1",
+        "sensingDate": sensing_date,
+        "lst": lst_c,
+    }
+
+
+@pytest.mark.asyncio
+async def test_fetch_parcel_lst_reads_latest_eoproduct():
+    from app.services import pipeline
+
+    client = AsyncMock()
+    client.query_entities = AsyncMock(return_value=[
+        _eoproduct_with_lst("2026-06-10", 28.5),
+        _eoproduct_with_lst("2026-06-18", 31.2),
+    ])
+    client.close = AsyncMock()
+
+    with patch("nkz_platform_sdk.orion.OrionClient", return_value=client):
+        val = await pipeline._fetch_parcel_lst(
+            "da36ccd2-85d2-4c76-b552-c5c835a987c1", "montiko"
+        )
+
+    assert val == 31.2
+
+
 @pytest.mark.asyncio
 async def test_ndvi_climatology_reads_eoproduct_history():
     """VHI climatology must read EOProduct history (sensingDate + ndvi), not VegetationIndex."""

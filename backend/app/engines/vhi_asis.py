@@ -19,7 +19,7 @@ class VHIResult:
     tci: float | None = None          # 0-100
     vhi: float | None = None          # 0-100
     asi_pct: float | None = None      # % area VHI < 35
-    tci_source: str = "none"          # iot_canopy | iot_soil | weather_proxy | landsat_tirs
+    tci_source: str = "none"  # iot_canopy | iot_soil | satellite_lst | weather_proxy | landsat_tirs
     data_fidelity: str = "none"       # onsite_calibrated | onsite_uncalibrated | regional_proxy | modeled_opendata
 
 

@@ -703,27 +703,34 @@ async def _run_engines(
     # ── 2.6 Compound engines (after individual engines have results) ────
     stage_name = "vegetative"  # safe default for Redis event publishing
     
-    # SAR Engine
+    # SAR Engine — precedence: satellite SMI > legacy heuristic
     try:
         from app.engines.sar_moisture import evaluate_sar_moisture
         from app.schemas import SARResult as SARResultSchema
-        
-        sar_backscatter = await _fetch_parcel_sar(effective_parcel, tenant_id)
-        if sar_backscatter is not None:
-            vv, vh = sar_backscatter
-            sar_res = evaluate_sar_moisture(
-                species_eppo=species,
-                backscatter_vv=vv,
-                backscatter_vh=vh,
-                fidelity="modeled_opendata",
-            )
+
+        smi_val = await _fetch_parcel_smi(effective_parcel, tenant_id)
+        if smi_val is not None:
             assessment.sar = SARResultSchema(
-                is_flooded=sar_res.is_flooded,
-                flood_stage=sar_res.flood_stage,
-                surface_moisture_index=sar_res.surface_moisture_index,
-                waterlogging_risk=sar_res.waterlogging_risk,
-                data_fidelity=sar_res.data_fidelity,
+                surface_moisture_index=round(smi_val, 4),
+                data_fidelity="satellite_derived",
             )
+        else:
+            sar_backscatter = await _fetch_parcel_sar(effective_parcel, tenant_id)
+            if sar_backscatter is not None:
+                vv, vh = sar_backscatter
+                sar_res = evaluate_sar_moisture(
+                    species_eppo=species,
+                    backscatter_vv=vv,
+                    backscatter_vh=vh,
+                    fidelity="modeled_opendata",
+                )
+                assessment.sar = SARResultSchema(
+                    is_flooded=sar_res.is_flooded,
+                    flood_stage=sar_res.flood_stage,
+                    surface_moisture_index=sar_res.surface_moisture_index,
+                    waterlogging_risk=sar_res.waterlogging_risk,
+                    data_fidelity=sar_res.data_fidelity,
+                )
     except Exception as e:
         logger.error("SAR engine failed: %s", e)
 
@@ -1804,6 +1811,34 @@ async def _fetch_parcel_ndvi(parcel_id: str, tenant_id: str) -> float | None:
                     return ndvi
     except Exception as exc:
         logger.warning("_fetch_parcel_ndvi: failed for parcel %s — returning None: %s", parcel_id, exc)
+    return None
+
+
+async def _fetch_parcel_smi(parcel_id: str, tenant_id: str) -> float | None:
+    """Fetch latest SAR SMI (0–1) for a parcel from EOProduct.sarMoisture."""
+    try:
+        from app.config import get_settings
+        from nkz_platform_sdk.orion import OrionClient
+        settings = get_settings()
+        client = OrionClient(tenant_id, base_url=settings.orion_ld_url, context_url=settings.orion_ld_context)
+        try:
+            entities = await client.query_entities(
+                type="EOProduct",
+                q=f'hasAgriParcel=="urn:ngsi-ld:AgriParcel:{parcel_id}"|refAgriParcel=="urn:ngsi-ld:AgriParcel:{parcel_id}"',
+                limit=100,
+                options="keyValues",
+            )
+        finally:
+            await client.close()
+        if entities and isinstance(entities, list):
+            with_smi = [e for e in entities if e.get("sarMoisture") is not None]
+            if with_smi:
+                latest = max(with_smi, key=lambda e: str(e.get("sensingDate", "")))
+                smi = _extract_eoproduct_scalar(latest, "sarMoisture")
+                if smi is not None:
+                    return smi
+    except Exception as exc:
+        logger.warning("_fetch_parcel_smi: failed for %s: %s", parcel_id, exc)
     return None
 
 

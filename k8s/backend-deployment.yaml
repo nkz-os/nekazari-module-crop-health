@@ -27,7 +27,7 @@ spec:
     spec:
       containers:
         - name: backend
-          image: ghcr.io/nkz-os/nekazari-module-crop-health@sha256:3d51c448df619c1aff12e81247826f765b304046c6c4c5945f9336cab47d03ac  # v1.2.4: satellite LST CWSI proxy
+          image: ghcr.io/nkz-os/nekazari-module-crop-health@sha256:2109ea49096d3bc3acd2e303b32f40119ab9aadfb475ceb7aee5a50a6126d8b0  # v1.2.5: satellite SMI source
           imagePullPolicy: Always
           ports:
             - name: http

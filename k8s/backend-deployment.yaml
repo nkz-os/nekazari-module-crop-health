@@ -27,7 +27,7 @@ spec:
     spec:
       containers:
         - name: backend
-          image: ghcr.io/nkz-os/nekazari-module-crop-health@sha256:084376078031bed8f8645a99cad9d3e8245ce022b960409d8629f12df02b1e56  # main 66608a4: zonal synthesis + no asyncpg + test fixes
+          image: ghcr.io/nkz-os/nekazari-module-crop-health@sha256:b6d9205ac47e022c4ffc008fed82b93b49aeefd1d6981c17cee55992179084ee  # main 1b9ac8b: assessment API parity mapper
           imagePullPolicy: Always
           ports:
             - name: http

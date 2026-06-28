@@ -61,13 +61,16 @@ def cwsi(
     temp_air: float,
     d1: float,
     d2: float,
+    data_fidelity: str = "regional_proxy",
+    temp_source: str = "none",
+    lst_sensing_date: str | None = None,
 ) -> CWSIResult:
     """Crop Water Stress Index.
 
     CWSI = ((Tc - Ta) - D1) / (D2 - D1)
 
     Where:
-        Tc = canopy temperature (sensor IR)
+        Tc = canopy temperature (sensor IR or satellite LST)
         Ta = air temperature (weather)
         D1 = NWSB (non-water-stressed baseline) — species and stage dependent
         D2 = maximum stress baseline — species and stage dependent
@@ -75,10 +78,13 @@ def cwsi(
     Result is clamped to [0.0, 1.0].
 
     Args:
-        temp_canopy: Canopy temperature °C (from IR sensor).
+        temp_canopy: Canopy temperature °C (from IR sensor or satellite LST).
         temp_air: Air temperature °C (from weather data).
         d1: Non-water-stressed baseline (NWSB) in °C.
         d2: Maximum stress baseline in °C.  Must differ from d1.
+        data_fidelity: iot_canopy | satellite_lst | regional_proxy.
+        temp_source: leaf_temperature | satellite_lst | weather_proxy.
+        lst_sensing_date: YYYY-MM-DD of Landsat scene (satellite_lst only).
 
     Returns:
         CWSIResult with CWSI value, VPD, and input parameters.
@@ -103,6 +109,9 @@ def cwsi(
         temp_air=temp_air,
         d1=d1,
         d2=d2,
+        data_fidelity=data_fidelity,
+        temp_source=temp_source,
+        lst_sensing_date=lst_sensing_date,
     )
 
 
@@ -112,13 +121,21 @@ def cwsi_with_weather(
     humidity_pct: float,
     d1: float,
     d2: float,
+    data_fidelity: str = "regional_proxy",
+    temp_source: str = "none",
+    lst_sensing_date: str | None = None,
 ) -> CWSIResult:
     """CWSI with VPD computation from weather data.
 
     Convenience wrapper that also computes VPD.
     """
     vpd = vapor_pressure_deficit(temp_air, humidity_pct)
-    result = cwsi(temp_canopy, temp_air, d1, d2)
+    result = cwsi(
+        temp_canopy, temp_air, d1, d2,
+        data_fidelity=data_fidelity,
+        temp_source=temp_source,
+        lst_sensing_date=lst_sensing_date,
+    )
     # Update VPD in the result
     return CWSIResult(
         cwsi=result.cwsi,
@@ -127,4 +144,7 @@ def cwsi_with_weather(
         temp_air=result.temp_air,
         d1=result.d1,
         d2=result.d2,
+        data_fidelity=result.data_fidelity,
+        temp_source=result.temp_source,
+        lst_sensing_date=result.lst_sensing_date,
     )

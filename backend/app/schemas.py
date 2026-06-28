@@ -145,6 +145,9 @@ class CWSIResult(BaseModel):
     temp_air: float
     d1: float
     d2: float
+    data_fidelity: str = "regional_proxy"  # iot_canopy | satellite_lst | regional_proxy
+    temp_source: str = "none"  # leaf_temperature | satellite_lst | weather_proxy
+    lst_sensing_date: str | None = None  # YYYY-MM-DD of Landsat scene
 
 
 class MDSResult(BaseModel):
@@ -446,6 +449,10 @@ class CropHealthAssessment(BaseModel):
         if self.cwsi:
             entity["cwsiValue"] = {"type": "Property", "value": round(self.cwsi.cwsi, 4)}
             entity["vpdKpa"] = {"type": "Property", "value": round(self.cwsi.vpd_kpa, 4)}
+            entity["cwsiDataFidelity"] = {"type": "Property", "value": self.cwsi.data_fidelity}
+            entity["cwsiTempSource"] = {"type": "Property", "value": self.cwsi.temp_source}
+            if self.cwsi.lst_sensing_date:
+                entity["cwsiLstDate"] = {"type": "Property", "value": self.cwsi.lst_sensing_date}
         if self.mds:
             entity["mdsSeverity"] = {"type": "Property", "value": self.mds.severity.value}
             entity["mdsValue"] = {"type": "Property", "value": round(self.mds.mds_um, 2)}

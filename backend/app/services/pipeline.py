@@ -458,6 +458,24 @@ async def _run_engines(
                 humidity_pct=weather.humidity_pct,
                 d1=phenology.d1,
                 d2=phenology.d2,
+                data_fidelity="onsite_calibrated",
+                temp_source="leaf_temperature",
+            )
+
+    # CWSI from satellite LST (sensorless / degraded path when no IR sensor)
+    if assessment.cwsi is None and weather and phenology.d1 is not None and phenology.d2 is not None:
+        lst_data = await _fetch_parcel_lst_with_date(effective_parcel, tenant_id)
+        if lst_data:
+            lst_val, lst_date = lst_data
+            assessment.cwsi = cwsi_with_weather(
+                temp_canopy=lst_val,
+                temp_air=weather.temp_air,
+                humidity_pct=weather.humidity_pct,
+                d1=phenology.d1,
+                d2=phenology.d2,
+                data_fidelity="modeled_opendata",
+                temp_source="satellite_lst",
+                lst_sensing_date=lst_date if lst_date else None,
             )
 
     # MDS (triggered by trunk diameter dendrómetro)
@@ -1719,6 +1737,14 @@ async def _fetch_parcel_lst(parcel_id: str, tenant_id: str) -> float | None:
     Canonical contract: one EOProduct per (parcel, sensingDate); LST is the
     lowercased `lst` Property with unitCode CEL. Newest by sensingDate wins.
     """
+    result = await _fetch_parcel_lst_with_date(parcel_id, tenant_id)
+    return result[0] if result else None
+
+
+async def _fetch_parcel_lst_with_date(
+    parcel_id: str, tenant_id: str,
+) -> tuple[float, str] | None:
+    """Fetch latest LST (°C) and sensing_date (YYYY-MM-DD) for a parcel."""
     try:
         from app.config import get_settings
         from nkz_platform_sdk.orion import OrionClient
@@ -1738,10 +1764,11 @@ async def _fetch_parcel_lst(parcel_id: str, tenant_id: str) -> float | None:
             if with_lst:
                 latest = max(with_lst, key=lambda e: str(e.get("sensingDate", "")))
                 lst = _extract_eoproduct_scalar(latest, "lst")
+                sensing_date = str(latest.get("sensingDate", ""))
                 if lst is not None:
-                    return lst
+                    return lst, sensing_date
     except Exception as exc:
-        logger.warning("_fetch_parcel_lst: failed for parcel %s — returning None: %s", parcel_id, exc)
+        logger.warning("_fetch_parcel_lst_with_date: failed for parcel %s: %s", parcel_id, exc)
     return None
 
 

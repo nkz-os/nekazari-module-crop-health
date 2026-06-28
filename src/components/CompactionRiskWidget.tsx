@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useTranslation } from '@nekazari/sdk';
+import { cropHealthFetch, navigateTo } from '../api/cropHealthApi';
 
 interface CompactionRiskData {
     riskLevel: string;
@@ -12,6 +13,9 @@ interface CompactionRiskData {
     advisory: string;
     parcelId: string;
     parcelName?: string;
+    level?: string;
+    score?: number;
+    factors?: string[];
 }
 
 const RISK_BADGE: Record<string, string> = {
@@ -69,32 +73,28 @@ const CompactionRiskWidget: React.FC = () => {
     useEffect(() => {
         const fetchRisks = async () => {
             try {
-                const sdk = (window as any).__NKZ_SDK__;
-                if (!sdk?.api) { setError('SDK not available'); return; }
-                const resp = await sdk.api.get('/api/crop-health/assessments/latest');
-                if (resp.ok) {
-                    const data = await resp.json();
-                    const assessments = data.assessments || [];
-                    const compactionRisks: CompactionRiskData[] = assessments
-                        .filter((a: any) => a.compactionRiskLevel)
-                        .map((a: any) => ({
-                            riskLevel: a.compactionRiskLevel,
-                            riskScore: a.compactionRiskScore ?? 0,
-                            susceptibilityScore: a.susceptibilityScore ?? 0,
-                            contributingFactors: a.compactionRiskFactors ?? [],
-                            moistureWarning: a.compactionMoistureWarning ?? false,
-                            vigorConcern: a.compactionVigorConcern ?? false,
-                            requiresFieldVerification: a.compactionRequiresVerification ?? true,
-                            advisory: a.advisory ?? '',
-                            parcelId: a.parcelId,
-                            parcelName: a.parcelName,
-                        }));
-                    setRisks(compactionRisks);
-                } else {
-                    setError(`HTTP ${resp.status}`);
-                }
-            } catch (e: any) {
-                setError(e.message);
+                const data = await cropHealthFetch<{ assessments: Array<Record<string, unknown>> }>('/assessments/latest');
+                const assessments = data?.assessments ?? [];
+                const compactionRisks: CompactionRiskData[] = assessments
+                    .filter((a) => a.compactionRiskLevel || a.compactionRisk)
+                    .map((a) => {
+                        const cr = (a.compactionRisk as CompactionRiskData | undefined);
+                        return {
+                            riskLevel: String(a.compactionRiskLevel ?? cr?.level ?? ''),
+                            riskScore: Number(a.compactionRiskScore ?? cr?.score ?? 0),
+                            susceptibilityScore: Number(cr?.susceptibilityScore ?? a.susceptibilityScore ?? 0),
+                            contributingFactors: (a.compactionRiskFactors as string[]) ?? cr?.factors ?? [],
+                            moistureWarning: Boolean(a.compactionMoistureWarning ?? cr?.moistureWarning),
+                            vigorConcern: Boolean(a.compactionVigorConcern ?? cr?.vigorConcern),
+                            requiresFieldVerification: Boolean(a.compactionRequiresVerification ?? cr?.requiresVerification ?? true),
+                            advisory: String(cr?.advisory ?? a.advisory ?? 'normal_management'),
+                            parcelId: String(a.parcelId ?? ''),
+                            parcelName: a.parcelName as string | undefined,
+                        };
+                    });
+                setRisks(compactionRisks);
+            } catch (e: unknown) {
+                setError(e instanceof Error ? e.message : 'error');
             } finally {
                 setLoading(false);
             }
@@ -124,7 +124,7 @@ const CompactionRiskWidget: React.FC = () => {
                         <div className="flex items-center justify-between">
                             <button
                                 className="text-sm font-semibold text-nkz-text-primary hover:text-nkz-accent-base transition-colors truncate"
-                                onClick={() => { const sdk = (window as any).__NKZ_SDK__; if (sdk?.navigate) sdk.navigate('/entities'); }}
+                                onClick={() => navigateTo('/entities')}
                             >
                                 {r.parcelName || r.parcelId}
                             </button>

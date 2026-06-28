@@ -256,13 +256,15 @@ class VHIResult(BaseModel):
 
 
 class VHIClimatologyWindow(BaseModel):
-    """Transparent tracking of what NDVI climatology was used for VHI."""
+    """Transparent tracking of what NDVI+LST climatology was used for VHI."""
     period_start: str | None = None
     period_end: str | None = None
     sample_count: int = 0
     filter_criteria: str = "none"
     is_reliable: bool = False
     reason: str | None = None
+    lst_climatology_reliable: bool = False
+    lst_sample_count: int = 0
 
 
 # ── SAR Moisture & Flood ───────────────────────────────────────────────────

@@ -1093,6 +1093,140 @@ async def get_penetrometer_data(
     return None
 
 
+# ── LST Climatology for TCI ───────────────────────────────────────────────
+
+_lst_climatology_cache: TTLCache[str, dict] = TTLCache(maxsize=128, ttl=86400)
+
+
+async def get_lst_climatology(
+    parcel_id: str,
+    tenant_id: str,
+    target_month: int,
+) -> dict:
+    """Fetch LST climatology for a parcel and month from EOProduct.lst history.
+
+    Returns percentiles (p05 = typical min, p95 = typical max) for TCI
+    computation. Uses all EOProduct records carrying an ``lst`` attribute.
+
+    Returns:
+        dict with keys: lst_p05, lst_p95, sample_count, is_reliable, reason
+    """
+    from datetime import datetime as dt
+
+    cache_key = f"{tenant_id}:{parcel_id}:{target_month}"
+    cached = _lst_climatology_cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    settings = get_settings()
+    orion_url = settings.orion_ld_url
+    if not orion_url:
+        return _climatology_unavailable_lst("ORION_LD_URL not configured")
+
+    client = OrionClient(tenant_id, base_url=orion_url, context_url=settings.orion_ld_context)
+    try:
+        entities = await client.query_entities(
+            type="EOProduct",
+            q=f'hasAgriParcel=="urn:ngsi-ld:AgriParcel:{parcel_id}"|refAgriParcel=="urn:ngsi-ld:AgriParcel:{parcel_id}"',
+            limit=500,
+            options="keyValues",
+        )
+        if isinstance(entities, list):
+            entities = [e for e in entities if e.get("lst") is not None]
+        if not isinstance(entities, list) or len(entities) < 3:
+            return _climatology_unavailable_lst(
+                f"Only {len(entities) if isinstance(entities, list) else 0} LST records"
+            )
+
+        # Filter by month +-1
+        month_entities = []
+        for e in entities:
+            sensed = e.get("sensingDate") or e.get("observedAt")
+            if isinstance(sensed, dict):
+                sensed = sensed.get("value")
+            if not sensed:
+                continue
+            try:
+                d = dt.fromisoformat(str(sensed).replace("Z", "+00:00"))
+            except (ValueError, TypeError):
+                continue
+            if abs(d.month - target_month) <= 1 or (
+                target_month == 1 and d.month == 12
+            ) or (target_month == 12 and d.month == 1):
+                month_entities.append((d, e))
+
+        if len(month_entities) < 2:
+            return _climatology_unavailable_lst(
+                f"Only {len(month_entities)} LST records in month {target_month}+-1"
+            )
+
+        lst_vals = _extract_lst_values(month_entities)
+        if not lst_vals or len(lst_vals) < 2:
+            return _climatology_unavailable_lst("No valid LST values in window")
+
+        dates = [d for d, _ in month_entities]
+        result = _build_lst_climatology_result(lst_vals, dates)
+        _lst_climatology_cache[cache_key] = result
+        logger.info(
+            "LST climatology for %s: %d records (month %d)",
+            parcel_id, len(month_entities), target_month,
+        )
+        return result
+
+    except Exception as exc:
+        return _climatology_unavailable_lst(f"Error: {exc}")
+    finally:
+        await client.close()
+
+
+def _extract_lst_values(entities: list) -> list[float]:
+    """Extract LST (°C) values from EOProduct entities."""
+    values = []
+    for _, e in entities:
+        lst = e.get("LST") or e.get("lst")
+        if isinstance(lst, dict):
+            lst = lst.get("value")
+        if lst is not None:
+            try:
+                val = float(lst)
+                if -20.0 <= val <= 70.0:
+                    values.append(val)
+            except (ValueError, TypeError):
+                pass
+    return values
+
+
+def _build_lst_climatology_result(values: list[float], dates: list) -> dict:
+    """Compute LST percentiles for TCI min/max."""
+    sorted_vals = sorted(values)
+    n = len(sorted_vals)
+    p05_idx = max(0, int(n * 0.05))
+    p95_idx = min(n - 1, int(n * 0.95))
+    sorted_dates = sorted(dates)
+    return {
+        "lst_p05": round(sorted_vals[p05_idx], 2),
+        "lst_p95": round(sorted_vals[p95_idx], 2),
+        "sample_count": n,
+        "period_start": sorted_dates[0].strftime("%Y-%m-%d"),
+        "period_end": sorted_dates[-1].strftime("%Y-%m-%d"),
+        "is_reliable": n >= 3,
+        "reason": None,
+    }
+
+
+def _climatology_unavailable_lst(reason: str) -> dict:
+    logger.warning("LST climatology unavailable: %s", reason)
+    return {
+        "lst_p05": None,
+        "lst_p95": None,
+        "sample_count": 0,
+        "period_start": None,
+        "period_end": None,
+        "is_reliable": False,
+        "reason": reason,
+    }
+
+
 # ── NDVI Climatology for VHI ────────────────────────────────────────────────
 
 _ndvi_climatology_cache: TTLCache[str, dict] = TTLCache(maxsize=128, ttl=86400)

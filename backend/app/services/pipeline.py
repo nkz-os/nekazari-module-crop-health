@@ -649,13 +649,35 @@ async def _run_engines(
 
         temp_min_hist = 10.0
         temp_max_hist = 45.0
+        lst_climo_reliable = False
 
-        # Resolve crop EPPO for filtered climatology
+        # Resolve crop EPPO for filtered NDVI climatology
         eppo_for_climo = None
         if crop_context and crop_context.crop and crop_context.crop.eppo:
             eppo_for_climo = crop_context.crop.eppo
 
         current_month = dt.now(timezone.utc).month
+
+        # LST climatology for TCI temperature bounds
+        try:
+            from app.services.context_client import get_lst_climatology
+            lst_climo = await get_lst_climatology(
+                parcel_id=effective_parcel,
+                tenant_id=tenant_id,
+                target_month=current_month,
+            )
+            if lst_climo.get("is_reliable") and lst_climo.get("lst_p05") is not None:
+                temp_min_hist = lst_climo["lst_p05"]
+                temp_max_hist = lst_climo["lst_p95"]
+                lst_climo_reliable = True
+                logger.info(
+                    "LST climatology for %s: p05=%.1f p95=%.1f (n=%d)",
+                    effective_parcel, temp_min_hist, temp_max_hist,
+                    lst_climo.get("sample_count", 0),
+                )
+        except Exception as exc:
+            logger.warning("LST climatology fetch failed: %s", exc)
+
         climo = await get_ndvi_climatology(
             parcel_id=effective_parcel,
             tenant_id=tenant_id,
@@ -670,6 +692,8 @@ async def _run_engines(
             filter_criteria=climo["filter_criteria"],
             is_reliable=climo["is_reliable"],
             reason=climo.get("reason"),
+            lst_climatology_reliable=lst_climo_reliable,
+            lst_sample_count=lst_climo.get("sample_count", 0) if lst_climo_reliable else 0,
         )
 
         if climo["is_reliable"] and ndvi_val is not None:

@@ -4,6 +4,7 @@ import ParcelList from './components/ParcelList';
 import SourceStatusPanel from './components/SourceStatusPanel';
 import CropStatusSnapshot from './components/CropStatusSnapshot';
 import CropHealthDetail from './components/CropHealthDetail';
+import { navigateTo } from './api/cropHealthApi';
 
 const App: React.FC = () => {
   const { t } = useTranslation('crop-health');
@@ -16,10 +17,7 @@ const App: React.FC = () => {
   };
 
   const handleViewInViewer = (parcelId: string) => {
-    const sdk = (window as any).__NKZ_SDK__;
-    if (sdk?.navigate) {
-      sdk.navigate(`/entities?parcel=${encodeURIComponent(parcelId)}`);
-    }
+    navigateTo(`/entities?parcel=${encodeURIComponent(parcelId)}`);
   };
 
   return (

@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useTranslation } from '@nekazari/sdk';
+import { cropHealthFetch, navigateTo } from '../api/cropHealthApi';
 
 interface CropHealthAssessment {
     id: string;
@@ -69,20 +70,14 @@ const CropHealthWidget: React.FC = () => {
     useEffect(() => {
         const fetchAssessments = async () => {
             try {
-                const sdk = (window as any).__NKZ_SDK__;
-                if (!sdk?.api) {
-                    setError('SDK not available');
-                    return;
-                }
-                const resp = await sdk.api.get('/api/crop-health/assessments/latest');
-                if (resp.ok) {
-                    const data = await resp.json();
-                    setAssessments(data.assessments || []);
+                const data = await cropHealthFetch<{ assessments: CropHealthAssessment[] }>('/assessments/latest');
+                if (data?.assessments) {
+                    setAssessments(data.assessments);
                 } else {
-                    setError(`HTTP ${resp.status}`);
+                    setError('fetch failed');
                 }
-            } catch (e: any) {
-                setError(e.message);
+            } catch (e: unknown) {
+                setError(e instanceof Error ? e.message : 'error');
             } finally {
                 setLoading(false);
             }
@@ -133,7 +128,7 @@ const CropHealthWidget: React.FC = () => {
                         <div className="flex items-center justify-between mb-2">
                             <button
                                 className="text-sm font-semibold text-nkz-text-primary hover:text-nkz-accent-base transition-colors truncate"
-                                onClick={() => { const sdk = (window as any).__NKZ_SDK__; if (sdk?.navigate) sdk.navigate('/entities'); }}
+                                onClick={() => navigateTo('/entities')}
                                 title="View in 3D viewer"
                             >
                                 {a.parcelName || a.parcelId}

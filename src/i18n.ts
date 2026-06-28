@@ -27,6 +27,7 @@ const en = {
             wueLabel: 'Water Use Efficiency (WUE)',
             phenologyProgressLabel: 'Phenology Progress',
             yieldGapLabel: 'Yield Potential Utilization (FAO-33)',
+            yieldGapConfidence: 'Confidence: {{confidence}}',
             dataFidelityLabel: 'Data Fidelity',
             correlationLabel: 'NDVI (satellite) vs CWSI (ground) Correlation',
             updated: 'Updated:',
@@ -152,6 +153,12 @@ const en = {
         },
         detail: {
             soilProperties: 'Soil Properties',
+            soilReservoir: 'Soil reservoir',
+            phenologyDeviation: 'Phenology deviation',
+            vhiLabel: 'VHI / ASIS (drought)',
+            sarLabel: 'SAR moisture / flood',
+            soilSensors: 'In-situ soil sensors',
+            correlationStats: 'R² {{r2}} (n={{n}})',
         },
         compaction: {
             title: 'Compaction Risk',
@@ -213,6 +220,7 @@ const es = {
             wueLabel: 'Eficiencia de Uso de Agua (WUE)',
             phenologyProgressLabel: 'Progreso Fenológico',
             yieldGapLabel: 'Aprovechamiento de Potencial (Yield Gap FAO-33)',
+            yieldGapConfidence: 'Confianza: {{confidence}}',
             dataFidelityLabel: 'Fidelidad de Datos',
             correlationLabel: 'Correlación NDVI (satélite) vs CWSI (suelo)',
             updated: 'Actualizado:',
@@ -338,6 +346,12 @@ const es = {
         },
         detail: {
             soilProperties: 'Propiedades del Suelo',
+            soilReservoir: 'Reserva de agua',
+            phenologyDeviation: 'Desviación fenológica',
+            vhiLabel: 'VHI / ASIS (sequía)',
+            sarLabel: 'Humedad / inundación SAR',
+            soilSensors: 'Sensores de suelo in-situ',
+            correlationStats: 'R² {{r2}} (n={{n}})',
         },
         compaction: {
             title: 'Riesgo de Compactación',
@@ -524,6 +538,12 @@ const ca = {
         },
         detail: {
             soilProperties: 'Propietats del Sòl',
+            soilReservoir: 'Reserva d\'aigua',
+            phenologyDeviation: 'Desviació fenològica',
+            vhiLabel: 'VHI / ASIS (sequera)',
+            sarLabel: 'Humitat / inundació SAR',
+            soilSensors: 'Sensors de sòl in-situ',
+            correlationStats: 'R² {{r2}} (n={{n}})',
         },
     },
 };
@@ -682,6 +702,12 @@ const eu = {
         },
         detail: {
             soilProperties: 'Lurzoruaren Propietateak',
+            soilReservoir: 'Ur-erreserba',
+            phenologyDeviation: 'Fenologia desbideratzea',
+            vhiLabel: 'VHI / ASIS (lehorte)',
+            sarLabel: 'SAR hezetasun / uholde',
+            soilSensors: 'Lurzoruko sentsoreak',
+            correlationStats: 'R² {{r2}} (n={{n}})',
         },
     },
 };
@@ -840,6 +866,12 @@ const fr = {
         },
         detail: {
             soilProperties: 'Propriétés du Sol',
+            soilReservoir: 'Réserve d\'eau',
+            phenologyDeviation: 'Écart phénologique',
+            vhiLabel: 'VHI / ASIS (sécheresse)',
+            sarLabel: 'Humidité / inondation SAR',
+            soilSensors: 'Capteurs de sol in-situ',
+            correlationStats: 'R² {{r2}} (n={{n}})',
         },
     },
 };
@@ -998,6 +1030,12 @@ const pt = {
         },
         detail: {
             soilProperties: 'Propriedades do Solo',
+            soilReservoir: 'Reserva de água',
+            phenologyDeviation: 'Desvio fenológico',
+            vhiLabel: 'VHI / ASIS (seca)',
+            sarLabel: 'Humidade / inundação SAR',
+            soilSensors: 'Sensores de solo in-situ',
+            correlationStats: 'R² {{r2}} (n={{n}})',
         },
     },
 };

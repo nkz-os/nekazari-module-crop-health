@@ -27,7 +27,7 @@ spec:
     spec:
       containers:
         - name: backend
-          image: ghcr.io/nkz-os/nekazari-module-crop-health@sha256:297afff7967b27e13b5f31ed95e6375983d435177c7424aeb6c580914a6cbec5  # v1.3.0: LST climatology
+          image: ghcr.io/nkz-os/nekazari-module-crop-health@sha256:6a43b23a4f3a8f326f9ab2c3b410e08cbdbca04cd17c7136456b4869efa695c1  # v1.3.1: lstKind revert, mapper
           imagePullPolicy: Always
           ports:
             - name: http

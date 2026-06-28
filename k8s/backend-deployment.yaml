@@ -27,7 +27,7 @@ spec:
     spec:
       containers:
         - name: backend
-          image: ghcr.io/nkz-os/nekazari-module-crop-health@sha256:2109ea49096d3bc3acd2e303b32f40119ab9aadfb475ceb7aee5a50a6126d8b0  # v1.2.5: satellite SMI source
+          image: ghcr.io/nkz-os/nekazari-module-crop-health@sha256:297afff7967b27e13b5f31ed95e6375983d435177c7424aeb6c580914a6cbec5  # v1.3.0: LST climatology
           imagePullPolicy: Always
           ports:
             - name: http

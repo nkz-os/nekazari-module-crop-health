@@ -36,6 +36,8 @@ class _FakeClient:
         assert "/api/weather-map/stats/urn:ngsi-ld:AgriParcel:" in url
         assert params["metrics"] == "temperature_avg,eto"
         assert headers.get("X-Tenant-ID") == "montiko"
+        # weather-map returns 401 "Missing X-User-ID" without this header (AGENTS.md §9)
+        assert headers.get("X-User-ID") == "crop-health-worker"
         return _FakeResp(self._status, self._payload)
 
 

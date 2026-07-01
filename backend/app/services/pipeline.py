@@ -1114,7 +1114,9 @@ async def _weather_map_meteo(parcel_id: str, tenant_id: str) -> dict:
             resp = await client.get(
                 f"{settings.weather_map_url}/api/weather-map/stats/{parcel_urn}",
                 params={"metrics": "temperature_avg,eto"},
-                headers={"X-Tenant-ID": tenant_id} if tenant_id else {},
+                # weather-map requires both X-Tenant-ID and X-User-ID (returns 401
+                # "Missing X-User-ID" otherwise) — see AGENTS.md §9.
+                headers={"X-Tenant-ID": tenant_id, "X-User-ID": "crop-health-worker"} if tenant_id else {},
             )
             if resp.status_code != 200:
                 return {}

@@ -27,7 +27,7 @@ spec:
     spec:
       containers:
         - name: backend
-          image: ghcr.io/nkz-os/nekazari-module-crop-health:190792314fa8b9003613a569601d01e7c5f7e3b7  # ArgoCD: auto-deploy on push to main
+          image: ghcr.io/nkz-os/nekazari-module-crop-health:190792314fa8b9003613a569601d01e7c5f7e3b7  # reference only — prod pin: gitops-config/overlays/modules/crop-health/
           imagePullPolicy: Always
           ports:
             - name: http

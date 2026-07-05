@@ -181,6 +181,37 @@ const CropHealthDetailTabs: React.FC<CropHealthDetailTabsProps> = ({
 
       {activeTab === 'plant' && (
         <>
+      {/* Soil suitability — committed crop × real parcel soil (bioorch verdict) */}
+      {assessment.soilSuitability && (
+        <MetricSection>
+          <span className="text-xs text-nkz-text-secondary font-medium uppercase tracking-wider block mb-1">
+            {t('soilSuitability.title')}
+          </span>
+          <div className="flex items-center gap-2 text-sm">
+            <Badge intent={
+              assessment.soilSuitability.verdict === 'suitable' ? 'positive'
+                : assessment.soilSuitability.verdict === 'marginal' ? 'warning'
+                  : assessment.soilSuitability.verdict === 'unsuitable' ? 'negative'
+                    : 'default'
+            }>
+              {t(`soilSuitability.verdict.${assessment.soilSuitability.verdict}`)}
+            </Badge>
+            {assessment.soilSuitability.confidence && (
+              <span className="text-nkz-text-muted">
+                {t(`soilSuitability.confidence.${assessment.soilSuitability.confidence}`)}
+              </span>
+            )}
+          </div>
+          {assessment.soilSuitability.verdict === 'unknown' ? (
+            <p className="text-xs text-nkz-text-muted mt-1">{t('soilSuitability.noData')}</p>
+          ) : (
+            assessment.soilSuitability.reason && (
+              <p className="text-xs text-nkz-text-primary mt-1">{assessment.soilSuitability.reason}</p>
+            )
+          )}
+        </MetricSection>
+      )}
+
       {/* Phenology progress */}
       {(assessment.stageProgressPct != null || assessment.phenologyDeviation || assessment.gddAccumulated != null) && (
         <MetricSection>

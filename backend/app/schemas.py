@@ -755,7 +755,7 @@ class SoilActual(BaseModel):
     awc_mm: float | None = None
     organic_matter_pct: float | None = None
     bulk_density_g_cm3: float | None = None
-    depth_cm: float | None = None
+    depth_cm: str | None = None  # horizon range e.g. "0-5" from bioorch/soil module
     source: str = "unavailable"
     data_available: bool = False
 

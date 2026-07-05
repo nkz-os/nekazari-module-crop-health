@@ -102,12 +102,18 @@ const CropHealthLayer: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    if (!cesiumViewer?.entities) return;
+    let viewerEntities: { add: (e: unknown) => void; remove: (e: unknown) => void; values: Array<{ id?: string; name?: string; polygon?: unknown; label?: unknown }> } | null = null;
+    try {
+      if (!cesiumViewer?.entities) return;
+      viewerEntities = cesiumViewer.entities;
+    } catch {
+      return;
+    }
 
     const clearCropHealthEntities = () => {
-      cesiumViewer.entities.values.forEach((e: { id?: string }) => {
+      viewerEntities!.values.forEach((e: { id?: string }) => {
         if (e.id?.startsWith('crop-health-')) {
-          cesiumViewer.entities.remove(e);
+          viewerEntities!.remove(e);
         }
       });
     };
@@ -143,7 +149,7 @@ const CropHealthLayer: React.FC = () => {
 
         for (let i = 0; i < rings.length; i += 1) {
           const positions = Cesium.Cartesian3.fromDegreesArray(ringToDegreesArray(rings[i]));
-          cesiumViewer.entities.add({
+          viewerEntities!.add({
             id: `crop-health-zone-${zone.parcelId}-${zone.zoneId}-${i}`,
             polygon: {
               hierarchy: positions,
@@ -157,7 +163,7 @@ const CropHealthLayer: React.FC = () => {
 
         const centroid = zoneCentroid(zone.geometry);
         if (centroid) {
-          cesiumViewer.entities.add({
+          viewerEntities!.add({
             id: `crop-health-zone-label-${zone.parcelId}-${zone.zoneId}`,
             position: Cesium.Cartesian3.fromDegrees(centroid[0], centroid[1]),
             label: {
@@ -178,7 +184,7 @@ const CropHealthLayer: React.FC = () => {
         if (!a.parcelId || zonedParcels.has(a.parcelId)) continue;
         if (currentMode !== 'severity' && layerValue(a, currentMode) == null) continue;
 
-        const parcelEntity = cesiumViewer.entities.values.find(
+        const parcelEntity = viewerEntities!.values.find(
           (e: { id?: string; name?: string }) =>
             e.id?.includes(a.parcelId || '') || e.name?.includes(a.parcelId || ''),
         );

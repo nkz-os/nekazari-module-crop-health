@@ -1527,6 +1527,13 @@ async def compute_assessment(
         bioorch_stage=nutrient_rec.get("stage") if nutrient_rec else None,
     )
 
+    # Surface the committed crop's soil-suitability verdict on the scheduled path
+    # too (same source as trigger(); cached 1h, circuit-breaker → None is safe).
+    crop_context_obj = await context_client.get_crop_context(
+        parcel_id=parcel_id, tenant_id=tenant_id, gdd=gdd,
+    )
+    attach_soil_suitability(rollup, crop_context_obj)
+
     await _publish_assessment(rollup.to_ngsi_ld(), tenant_id)
     return rollup
 

@@ -1,137 +1,25 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import { useTranslation } from '@nekazari/sdk';
-import { cropHealthFetch, PHENOLOGY_PARAMS_URL } from '../api/cropHealthApi';
 import { Sparkline } from './shared/Sparkline';
 import { SeverityBadge, SEVERITY_STYLES } from './shared/SeverityBadge';
+import { Badge, MetricSection, ProgressBar } from './detail/MetricPrimitives';
+import type {
+  AssessmentData,
+  CorrelationPoint,
+  CorrelationStats,
+  PhenologyParams,
+  TrendPoint,
+} from '../types/assessment';
 
-interface PhenologyData {
-  kc?: number;
-  d1?: number;
-  d2?: number;
-  mds_ref?: number;
-  match_level?: string;
-  stage?: string;
-  provenance?: {
-    short?: string;
-    doi?: string;
-    author?: string;
-    year?: number;
-    conditions?: string;
-  };
-}
+type DetailTab = 'water' | 'plant' | 'yield' | 'analytics';
 
-interface TrendPoint {
-  date: string;
-  cwsi?: number;
-  mds?: number;
-  balance?: number;
-}
-
-interface CorrelationData {
-  date: string;
-  ndvi?: number;
-  cwsi?: number;
-}
-
-interface CorrelationStats {
-  n: number;
-  r2: number | null;
-  slope: number | null;
-  intercept: number | null;
-}
-
-interface AssessmentData {
-  cwsiValue?: number;
-  mdsValue?: number;
-  mdsSeverity?: string;
-  waterBalanceDeficit?: number;
-  overallSeverity: string;
-  recommendedAction: string;
-  phenologySource: string;
-  assessedAt: string;
-  compositeStressIndex?: number;
-  dominantStressor?: string;
-  compositeStress?: {
-    index?: number;
-    dominantStressor?: string;
-    waterContribution?: number;
-    thermalContribution?: number;
-    vigorContribution?: number;
-    stageKy?: number;
-  };
-  yieldUtilizationPct?: number;
-  yieldGapConfidence?: string;
-  predictedYieldKgHa?: number;
-  baselineYieldKgHa?: number;
-  thermalCondition?: string;
-  thermalSeverity?: string;
-  heatStressHours?: number;
-  frostHours?: number;
-  thermalDataFidelity?: string;
-  vigorIndex?: number;
-  vigorCondition?: string;
-  growthAnomaly?: number;
-  vigorIndexUsed?: string;
-  vigorDataFidelity?: string;
-  dataFidelity?: string;
-  wueStatus?: string;
-  wueKgM3?: number;
-  wueBiomassKg?: number;
-  wueWaterAppliedMm?: number;
-  wueTrend?: string;
-  species?: string;
-  cropSpecies?: string;
-  phenologyDeviation?: string;
-  stageProgressPct?: number;
-  gddAccumulated?: number;
-  vhi?: { vhi?: number; vci?: number; tci?: number; asiPct?: number; tciSource?: string };
-  sar?: { isFlooded?: boolean; floodStage?: string; surfaceMoistureIndex?: number; waterloggingRisk?: string; dataFidelity?: string };
-  compactionRisk?: {
-    level?: string;
-    score?: number;
-    susceptibilityScore?: number;
-    factors?: string[];
-    moistureWarning?: boolean;
-    vigorConcern?: boolean;
-    requiresVerification?: boolean;
-    advisory?: string;
-  };
-  soilSensors?: { ph?: number; ec?: number; moisturePct?: number; temperatureC?: number };
-  soilProperties?: {
-    sandPct?: number;
-    clayPct?: number;
-    fieldCapacity: number;
-    wiltingPoint: number;
-    ksatMmH: number;
-    scsHydrologicGroup: string;
-    usdaTextureClass: string;
-    source: string;
-    hasData: boolean;
-  };
-  soilWaterMm?: number;
-  soilAWCmm?: number;
-  soilWaterRatio?: number;
-  soilWaterBalance?: {
-    swMm?: number;
-    awcMm?: number;
-    swRatio?: number;
-    stressCoefficientKs?: number;
-    actualETmm?: number;
-    deepPercolationMm?: number;
-    depletionFractionP?: number;
-  };
-  waterloggingRiskLevel?: string;
-  waterloggingSaturationHours?: number;
-  waterloggingRisk?: {
-    riskLevel?: string;
-    saturationHours?: number;
-    excessMm?: number;
-    drainageRateMmH?: number;
-  };
-}
-
-interface CropHealthDetailProps {
+interface CropHealthDetailTabsProps {
   parcelId: string;
+  assessment: AssessmentData | null;
+  phenology: PhenologyParams | null;
+  trend: TrendPoint[];
+  correlation: CorrelationPoint[];
+  correlationStats: CorrelationStats | null;
 }
 
 const actionLabels: Record<string, string> = {
@@ -141,100 +29,18 @@ const actionLabels: Record<string, string> = {
   IRRIGATE_IMMEDIATE: 'contextPanel.irrigateImmediately',
 };
 
-/** Inline progress bar with intent-based color */
-function ProgressBar({ value, intent }: { value: number; intent?: 'positive' | 'warning' | 'negative' | 'default' }) {
-  const barCls = intent === 'negative' ? 'bg-red-500' : intent === 'warning' ? 'bg-amber-500' : intent === 'positive' ? 'bg-green-500' : 'bg-nkz-accent-base';
-  return (
-    <div className="flex items-center gap-2">
-      <div className="flex-1 h-2 bg-gray-200 rounded-full overflow-hidden">
-        <div className={`h-full rounded-full transition-all ${barCls}`} style={{ width: `${Math.min(value, 100)}%` }} />
-      </div>
-      <span className="text-sm font-mono text-nkz-text-primary">{Math.round(value)}%</span>
-    </div>
-  );
-}
+const TAB_KEYS: DetailTab[] = ['water', 'plant', 'yield', 'analytics'];
 
-/** Inline badge using NKZ intent styles */
-function Badge({ intent, children }: { intent?: 'positive' | 'warning' | 'negative' | 'info' | 'default'; children: React.ReactNode }) {
-  const cls: Record<string, string> = {
-    positive: 'bg-green-100 text-green-800 border border-green-200',
-    warning: 'bg-amber-100 text-amber-800 border border-amber-200',
-    negative: 'bg-red-100 text-red-800 border border-red-200',
-    info: 'bg-blue-100 text-blue-800 border border-blue-200',
-    default: 'bg-gray-100 text-gray-800 border border-gray-200',
-  };
-  return (
-    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium leading-4 ${cls[intent || 'default']}`}>
-      {children}
-    </span>
-  );
-}
-
-/** Section card */
-function MetricSection({ children, className = '' }: { children: React.ReactNode; className?: string }) {
-  return (
-    <div className={`bg-nkz-surface-raised border border-nkz-border rounded-lg p-3 shadow-sm ${className}`}>
-      {children}
-    </div>
-  );
-}
-
-const CropHealthDetail: React.FC<CropHealthDetailProps> = ({ parcelId }) => {
+const CropHealthDetailTabs: React.FC<CropHealthDetailTabsProps> = ({
+  parcelId,
+  assessment,
+  phenology,
+  trend,
+  correlation,
+  correlationStats,
+}) => {
   const { t } = useTranslation('crop-health');
-  const [assessment, setAssessment] = useState<AssessmentData | null>(null);
-  const [phenology, setPhenology] = useState<PhenologyData | null>(null);
-  const [trend, setTrend] = useState<TrendPoint[]>([]);
-  const [correlation, setCorrelation] = useState<CorrelationData[]>([]);
-  const [correlationStats, setCorrelationStats] = useState<CorrelationStats | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    if (!parcelId) return;
-    setLoading(true);
-
-    const fetchData = async () => {
-      try {
-        const [a, tRes, cRes] = await Promise.all([
-          cropHealthFetch<{ assessments: AssessmentData[] }>(`/assessments/latest?parcelId=${parcelId}`),
-          cropHealthFetch<{ points: TrendPoint[] }>(`/assessments/history?parcelId=${parcelId}&days=7`),
-          cropHealthFetch<{ pairs: CorrelationData[]; stats?: CorrelationStats }>(`/assessments/correlation?parcelId=${parcelId}&days=30`),
-        ]);
-
-        const assessment = a?.assessments?.[0];
-        if (assessment) setAssessment(assessment);
-        if (tRes?.points) setTrend(tRes.points);
-        if (cRes?.pairs) setCorrelation(cRes.pairs);
-        if (cRes?.stats) setCorrelationStats(cRes.stats);
-
-        const species = assessment?.species ?? assessment?.cropSpecies;
-        if (species) {
-          try {
-            const pResp = await fetch(
-              `${PHENOLOGY_PARAMS_URL}?species=${encodeURIComponent(species)}`,
-              { credentials: 'include' },
-            );
-            if (pResp.ok) setPhenology(await pResp.json());
-          } catch { /* optional */ }
-        }
-      } catch { /* handle gracefully */ }
-      finally { setLoading(false); }
-    };
-
-    fetchData();
-  }, [parcelId]);
-
-  if (loading) {
-    return (
-      <div className="space-y-3 animate-pulse">
-        {[1, 2, 3].map(i => (
-          <div key={i} className="bg-nkz-surface-raised border border-nkz-border rounded-lg p-3">
-            <div className="h-4 bg-gray-200 rounded w-2/3 mb-2" />
-            <div className="h-3 bg-gray-200 rounded w-full" />
-          </div>
-        ))}
-      </div>
-    );
-  }
+  const [activeTab, setActiveTab] = useState<DetailTab>('water');
 
   if (!assessment) {
     return (
@@ -252,7 +58,27 @@ const CropHealthDetail: React.FC<CropHealthDetailProps> = ({ parcelId }) => {
   const trendDir = trendCW.length >= 2 ? (trendCW[trendCW.length - 1] - trendCW[0]) : null;
 
   return (
-    <div className="space-y-2">
+    <div className="bg-nkz-surface-raised border border-nkz-border rounded-lg overflow-hidden mb-3">
+      <div className="flex border-b border-nkz-border bg-nkz-surface">
+        {TAB_KEYS.map((tab) => (
+          <button
+            key={tab}
+            type="button"
+            onClick={() => setActiveTab(tab)}
+            className={`flex-1 px-2 py-2 text-xs font-medium border-none cursor-pointer ${
+              activeTab === tab
+                ? 'bg-nkz-accent-soft text-nkz-accent-strong border-b-2 border-b-nkz-accent-base'
+                : 'bg-transparent text-nkz-text-muted hover:text-nkz-text-primary'
+            }`}
+          >
+            {t(`tabs.${tab}`)}
+          </button>
+        ))}
+      </div>
+
+      <div className="p-2 space-y-2">
+      {activeTab === 'water' && (
+        <>
       {/* CWSI Section */}
       {assessment.cwsiValue != null && (
         <MetricSection>
@@ -350,7 +176,11 @@ const CropHealthDetail: React.FC<CropHealthDetailProps> = ({ parcelId }) => {
           )}
         </MetricSection>
       )}
+        </>
+      )}
 
+      {activeTab === 'plant' && (
+        <>
       {/* Phenology progress */}
       {(assessment.stageProgressPct != null || assessment.phenologyDeviation || assessment.gddAccumulated != null) && (
         <MetricSection>
@@ -427,23 +257,9 @@ const CropHealthDetail: React.FC<CropHealthDetailProps> = ({ parcelId }) => {
             {t('detail.sarLabel')}
           </span>
           <p className="text-xs text-nkz-text-primary">
-            {assessment.sar.isFlooded ? '🌊 Flooded' : '✓ No flood'}
+            {assessment.sar.isFlooded ? t('detail.sarFlooded') : t('detail.sarNoFlood')}
             {assessment.sar.surfaceMoistureIndex != null && ` · SMI ${assessment.sar.surfaceMoistureIndex.toFixed(2)}`}
             {assessment.sar.waterloggingRisk && ` · ${assessment.sar.waterloggingRisk}`}
-          </p>
-        </MetricSection>
-      )}
-
-      {/* Compaction */}
-      {assessment.compactionRisk?.level && (
-        <MetricSection>
-          <span className="text-xs text-nkz-text-secondary font-medium uppercase tracking-wider block mb-1">
-            {t('compaction.title')}
-          </span>
-          <ProgressBar value={assessment.compactionRisk.score ?? 0} intent={(assessment.compactionRisk.score ?? 0) > 60 ? 'negative' : 'warning'} />
-          <p className="text-xs text-nkz-text-muted mt-1">
-            {t(`compaction.level.${assessment.compactionRisk.level}`)}
-            {assessment.compactionRisk.advisory && ` · ${t(`compaction.advisory.${assessment.compactionRisk.advisory}`)}`}
           </p>
         </MetricSection>
       )}
@@ -485,7 +301,11 @@ const CropHealthDetail: React.FC<CropHealthDetailProps> = ({ parcelId }) => {
           )}
         </MetricSection>
       )}
+        </>
+      )}
 
+      {activeTab === 'yield' && (
+        <>
       {/* Composite Stress */}
       {assessment.compositeStressIndex != null && (
         <MetricSection>
@@ -554,7 +374,8 @@ const CropHealthDetail: React.FC<CropHealthDetailProps> = ({ parcelId }) => {
           {assessment.yieldGapConfidence && (
             <p className="text-xs text-nkz-text-muted mt-1">
               {t('contextPanel.yieldGapConfidence', { confidence: assessment.yieldGapConfidence })}
-              {assessment.baselineYieldKgHa != null && ` · baseline ${assessment.baselineYieldKgHa.toFixed(0)} kg/ha`}
+              {assessment.baselineYieldKgHa != null && ` · ${t('detail.baselineYield', { value: assessment.baselineYieldKgHa.toFixed(0) })}`}
+              {assessment.predictedYieldKgHa != null && ` · ${t('detail.predictedYield', { value: assessment.predictedYieldKgHa.toFixed(0) })}`}
             </p>
           )}
         </MetricSection>
@@ -572,6 +393,30 @@ const CropHealthDetail: React.FC<CropHealthDetailProps> = ({ parcelId }) => {
         </MetricSection>
       )}
 
+      {/* Recommendation */}
+      <div className="bg-nkz-surface border border-nkz-border rounded-lg p-3" style={{ borderLeft: `4px solid ${sevStyle.border}` }}>
+        <div className="flex items-start gap-2">
+          <SeverityBadge severity={assessment.overallSeverity} dotOnly />
+          <div>
+            <strong className="text-sm text-nkz-text-primary">
+              {t(actionLabels[assessment.recommendedAction] || assessment.recommendedAction)}
+            </strong>
+            <p className="text-xs text-nkz-text-muted mt-0.5">
+              {assessment.cwsiValue != null && assessment.cwsiValue > 0.6 && `${t('detail.hints.cwsiHigh')} `}
+              {assessment.mdsSeverity === 'CRITICAL' && `${t('detail.hints.mdsCritical')} `}
+              {assessment.waterBalanceDeficit != null && assessment.waterBalanceDeficit < -5 && `${t('detail.hints.deficit')} `}
+              {t('contextPanel.basedOn', {
+                source: assessment.phenologySource === 'bioorchestrator' ? t('contextPanel.specificParams') : t('contextPanel.genericParams'),
+              })}.
+            </p>
+          </div>
+        </div>
+      </div>
+        </>
+      )}
+
+      {activeTab === 'analytics' && (
+        <>
       {/* Correlation */}
       {correlation.length >= 3 && (
         <MetricSection>
@@ -595,29 +440,6 @@ const CropHealthDetail: React.FC<CropHealthDetailProps> = ({ parcelId }) => {
         </MetricSection>
       )}
 
-      {/* Recommendation */}
-      <div className="bg-nkz-surface-raised border border-nkz-border rounded-lg p-3 shadow-sm" style={{ borderLeft: `4px solid ${sevStyle.border}` }}>
-        <div className="flex items-start gap-2">
-          <span className="text-base">
-            {assessment.overallSeverity === 'CRITICAL' ? '🔴' : assessment.overallSeverity === 'HIGH' ? '🟠' : assessment.overallSeverity === 'MEDIUM' ? '🟡' : '🟢'}
-          </span>
-          <div>
-            <strong className="text-sm text-nkz-text-primary">
-              {t(actionLabels[assessment.recommendedAction] || assessment.recommendedAction)}
-            </strong>
-            <p className="text-xs text-nkz-text-muted mt-0.5">
-              {assessment.cwsiValue != null && assessment.cwsiValue > 0.6 && 'CWSI elevado. '}
-              {assessment.mdsSeverity === 'CRITICAL' && 'Contracción crítica. '}
-              {assessment.waterBalanceDeficit != null && assessment.waterBalanceDeficit < -5 && 'Déficit significativo. '}
-              {t('contextPanel.basedOn', {
-                source: assessment.phenologySource === 'bioorchestrator' ? t('contextPanel.specificParams') : t('contextPanel.genericParams')
-              })}.
-            </p>
-          </div>
-        </div>
-      </div>
-
-      {/* Footer */}
       <p className="text-xs text-nkz-text-muted">
         {t('contextPanel.updated')} {assessment.assessedAt ? new Date(assessment.assessedAt).toLocaleString() : '—'}
         {' · '}
@@ -625,8 +447,11 @@ const CropHealthDetail: React.FC<CropHealthDetailProps> = ({ parcelId }) => {
           📥 {t('contextPanel.exportCsv')}
         </a>
       </p>
+        </>
+      )}
+      </div>
     </div>
   );
 };
 
-export default CropHealthDetail;
+export default CropHealthDetailTabs;

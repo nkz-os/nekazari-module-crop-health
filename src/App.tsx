@@ -1,95 +1,104 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from '@nekazari/sdk';
+import { Sprout } from 'lucide-react';
 import ParcelList from './components/ParcelList';
-import SourceStatusPanel from './components/SourceStatusPanel';
-import CropStatusSnapshot from './components/CropStatusSnapshot';
-import CropHealthDetail from './components/CropHealthDetail';
-import { navigateTo } from './api/cropHealthApi';
+import ParcelHealthWorkbench from './components/ParcelHealthWorkbench';
+import FleetOverview, { useActiveDiseaseCount, useFleetAssessments } from './components/FleetOverview';
+import { navigateTo, readParcelIdFromLocation } from './api/cropHealthApi';
+import type { ParcelSummary } from './types/assessment';
 
 const App: React.FC = () => {
   const { t } = useTranslation('crop-health');
-  const [selectedParcelId, setSelectedParcelId] = useState<string | null>(null);
-  const [selectedParcelName, setSelectedParcelName] = useState<string>("");
+  const [selectedParcelId, setSelectedParcelId] = useState<string | null>(readParcelIdFromLocation());
+  const [selectedParcelName, setSelectedParcelName] = useState('');
+  const [parcels, setParcels] = useState<ParcelSummary[]>([]);
+  const fleetAssessments = useFleetAssessments();
+  const diseaseCount = useActiveDiseaseCount();
+
+  useEffect(() => {
+    const fromUrl = readParcelIdFromLocation();
+    if (fromUrl) setSelectedParcelId(fromUrl);
+  }, []);
 
   const handleSelectParcel = (parcelId: string, parcelName: string) => {
     setSelectedParcelId(parcelId);
     setSelectedParcelName(parcelName);
   };
 
-  const handleViewInViewer = (parcelId: string) => {
-    navigateTo(`/entities?parcel=${encodeURIComponent(parcelId)}`);
+  const handleParcelsLoaded = (next: ParcelSummary[]) => {
+    setParcels(next);
+    if (selectedParcelId && !selectedParcelName) {
+      const match = next.find((p) => p.parcelId === selectedParcelId);
+      if (match?.parcelName) setSelectedParcelName(match.parcelName);
+    }
   };
 
+  const selectedSummary = useMemo(
+    () => parcels.find((p) => p.parcelId === selectedParcelId),
+    [parcels, selectedParcelId],
+  );
+
   return (
-    <div className="flex h-full" style={{ minHeight: 'calc(100vh - 120px)' }}>
-      {/* Left sidebar — Parcel List */}
-      <div
-        className="flex-shrink-0 border-r border-nkz-border bg-white overflow-hidden flex flex-col shadow-sm"
-        style={{ width: 340 }}
-      >
-        {/* Header */}
-        <div className="p-2.5 border-b border-nkz-border bg-nkz-surface">
+    <div className="flex h-full min-h-[calc(100vh-120px)] bg-nkz-surface">
+      <aside className="flex-shrink-0 w-[360px] border-r border-nkz-border bg-nkz-surface-raised flex flex-col">
+        <header className="p-3 border-b border-nkz-border">
           <div className="flex items-center gap-2">
-            <span className="text-lg">🌱</span>
-            <span className="text-sm font-bold text-nkz-text-primary">
-              {t('title')}
-            </span>
+            <Sprout className="w-5 h-5 text-nkz-accent-base" />
+            <div>
+              <h1 className="text-sm font-bold text-nkz-text-primary">{t('title')}</h1>
+              <p className="text-xs text-nkz-text-muted">{t('app.subtitle')}</p>
+            </div>
           </div>
-        </div>
+        </header>
 
-        {/* Parcel list */}
+        <FleetOverview parcels={parcels} assessments={fleetAssessments} diseaseCount={diseaseCount} />
+
         <div className="flex-1 overflow-hidden">
-          <ParcelList onSelectParcel={handleSelectParcel} selectedParcelId={selectedParcelId} />
+          <ParcelList
+            onSelectParcel={handleSelectParcel}
+            selectedParcelId={selectedParcelId}
+            onParcelsLoaded={handleParcelsLoaded}
+          />
         </div>
-      </div>
+      </aside>
 
-      {/* Right panel — Detail */}
-      <div className="flex-1 overflow-y-auto p-4 bg-gray-50">
+      <main className="flex-1 overflow-y-auto p-4 bg-nkz-surface">
         {!selectedParcelId ? (
           <div className="flex items-center justify-center h-full">
-            <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-8 max-w-sm text-center">
-              <div className="flex flex-col items-center gap-3">
-                <span className="text-4xl">🌱</span>
-                <h3 className="text-base font-semibold text-nkz-text-primary">
-                  {t('app.selectPrompt')}
-                </h3>
-                <p className="text-sm text-nkz-text-muted">
-                  {t('app.selectPromptHint')}
-                </p>
-              </div>
+            <div className="border border-nkz-border rounded-xl bg-nkz-surface-raised p-8 max-w-md text-center">
+              <Sprout className="w-10 h-10 mx-auto text-nkz-accent-base" />
+              <h2 className="text-base font-semibold text-nkz-text-primary mt-3">{t('app.selectPrompt')}</h2>
+              <p className="text-sm text-nkz-text-muted mt-2">{t('app.selectPromptHint')}</p>
             </div>
           </div>
         ) : (
-          <div className="max-w-3xl mx-auto">
-            {/* Parcel header */}
-            <div className="bg-white border border-gray-200 rounded-lg p-3 mb-3 shadow-sm">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h2 className="text-base font-bold text-nkz-text-primary">
-                    {selectedParcelName || selectedParcelId}
-                  </h2>
-                  {selectedParcelName && (
-                    <p className="text-xs text-nkz-text-muted mt-0.5">
-                      ID: {selectedParcelId}
-                    </p>
-                  )}
-                </div>
-                <button
-                  onClick={() => handleViewInViewer(selectedParcelId)}
-                  className="text-xs font-medium text-nkz-accent-base hover:underline cursor-pointer bg-transparent border-none"
-                >
-                  🗺️ {t('app.viewInViewer')}
-                </button>
+          <div className="max-w-4xl mx-auto">
+            <header className="bg-nkz-surface-raised border border-nkz-border rounded-lg p-3 mb-3 flex items-center justify-between gap-3">
+              <div>
+                <h2 className="text-base font-bold text-nkz-text-primary">
+                  {selectedParcelName || selectedSummary?.parcelName || selectedParcelId}
+                </h2>
+                <p className="text-xs text-nkz-text-muted mt-0.5">
+                  {selectedSummary?.cropName && `🌾 ${selectedSummary.cropName} · `}
+                  ID {selectedParcelId}
+                </p>
               </div>
-            </div>
+              <button
+                type="button"
+                onClick={() => navigateTo(`/entities?parcel=${encodeURIComponent(selectedParcelId)}`)}
+                className="text-xs font-medium text-nkz-accent-base hover:underline cursor-pointer bg-transparent border-none"
+              >
+                🗺️ {t('app.viewInViewer')}
+              </button>
+            </header>
 
-            {/* Content sections */}
-            <SourceStatusPanel parcelId={selectedParcelId} parcelName={selectedParcelName} />
-            <CropStatusSnapshot parcelId={selectedParcelId} parcelName={selectedParcelName} />
-            <CropHealthDetail parcelId={selectedParcelId} />
+            <ParcelHealthWorkbench
+              parcelId={selectedParcelId}
+              parcelName={selectedParcelName || selectedSummary?.parcelName}
+            />
           </div>
         )}
-      </div>
+      </main>
     </div>
   );
 };

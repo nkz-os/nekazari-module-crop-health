@@ -1,5 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { useTranslation } from '@nekazari/sdk';
+import { cropHealthFetch } from '../api/cropHealthApi';
+import { formatRelativeTime } from '../utils/relativeTime';
 
 interface SensorInfo {
   metric: string;
@@ -46,6 +48,7 @@ interface SourcesData {
 interface SourceStatusPanelProps {
   parcelId: string;
   parcelName?: string;
+  embedded?: boolean;
 }
 
 const STATUS_DOT: Record<string, string> = {
@@ -71,22 +74,11 @@ function StatusBadge({ status, label }: { status: string; label: string }) {
   );
 }
 
-function relativeTime(iso: string | null): string {
-  if (!iso) return '—';
-  try {
-    const diff = Date.now() - new Date(iso).getTime();
-    const mins = Math.floor(diff / 60000);
-    if (mins < 1) return 'ahora';
-    if (mins < 60) return `hace ${mins}min`;
-    const hours = Math.floor(mins / 60);
-    if (hours < 24) return `hace ${hours}h`;
-    return `hace ${Math.floor(hours / 24)}d`;
-  } catch {
-    return iso.slice(0, 10);
-  }
+function relativeTime(iso: string | null, t: ReturnType<typeof useTranslation>['t']): string {
+  return formatRelativeTime(iso, t);
 }
 
-const SourceStatusPanel: React.FC<SourceStatusPanelProps> = ({ parcelId, parcelName }) => {
+const SourceStatusPanel: React.FC<SourceStatusPanelProps> = ({ parcelId, parcelName, embedded = false }) => {
   const { t } = useTranslation('crop-health');
   const [data, setData] = useState<SourcesData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -96,13 +88,12 @@ const SourceStatusPanel: React.FC<SourceStatusPanelProps> = ({ parcelId, parcelN
   const fetchData = useCallback(async (showSpinner = false) => {
     if (showSpinner) setRefreshing(true);
     try {
-      const resp = await fetch(`/api/crop-health/sources?parcelId=${parcelId}`);
-      if (resp.ok) {
-        const json = await resp.json();
+      const json = await cropHealthFetch<SourcesData>(`/sources?parcelId=${encodeURIComponent(parcelId)}`);
+      if (json) {
         setData(json);
         setError(null);
       } else {
-        setError(`HTTP ${resp.status}`);
+        setError('fetch failed');
       }
     } catch (e: any) {
       setError(e.message);
@@ -121,9 +112,9 @@ const SourceStatusPanel: React.FC<SourceStatusPanelProps> = ({ parcelId, parcelN
 
   if (loading) {
     return (
-      <div className="bg-nkz-surface-raised border border-nkz-border rounded-lg p-3 mb-3 animate-pulse space-y-2">
+      <div className={`${embedded ? '' : 'bg-nkz-surface-raised border border-nkz-border rounded-lg p-3 mb-3'} animate-pulse space-y-2`}>
         {[1, 2, 3, 4, 5, 6].map(i => (
-          <div key={i} className="h-4 bg-gray-200 rounded w-full" />
+          <div key={i} className="h-4 bg-nkz-border rounded w-full" />
         ))}
       </div>
     );
@@ -131,7 +122,7 @@ const SourceStatusPanel: React.FC<SourceStatusPanelProps> = ({ parcelId, parcelN
 
   if (error || !data) {
     return (
-      <div className="bg-nkz-surface-raised border border-nkz-border rounded-lg p-3 mb-3 text-center">
+      <div className={`${embedded ? '' : 'bg-nkz-surface-raised border border-nkz-border rounded-lg p-3 mb-3'} text-center`}>
         <p className="text-sm text-nkz-text-muted">{t('sources.error')}: {error}</p>
         <button
           className="text-xs text-nkz-accent-base underline mt-1 cursor-pointer bg-transparent border-none"
@@ -165,7 +156,7 @@ const SourceStatusPanel: React.FC<SourceStatusPanelProps> = ({ parcelId, parcelN
     (src.satellite.sar.status === 'error' ? 1 : 0);
 
   return (
-    <div className="bg-nkz-surface-raised border border-nkz-border rounded-lg p-3 mb-3 shadow-sm">
+    <div className={`${embedded ? 'p-2' : 'bg-nkz-surface-raised border border-nkz-border rounded-lg p-3 mb-3 shadow-sm'}`}>
       {/* Header */}
       <div className="flex items-start justify-between">
         <div>
@@ -192,27 +183,27 @@ const SourceStatusPanel: React.FC<SourceStatusPanelProps> = ({ parcelId, parcelN
       <div className="space-y-1.5 mt-2">
         <SourceRow icon="🌍" label={t('sources.soil.label')} status={src.soil.status}
           freshness={src.soil.freshness} lastDataAt={src.soil.lastDataAt}
-          summary={src.soil.summary || t('sources.noData')} />
+          summary={src.soil.summary || t('sources.noData')} t={t} />
         <SourceRow icon="🌡️" label={t('sources.iot.label', { count: src.iot.sensors?.length || 0 })}
           status={src.iot.status} freshness={src.iot.freshness} lastDataAt={src.iot.lastDataAt}
-          summary={src.iot.summary || t('sources.noData')} />
+          summary={src.iot.summary || t('sources.noData')} t={t} />
         <SourceRow icon="☁️" label={t('sources.weather.label')} status={src.weather.status}
           freshness={src.weather.freshness} lastDataAt={src.weather.lastDataAt}
-          summary={src.weather.summary || t('sources.noData')} />
+          summary={src.weather.summary || t('sources.noData')} t={t} />
         <SourceRow icon="🛰️" label={t('sources.satellite.ndvi')} status={src.satellite.ndvi.status}
           freshness={src.satellite.ndvi.freshness} lastDataAt={src.satellite.ndvi.lastDataAt}
-          summary={src.satellite.ndvi.lastValue != null ? `NDVI ${src.satellite.ndvi.lastValue.toFixed(2)}` : t('sources.noData')} />
+          summary={src.satellite.ndvi.lastValue != null ? `NDVI ${src.satellite.ndvi.lastValue.toFixed(2)}` : t('sources.noData')} t={t} />
         <SourceRow icon="📡" label={t('sources.satellite.sar')} status={src.satellite.sar.status}
           freshness={src.satellite.sar.freshness} lastDataAt={src.satellite.sar.lastDataAt}
-          summary={src.satellite.sar.reason ? `— ${src.satellite.sar.reason}` : t('sources.noData')} />
+          summary={src.satellite.sar.reason ? `— ${src.satellite.sar.reason}` : t('sources.noData')} t={t} />
         <SourceRow icon="🌾" label={t('sources.crop.label')} status={src.crop.status}
           freshness={src.crop.freshness} lastDataAt={src.crop.lastDataAt}
           summary={src.crop.species
             ? `${src.crop.species} · ${src.crop.variety || '?'}${src.crop.phenologyStage ? ` · ${src.crop.phenologyStage}` : ''}`
-            : t('sources.crop.notSet')} />
+            : t('sources.crop.notSet')} t={t} />
         <SourceRow icon="📚" label={t('sources.bioorchestrator.label')} status={src.bioorchestrator.status}
           freshness={src.bioorchestrator.freshness} lastDataAt={src.bioorchestrator.lastDataAt}
-          summary={src.bioorchestrator.summary || t('sources.noData')} />
+          summary={src.bioorchestrator.summary || t('sources.noData')} t={t} />
 
         {src.risks.alerts && src.risks.alerts.length > 0 && (
           <div className="text-xs mt-2 pt-2 border-t border-nkz-border">
@@ -241,12 +232,12 @@ interface SourceRowProps {
   summary: string;
 }
 
-const SourceRow: React.FC<SourceRowProps> = ({ icon, label, status, lastDataAt, summary }) => (
+const SourceRow: React.FC<SourceRowProps & { t: ReturnType<typeof useTranslation>['t'] }> = ({ icon, label, status, lastDataAt, summary, t }) => (
   <div className="flex items-center gap-2 text-sm">
     <span className="w-5 text-center flex-shrink-0">{icon}</span>
     <span className="text-nkz-text-primary w-28 flex-shrink-0 truncate text-xs">{label}</span>
     <span className="flex-shrink-0 text-xs">{STATUS_DOT[status] || '❓'}</span>
-    <span className="text-nkz-text-muted text-xs flex-shrink-0 w-16">{relativeTime(lastDataAt)}</span>
+    <span className="text-nkz-text-muted text-xs flex-shrink-0 w-16">{relativeTime(lastDataAt, t)}</span>
     <span className="text-nkz-text-secondary text-xs truncate">{summary}</span>
   </div>
 );

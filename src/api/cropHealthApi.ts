@@ -19,5 +19,15 @@ export function navigateTo(path: string): void {
   window.location.assign(path);
 }
 
+export function navigateToCropHealthParcel(parcelId: string): void {
+  navigateTo(`/modules/crop-health?parcel=${encodeURIComponent(parcelId)}`);
+}
+
+export function readParcelIdFromLocation(): string | null {
+  if (typeof window === 'undefined') return null;
+  const params = new URLSearchParams(window.location.search);
+  return params.get('parcel') || params.get('parcelId');
+}
+
 export const CROP_CONTEXT_URL = '/api/graph/agriculture/crop-context';
 export const PHENOLOGY_PARAMS_URL = '/api/graph/phenology-params';

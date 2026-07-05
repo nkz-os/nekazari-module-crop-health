@@ -420,6 +420,7 @@ class CropHealthAssessment(BaseModel):
     # matches the real entity; otherwise a best-effort URN is reconstructed.
     zone_urn: str | None = None
     crop_requirements: CropRequirements | None = None
+    soil_suitability: "SoilSuitability | None" = None
 
     def to_ngsi_ld(self) -> dict[str, Any]:
         """Serialise to NGSI-LD entity payload."""
@@ -600,6 +601,18 @@ class CropHealthAssessment(BaseModel):
                 entity["p2o5RequirementKgHa"] = {"type": "Property", "value": cr.p2o5_kg_ha, "unitCode": "KGM"}
             if cr.k2o_kg_ha is not None:
                 entity["k2oRequirementKgHa"] = {"type": "Property", "value": cr.k2o_kg_ha, "unitCode": "KGM"}
+        if self.soil_suitability and self.soil_suitability.verdict:
+            ss = self.soil_suitability
+            entity["soilSuitabilityVerdict"] = {"type": "Property", "value": ss.verdict}
+            if ss.reason:
+                entity["soilSuitabilityReason"] = {"type": "Property", "value": ss.reason}
+            if ss.confidence:
+                entity["soilSuitabilityConfidence"] = {"type": "Property", "value": ss.confidence}
+            if ss.source:
+                entity["soilSuitabilitySource"] = {"type": "Property", "value": ss.source}
+            detail = {"ph": ss.ph, "texture": ss.texture, "drainage": ss.drainage}
+            if any(v is not None for v in detail.values()):
+                entity["soilSuitabilityDetail"] = {"type": "Property", "value": detail}
         return entity
 
     def to_zone_ngsi_ld(self) -> dict[str, Any]:
@@ -748,10 +761,19 @@ class SoilActual(BaseModel):
 
 
 class SoilSuitability(BaseModel):
-    ph_match: bool = True
-    texture_match: bool = True
-    awc_sufficient: bool = True
-    overall: str = "unknown"
+    # C.5 graded verdict (from bioorch assess_soil_suitability)
+    verdict: str | None = None        # suitable|marginal|unsuitable|unknown
+    reason: str | None = None
+    confidence: str | None = None
+    source: str | None = None
+    ph: dict | None = None
+    texture: dict | None = None
+    drainage: dict | None = None
+    # legacy binary (compute_soil_suitability) — kept during Expand, removed in a later Contract PR
+    ph_match: bool | None = None
+    texture_match: bool | None = None
+    awc_sufficient: bool | None = None
+    overall: str | None = None
     warnings: list[str] = []
 
 

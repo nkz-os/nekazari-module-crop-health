@@ -262,6 +262,13 @@ const en = {
                 indicative_elevated_bd: 'Elevated bulk density (indicative)',
             },
         },
+        soilSuitability: {
+            title: 'Soil suitability',
+            verdict: { suitable: 'Suitable', marginal: 'Marginal', unsuitable: 'Unsuitable', unknown: 'No data' },
+            confidence: { high: 'High confidence', medium: 'Medium confidence', low: 'Low confidence' },
+            dimension: { ph: 'pH', texture: 'Texture', drainage: 'Drainage' },
+            noData: 'No soil-suitability data for this crop/parcel',
+        },
     },
 };
 
@@ -494,6 +501,13 @@ const es = {
                 moderate_traffic_exposure: 'Tráfico moderado de maquinaria',
                 indicative_elevated_bd: 'Densidad aparente elevada (indicativo)',
             },
+        },
+        soilSuitability: {
+            title: 'Aptitud del suelo',
+            verdict: { suitable: 'Apto', marginal: 'Marginal', unsuitable: 'No apto', unknown: 'Sin datos' },
+            confidence: { high: 'Confianza alta', medium: 'Confianza media', low: 'Confianza baja' },
+            dimension: { ph: 'pH', texture: 'Textura', drainage: 'Drenaje' },
+            noData: 'Sin datos de aptitud de suelo para este cultivo/parcela',
         },
     },
 };

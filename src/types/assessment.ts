@@ -136,6 +136,17 @@ export interface AssessmentData {
     excessMm?: number;
     drainageRateMmH?: number;
   };
+  soilSuitability?: {
+    verdict: 'suitable' | 'marginal' | 'unsuitable' | 'unknown';
+    reason?: string | null;
+    confidence?: 'high' | 'medium' | 'low' | null;
+    source?: string | null;
+    detail?: {
+      ph?: Record<string, unknown> | null;
+      texture?: Record<string, unknown> | null;
+      drainage?: Record<string, unknown> | null;
+    } | null;
+  } | null;
 }
 
 export interface ZoneAssessmentData extends AssessmentData {

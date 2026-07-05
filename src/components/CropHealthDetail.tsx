@@ -128,6 +128,17 @@ interface AssessmentData {
     excessMm?: number;
     drainageRateMmH?: number;
   };
+  soilSuitability?: {
+    verdict: 'suitable' | 'marginal' | 'unsuitable' | 'unknown';
+    reason?: string | null;
+    confidence?: 'high' | 'medium' | 'low' | null;
+    source?: string | null;
+    detail?: {
+      ph?: Record<string, unknown> | null;
+      texture?: Record<string, unknown> | null;
+      drainage?: Record<string, unknown> | null;
+    } | null;
+  } | null;
 }
 
 interface CropHealthDetailProps {
@@ -445,6 +456,37 @@ const CropHealthDetail: React.FC<CropHealthDetailProps> = ({ parcelId }) => {
             {t(`compaction.level.${assessment.compactionRisk.level}`)}
             {assessment.compactionRisk.advisory && ` · ${t(`compaction.advisory.${assessment.compactionRisk.advisory}`)}`}
           </p>
+        </MetricSection>
+      )}
+
+      {/* Soil Suitability */}
+      {assessment.soilSuitability && (
+        <MetricSection>
+          <span className="text-xs text-nkz-text-secondary font-medium uppercase tracking-wider block mb-1">
+            {t('soilSuitability.title')}
+          </span>
+          <div>
+            <Badge intent={
+              assessment.soilSuitability.verdict === 'suitable' ? 'positive' :
+              assessment.soilSuitability.verdict === 'marginal' ? 'warning' :
+              assessment.soilSuitability.verdict === 'unsuitable' ? 'negative' :
+              'default'
+            }>
+              {t(`soilSuitability.verdict.${assessment.soilSuitability.verdict}`)}
+            </Badge>
+            {assessment.soilSuitability.verdict === 'unknown' ? (
+              <p className="text-xs text-nkz-text-muted mt-1">{t('soilSuitability.noData')}</p>
+            ) : (
+              assessment.soilSuitability.reason && (
+                <p className="text-xs text-nkz-text-primary mt-1">{assessment.soilSuitability.reason}</p>
+              )
+            )}
+            {assessment.soilSuitability.confidence && (
+              <p className="text-xs text-nkz-text-muted mt-0.5">
+                {t(`soilSuitability.confidence.${assessment.soilSuitability.confidence}`)}
+              </p>
+            )}
+          </div>
         </MetricSection>
       )}
 

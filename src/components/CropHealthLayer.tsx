@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useViewer } from '@nekazari/sdk';
 import { cropHealthFetch } from '../api/cropHealthApi';
 import { MAP_LAYER_MODE_KEY, type MapLayerMode } from '../constants';
-import type { AssessmentData } from '../types/assessment';
+import type { AssessmentData, ZoneAssessmentData } from '../types/assessment';
 
 const SEVERITY_COLORS: Record<string, { fill: string; alpha: number }> = {
   LOW: { fill: '#16a34a', alpha: 0.3 },
@@ -55,6 +55,38 @@ function layerColor(a: AssessmentData, mode: MapLayerMode): { fill: string; alph
   return { fill: '#16a34a', alpha: 0.35 };
 }
 
+function ringToDegreesArray(ring: number[][]): number[] {
+  const flat: number[] = [];
+  for (const [lon, lat] of ring) {
+    flat.push(lon, lat);
+  }
+  return flat;
+}
+
+function polygonRings(geometry: ZoneAssessmentData['geometry']): number[][][] {
+  if (!geometry) return [];
+  if (geometry.type === 'Polygon') {
+    return geometry.coordinates as number[][][];
+  }
+  if (geometry.type === 'MultiPolygon') {
+    return (geometry.coordinates as number[][][][]).map((poly) => poly[0]);
+  }
+  return [];
+}
+
+function zoneCentroid(geometry: ZoneAssessmentData['geometry']): [number, number] | null {
+  const rings = polygonRings(geometry);
+  const ring = rings[0];
+  if (!ring?.length) return null;
+  let lon = 0;
+  let lat = 0;
+  for (const [x, y] of ring) {
+    lon += x;
+    lat += y;
+  }
+  return [lon / ring.length, lat / ring.length];
+}
+
 const CropHealthLayer: React.FC = () => {
   const { cesiumViewer } = useViewer();
   const [mode, setMode] = useState<MapLayerMode>(readMapMode);
@@ -72,23 +104,78 @@ const CropHealthLayer: React.FC = () => {
   useEffect(() => {
     if (!cesiumViewer?.entities) return;
 
-    const fetchAndRender = async () => {
-      const currentMode = readMapMode();
-      setMode(currentMode);
-      const data = await cropHealthFetch<{ assessments: AssessmentData[] }>('/assessments/all');
-      const assessments = data?.assessments ?? [];
-      if (!assessments.length) return;
-
+    const clearCropHealthEntities = () => {
       cesiumViewer.entities.values.forEach((e: { id?: string }) => {
         if (e.id?.startsWith('crop-health-')) {
           cesiumViewer.entities.remove(e);
         }
       });
+    };
+
+    const fetchAndRender = async () => {
+      const currentMode = readMapMode();
+      setMode(currentMode);
+
+      const [parcelData, zoneData] = await Promise.all([
+        cropHealthFetch<{ assessments: AssessmentData[] }>('/assessments/all'),
+        cropHealthFetch<{ zones: ZoneAssessmentData[] }>('/assessments/zones/all'),
+      ]);
+
+      const assessments = parcelData?.assessments ?? [];
+      const zones = zoneData?.zones ?? [];
+
+      clearCropHealthEntities();
+      if (!assessments.length && !zones.length) return;
 
       const Cesium = (window as { Cesium?: typeof import('cesium') }).Cesium;
       if (!Cesium) return;
 
+      const zonedParcels = new Set(zones.map((z) => z.parcelId).filter(Boolean) as string[]);
+
+      for (const zone of zones) {
+        if (!zone.geometry || !zone.parcelId || !zone.zoneId) continue;
+        if (currentMode !== 'severity' && layerValue(zone, currentMode) == null) continue;
+
+        const colors = layerColor(zone, currentMode);
+        const material = Cesium.Color.fromCssColorString(colors.fill)?.withAlpha(colors.alpha);
+        const outline = Cesium.Color.fromCssColorString(colors.fill);
+        const rings = polygonRings(zone.geometry);
+
+        for (let i = 0; i < rings.length; i += 1) {
+          const positions = Cesium.Cartesian3.fromDegreesArray(ringToDegreesArray(rings[i]));
+          cesiumViewer.entities.add({
+            id: `crop-health-zone-${zone.parcelId}-${zone.zoneId}-${i}`,
+            polygon: {
+              hierarchy: positions,
+              material,
+              outline: true,
+              outlineColor: outline,
+              height: 0,
+            },
+          });
+        }
+
+        const centroid = zoneCentroid(zone.geometry);
+        if (centroid) {
+          cesiumViewer.entities.add({
+            id: `crop-health-zone-label-${zone.parcelId}-${zone.zoneId}`,
+            position: Cesium.Cartesian3.fromDegrees(centroid[0], centroid[1]),
+            label: {
+              text: layerLabel(zone, currentMode),
+              font: '11px sans-serif',
+              fillColor: Cesium.Color.WHITE,
+              outlineColor: Cesium.Color.BLACK,
+              outlineWidth: 2,
+              style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+              verticalOrigin: Cesium.VerticalOrigin.CENTER,
+              pixelOffset: new Cesium.Cartesian2(0, -8),
+            },
+          });
+        }
+      }
+
       for (const a of assessments) {
+        if (!a.parcelId || zonedParcels.has(a.parcelId)) continue;
         if (currentMode !== 'severity' && layerValue(a, currentMode) == null) continue;
 
         const parcelEntity = cesiumViewer.entities.values.find(
@@ -116,7 +203,10 @@ const CropHealthLayer: React.FC = () => {
 
     fetchAndRender();
     const interval = setInterval(fetchAndRender, 5 * 60 * 1000);
-    return () => clearInterval(interval);
+    return () => {
+      clearInterval(interval);
+      clearCropHealthEntities();
+    };
   }, [cesiumViewer, mode]);
 
   return null;

@@ -5,6 +5,7 @@ import CropStatusSnapshot from './CropStatusSnapshot';
 import PhenologyTimeline from './PhenologyTimeline';
 import CropHealthRisksPanel from './CropHealthRisksPanel';
 import CropHealthDetailTabs from './CropHealthDetailTabs';
+import ZoneHealthPanel from './ZoneHealthPanel';
 import { useParcelHealthData } from '../hooks/useParcelHealthData';
 
 interface ParcelHealthWorkbenchProps {
@@ -45,6 +46,7 @@ const ParcelHealthWorkbench: React.FC<ParcelHealthWorkbenchProps> = ({ parcelId,
   return (
     <div className="space-y-0">
       <CropStatusSnapshot parcelId={parcelId} parcelName={parcelName} />
+      <ZoneHealthPanel zones={data.zoneAssessments} isWholeParcel={data.isWholeParcel} />
       <PhenologyTimeline status={data.phenologyStatus} />
       <CropHealthRisksPanel diseases={data.diseases} assessment={data.assessment} />
       <CropHealthDetailTabs

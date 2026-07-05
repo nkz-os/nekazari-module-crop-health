@@ -24,6 +24,29 @@ def extract_parcel_id(entity: dict[str, Any]) -> str:
     return obj.replace("urn:ngsi-ld:AgriParcel:", "")
 
 
+def extract_zone_id(entity: dict[str, Any]) -> str:
+    zid = prop_value(entity, "zoneId")
+    if zid:
+        return str(zid)
+    ref = entity.get("hasAgriParcelZone")
+    if isinstance(ref, dict):
+        urn = ref.get("object", "")
+    elif isinstance(ref, str):
+        urn = ref
+    else:
+        return ""
+    return urn.split(":")[-1] if urn else ""
+
+
+def extract_zone_urn(entity: dict[str, Any]) -> str:
+    ref = entity.get("hasAgriParcelZone")
+    if isinstance(ref, dict):
+        return ref.get("object", "") or ""
+    if isinstance(ref, str):
+        return ref
+    return ""
+
+
 def _soil_stress_level(ratio: float | None) -> str:
     if ratio is None:
         return "none"
@@ -234,3 +257,35 @@ def dedupe_latest_per_parcel(entities: list[dict[str, Any]]) -> list[dict[str, A
         if existing is None or assessed > prop_value(existing, "assessedAt", ""):
             by_parcel[pid] = entity
     return list(by_parcel.values())
+
+
+def dedupe_latest_per_zone(entities: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    by_key: dict[str, dict[str, Any]] = {}
+    for entity in entities:
+        pid = extract_parcel_id(entity)
+        zid = extract_zone_id(entity)
+        if not zid:
+            continue
+        key = f"{pid}:{zid}"
+        existing = by_key.get(key)
+        assessed = prop_value(entity, "assessedAt", "")
+        if existing is None or assessed > prop_value(existing, "assessedAt", ""):
+            by_key[key] = entity
+    return list(by_key.values())
+
+
+def map_entity_to_zone_assessment(
+    entity: dict[str, Any],
+    *,
+    geometry: dict[str, Any] | None = None,
+    sensor_nearby: bool | None = None,
+) -> dict[str, Any]:
+    """Build a zone-scoped assessment dict with optional AgriParcelZone geometry."""
+    result = map_entity_to_assessment(entity)
+    result["zoneId"] = extract_zone_id(entity)
+    result["zoneUrn"] = extract_zone_urn(entity)
+    if geometry is not None:
+        result["geometry"] = geometry
+    if sensor_nearby is not None:
+        result["sensorNearby"] = sensor_nearby
+    return result

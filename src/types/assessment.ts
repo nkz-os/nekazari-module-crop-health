@@ -138,6 +138,16 @@ export interface AssessmentData {
   };
 }
 
+export interface ZoneAssessmentData extends AssessmentData {
+  zoneId: string;
+  zoneUrn?: string;
+  geometry?: {
+    type: string;
+    coordinates: number[][][] | number[][][][];
+  };
+  sensorNearby?: boolean;
+}
+
 export interface ParcelSummary {
   parcelId: string;
   parcelName?: string;

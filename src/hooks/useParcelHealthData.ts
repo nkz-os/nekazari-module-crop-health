@@ -8,10 +8,13 @@ import type {
   PhenologyParams,
   PhenologyStatus,
   TrendPoint,
+  ZoneAssessmentData,
 } from '../types/assessment';
 
 interface ParcelHealthBundle {
   assessment: AssessmentData | null;
+  zoneAssessments: ZoneAssessmentData[];
+  isWholeParcel: boolean;
   phenologyParams: PhenologyParams | null;
   phenologyStatus: PhenologyStatus | null;
   trend: TrendPoint[];
@@ -25,6 +28,8 @@ interface ParcelHealthBundle {
 
 export function useParcelHealthData(parcelId: string | null): ParcelHealthBundle {
   const [assessment, setAssessment] = useState<AssessmentData | null>(null);
+  const [zoneAssessments, setZoneAssessments] = useState<ZoneAssessmentData[]>([]);
+  const [isWholeParcel, setIsWholeParcel] = useState(true);
   const [phenologyParams, setPhenologyParams] = useState<PhenologyParams | null>(null);
   const [phenologyStatus, setPhenologyStatus] = useState<PhenologyStatus | null>(null);
   const [trend, setTrend] = useState<TrendPoint[]>([]);
@@ -37,6 +42,8 @@ export function useParcelHealthData(parcelId: string | null): ParcelHealthBundle
   const refresh = useCallback(async () => {
     if (!parcelId) {
       setAssessment(null);
+      setZoneAssessments([]);
+      setIsWholeParcel(true);
       setPhenologyParams(null);
       setPhenologyStatus(null);
       setTrend([]);
@@ -52,8 +59,11 @@ export function useParcelHealthData(parcelId: string | null): ParcelHealthBundle
     setError(null);
 
     try {
-      const [latest, history, corr, phenology, diseaseRes] = await Promise.all([
+      const [latest, zonesRes, history, corr, phenology, diseaseRes] = await Promise.all([
         cropHealthFetch<{ assessments: AssessmentData[] }>(`/assessments/latest?parcelId=${encodeURIComponent(parcelId)}`),
+        cropHealthFetch<{ zones: ZoneAssessmentData[]; isWholeParcel?: boolean }>(
+          `/assessments/zones?parcelId=${encodeURIComponent(parcelId)}`,
+        ),
         cropHealthFetch<{ points: TrendPoint[] }>(`/assessments/history?parcelId=${encodeURIComponent(parcelId)}&days=7`),
         cropHealthFetch<{ pairs: CorrelationPoint[]; stats?: CorrelationStats }>(
           `/assessments/correlation?parcelId=${encodeURIComponent(parcelId)}&days=30`,
@@ -64,6 +74,8 @@ export function useParcelHealthData(parcelId: string | null): ParcelHealthBundle
 
       const nextAssessment = latest?.assessments?.[0] ?? null;
       setAssessment(nextAssessment);
+      setZoneAssessments(zonesRes?.zones ?? []);
+      setIsWholeParcel(zonesRes?.isWholeParcel ?? true);
       setTrend(history?.points ?? []);
       setCorrelation(corr?.pairs ?? []);
       setCorrelationStats(corr?.stats ?? null);
@@ -96,6 +108,8 @@ export function useParcelHealthData(parcelId: string | null): ParcelHealthBundle
 
   return {
     assessment,
+    zoneAssessments,
+    isWholeParcel,
     phenologyParams,
     phenologyStatus,
     trend,

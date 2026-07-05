@@ -16,7 +16,7 @@ water_stress_model.py. The risk-worker uses batch meteorological data
 from __future__ import annotations
 
 import logging
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 
 from app.engines.mds_model import calculate_mds_from_readings
 from app.engines.phenology_progress import derive_stage_from_gdd
@@ -73,6 +73,15 @@ def _resolve_depletion_fraction(crop_context) -> float:
     if crop_context and crop_context.crop and crop_context.crop.eppo:
         return _DEPLETION_FRACTION_P.get(crop_context.crop.eppo, 0.50)
     return 0.50
+
+
+def attach_soil_suitability(assessment, crop_context) -> None:
+    """Surface the committed crop's soil-suitability verdict (pure read — bioorch
+    computed it in crop-context; we never recompute). Absent context → left None."""
+    soil = getattr(crop_context, "soil", None) if crop_context else None
+    suitability = getattr(soil, "suitability", None) if soil else None
+    if suitability is not None and getattr(suitability, "verdict", None):
+        assessment.soil_suitability = suitability
 
 
 def _determine_overall_severity(assessment: CropHealthAssessment) -> Severity:
@@ -392,6 +401,7 @@ async def trigger(
         return None
 
     rollup = _aggregate_rollup(effective_parcel, zone_results)
+    attach_soil_suitability(rollup, crop_context)
     await _publish_assessment(rollup.to_ngsi_ld(), tenant_id)
     # Preserve the sensor-path derived events + parent aggregation on the rollup.
     await _emit_assessment_side_effects(

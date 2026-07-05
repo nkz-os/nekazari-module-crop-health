@@ -134,3 +134,25 @@ class TestAssessmentsAPI:
             resp = client.get("/api/crop-health/diseases/active")
             assert resp.status_code == 200
             assert resp.json() == {"risks": []}
+
+
+def test_pipeline_surfaces_soil_suitability_from_context():
+    from datetime import datetime, timezone
+    from app.schemas import CropHealthAssessment, SoilSuitability
+    from app.services.pipeline import attach_soil_suitability
+
+    class _Ctx:  # minimal stand-in for CropContext with a populated soil.suitability
+        class soil:
+            suitability = SoilSuitability(verdict="marginal", reason="pH 7.4 above max")
+    a = CropHealthAssessment(parcel_id="urn:p:1", assessed_at=datetime(2026, 6, 21, tzinfo=timezone.utc))
+    attach_soil_suitability(a, _Ctx())
+    assert a.soil_suitability.verdict == "marginal"
+
+
+def test_pipeline_soil_suitability_none_when_no_context():
+    from datetime import datetime, timezone
+    from app.schemas import CropHealthAssessment
+    from app.services.pipeline import attach_soil_suitability
+    a = CropHealthAssessment(parcel_id="urn:p:1", assessed_at=datetime(2026, 6, 21, tzinfo=timezone.utc))
+    attach_soil_suitability(a, None)
+    assert a.soil_suitability is None

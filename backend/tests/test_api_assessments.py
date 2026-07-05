@@ -136,6 +136,27 @@ class TestAssessmentsAPI:
             assert resp.json() == {"risks": []}
 
 
+def test_mapper_reads_soil_suitability_roundtrip():
+    from datetime import datetime, timezone
+    from app.schemas import CropHealthAssessment, SoilSuitability
+    from app.api.assessment_mapper import map_entity_to_assessment
+    entity = CropHealthAssessment(
+        parcel_id="urn:ngsi-ld:AgriParcel:t:1",
+        assessed_at=datetime(2026, 6, 21, tzinfo=timezone.utc),
+        soil_suitability=SoilSuitability(verdict="marginal", reason="pH 7.4",
+            confidence="medium")).to_ngsi_ld()
+    entity["id"] = "urn:ngsi-ld:CropHealthAssessment:t:1"
+    out = map_entity_to_assessment(entity)
+    assert out["soilSuitability"]["verdict"] == "marginal"
+    assert out["soilSuitability"]["confidence"] == "medium"
+
+
+def test_mapper_soil_suitability_absent():
+    from app.api.assessment_mapper import map_entity_to_assessment
+    out = map_entity_to_assessment({"id": "urn:x", "type": "CropHealthAssessment"})
+    assert out.get("soilSuitability") is None
+
+
 def test_pipeline_surfaces_soil_suitability_from_context():
     from datetime import datetime, timezone
     from app.schemas import CropHealthAssessment, SoilSuitability

@@ -153,6 +153,17 @@ def map_entity_to_assessment(entity: dict[str, Any]) -> dict[str, Any]:
             "hasData": True,
         }
 
+    ss_verdict = prop_value(entity, "soilSuitabilityVerdict")
+    soil_suitability = None
+    if ss_verdict:
+        soil_suitability = {
+            "verdict": ss_verdict,
+            "reason": prop_value(entity, "soilSuitabilityReason"),
+            "confidence": prop_value(entity, "soilSuitabilityConfidence"),
+            "source": prop_value(entity, "soilSuitabilitySource"),
+            "detail": prop_value(entity, "soilSuitabilityDetail"),
+        }
+
     return {
         "id": entity.get("id", ""),
         "parcelId": parcel,
@@ -220,6 +231,7 @@ def map_entity_to_assessment(entity: dict[str, Any]) -> dict[str, Any]:
         "compactionRisk": compaction_risk,
         "soilSensors": soil_sensors,
         "species": prop_value(entity, "cropSpecies"),
+        "soilSuitability": soil_suitability,
     }
 
 

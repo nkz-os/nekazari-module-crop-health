@@ -568,6 +568,29 @@ _DEFAULT_SOIL_DICT = {
 }
 
 
+def _soil_num(value: Any, default: float) -> float:
+    if value is None:
+        return default
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _summary_data_source(data: dict[str, Any], horizon: dict[str, Any]) -> str:
+    raw = data.get("dataSource")
+    if isinstance(raw, dict):
+        val = raw.get("value")
+        if val:
+            return str(val)
+    elif isinstance(raw, str) and raw.strip():
+        return raw.strip()
+    src = horizon.get("source")
+    if src:
+        return str(src)
+    return "soilgrids"
+
+
 async def _resolve_parcel_coords(parcel_id: str, tenant_id: str) -> tuple[float, float] | None:
     """Resolve parcel centroid coordinates from Orion-LD AgriParcel."""
     cache_key = f"{tenant_id}:{parcel_id}"
@@ -673,16 +696,19 @@ async def get_soil_properties(parcel_id: str, tenant_id: str = "") -> "SoilPrope
                 if horizons:
                     h = horizons[0]
                     soil_data = {
-                        "sand_pct": h.get("sand", 40),
-                        "clay_pct": h.get("clay", 20),
-                        "silt_pct": h.get("silt", 40),
-                        "organic_carbon_pct": h.get("organicCarbon", 1.0),
-                        "field_capacity": h.get("fieldCapacity", 0.27),
-                        "wilting_point": h.get("wiltingPoint", 0.12),
-                        "ksat_mm_h": h.get("saturatedHydraulicConductivity", 13.0),
-                        "scs_hydrologic_group": h.get("hydrologicGroup", "B"),
-                        "usda_texture_class": h.get("usdaTextureClass", "loam"),
-                        "source": data.get("dataSource", {}).get("value", "lab_analysis"),
+                        "sand_pct": _soil_num(h.get("sand"), 40),
+                        "clay_pct": _soil_num(h.get("clay"), 20),
+                        "silt_pct": _soil_num(h.get("silt"), 40),
+                        "organic_carbon_pct": _soil_num(h.get("organicCarbon"), 1.0),
+                        "field_capacity": _soil_num(h.get("fieldCapacity"), 0.27),
+                        "wilting_point": _soil_num(h.get("wiltingPoint"), 0.12),
+                        "ksat_mm_h": _soil_num(
+                            h.get("ksatSaturated") or h.get("saturatedHydraulicConductivity"),
+                            13.0,
+                        ),
+                        "scs_hydrologic_group": h.get("hydrologicGroup") or "B",
+                        "usda_texture_class": h.get("usdaTextureClass") or "loam",
+                        "source": _summary_data_source(data, h),
                         "has_data": True,
                     }
     except Exception:
@@ -707,16 +733,16 @@ async def get_soil_properties(parcel_id: str, tenant_id: str = "") -> "SoilPrope
                         tex = data.get("texture", {})
                         hyd = data.get("hydraulic", {})
                         soil_data = {
-                            "sand_pct": tex.get("sand", 40),
-                            "clay_pct": tex.get("clay", 20),
-                            "silt_pct": tex.get("silt", 40),
-                            "organic_carbon_pct": tex.get("organicCarbon", 1.0),
-                            "field_capacity": hyd.get("fieldCapacity", 0.27),
-                            "wilting_point": hyd.get("wiltingPoint", 0.12),
-                            "ksat_mm_h": hyd.get("saturatedHydraulicConductivity", 13.0),
-                            "scs_hydrologic_group": hyd.get("hydrologicGroup", "B"),
-                            "usda_texture_class": tex.get("usdaTextureClass", "loam"),
-                            "source": data.get("source", {}).get("provider", "soilgrids"),
+                            "sand_pct": _soil_num(tex.get("sand"), 40),
+                            "clay_pct": _soil_num(tex.get("clay"), 20),
+                            "silt_pct": _soil_num(tex.get("silt"), 40),
+                            "organic_carbon_pct": _soil_num(tex.get("organicCarbon"), 1.0),
+                            "field_capacity": _soil_num(hyd.get("fieldCapacity"), 0.27),
+                            "wilting_point": _soil_num(hyd.get("wiltingPoint"), 0.12),
+                            "ksat_mm_h": _soil_num(hyd.get("saturatedHydraulicConductivity"), 13.0),
+                            "scs_hydrologic_group": hyd.get("hydrologicGroup") or "B",
+                            "usda_texture_class": tex.get("usdaTextureClass") or "loam",
+                            "source": (data.get("source") or {}).get("provider") or "soilgrids",
                             "has_data": True,
                         }
             except Exception:

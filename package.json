@@ -1,6 +1,6 @@
 {
   "name": "nekazari-module-crop-health",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "packageManager": "pnpm@9.0.0",
   "type": "module",
@@ -14,7 +14,11 @@
     "build:module": "vite build"
   },
   "dependencies": {
+    "@nekazari/design-tokens": "^0.1.0-alpha.0",
     "@nekazari/sdk": "^1.0.3",
+    "@nekazari/ui-kit": "^1.0.2-alpha.4",
+    "@nekazari/viewer-kit": "^0.1.1-alpha.0",
+    "lucide-react": "^0.424.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },

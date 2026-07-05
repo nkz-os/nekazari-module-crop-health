@@ -2,8 +2,8 @@ import CropHealthWidget from '../components/CropHealthWidget';
 import CropHealthContextPanel from '../components/CropHealthContextPanel';
 import CropHealthLayer from '../components/CropHealthLayer';
 import DiseaseRiskWidget from '../components/DiseaseRiskWidget';
-import DiseaseRiskContextPanel from '../components/DiseaseRiskContextPanel';
 import CompactionRiskWidget from '../components/CompactionRiskWidget';
+import CropHealthMapModeWidget from '../components/CropHealthMapModeWidget';
 
 const MODULE_ID = 'crop-health';
 
@@ -30,6 +30,13 @@ export const moduleSlots = {
       localComponent: CompactionRiskWidget,
       priority: 30,
     },
+    {
+      id: 'crop-health-map-mode',
+      moduleId: MODULE_ID,
+      component: 'CropHealthMapModeWidget',
+      localComponent: CropHealthMapModeWidget,
+      priority: 40,
+    },
   ],
   'context-panel': [
     {
@@ -38,13 +45,6 @@ export const moduleSlots = {
       component: 'CropHealthContextPanel',
       localComponent: CropHealthContextPanel,
       priority: 10,
-    },
-    {
-      id: 'crop-health-disease-context',
-      moduleId: MODULE_ID,
-      component: 'DiseaseRiskContextPanel',
-      localComponent: DiseaseRiskContextPanel,
-      priority: 20,
     },
   ],
   'map-layer': [

@@ -1,4 +1,5 @@
 import React from 'react';
+import { useTranslation } from '@nekazari/sdk';
 
 type Severity = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
 
@@ -26,11 +27,14 @@ const SEVERITY_STYLES: Record<Severity, { bg: string; text: string; border: stri
 interface SeverityBadgeProps {
   severity: string;
   dotOnly?: boolean;
+  label?: string;
 }
 
-export const SeverityBadge: React.FC<SeverityBadgeProps> = ({ severity, dotOnly = false }) => {
+export const SeverityBadge: React.FC<SeverityBadgeProps> = ({ severity, dotOnly = false, label }) => {
+  const { t } = useTranslation('crop-health');
   const sev = (severity?.toUpperCase() || 'LOW') as Severity;
   const style = SEVERITY_INTENT[sev] || SEVERITY_INTENT.LOW;
+  const text = label ?? t(`severity.${sev}`, severity);
 
   if (dotOnly) {
     return (
@@ -48,7 +52,7 @@ export const SeverityBadge: React.FC<SeverityBadgeProps> = ({ severity, dotOnly 
 
   return (
     <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium leading-4 ${style.badge}`}>
-      {severity}
+      {text}
     </span>
   );
 };

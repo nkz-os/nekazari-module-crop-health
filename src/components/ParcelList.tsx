@@ -1,22 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { useTranslation } from '@nekazari/sdk';
-
-interface ParcelSummary {
-  parcelId: string;
-  parcelName?: string;
-  cropName?: string;
-  phenologyStage?: string;
-  areaHa?: number;
-  overallSeverity?: string;
-  cwsiValue?: number;
-  vigorIndex?: number;
-  assessedAt?: string;
-  hasData: boolean;
-  healthIndicator?: string;
-  sourcesActive?: number;
-  sourcesDegraded?: number;
-  sourcesDown?: number;
-}
+import { cropHealthFetch } from '../api/cropHealthApi';
+import { formatRelativeTime } from '../utils/relativeTime';
+import type { ParcelSummary } from '../types/assessment';
 
 const INDICATOR_COLORS: Record<string, string> = {
   green: '#16a34a',
@@ -26,23 +12,17 @@ const INDICATOR_COLORS: Record<string, string> = {
   grey: '#9ca3af',
 };
 
-function relativeTime(iso: string | undefined): string {
-  if (!iso) return '';
-  const diff = Date.now() - new Date(iso).getTime();
-  const mins = Math.floor(diff / 60000);
-  if (mins < 1) return 'ahora';
-  if (mins < 60) return `hace ${mins} min`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return `hace ${hours}h`;
-  return `hace ${Math.floor(hours / 24)}d`;
+function relativeTime(iso: string | undefined, t: ReturnType<typeof useTranslation>['t']): string {
+  return formatRelativeTime(iso, t);
 }
 
 interface ParcelListProps {
   onSelectParcel: (parcelId: string, parcelName: string) => void;
   selectedParcelId: string | null;
+  onParcelsLoaded?: (parcels: ParcelSummary[]) => void;
 }
 
-const ParcelList: React.FC<ParcelListProps> = ({ onSelectParcel, selectedParcelId }) => {
+const ParcelList: React.FC<ParcelListProps> = ({ onSelectParcel, selectedParcelId, onParcelsLoaded }) => {
   const { t } = useTranslation('crop-health');
   const [parcels, setParcels] = useState<ParcelSummary[]>([]);
   const [loading, setLoading] = useState(true);
@@ -53,12 +33,12 @@ const ParcelList: React.FC<ParcelListProps> = ({ onSelectParcel, selectedParcelI
     const fetchData = async () => {
       try {
         const [parcelsResp, sourcesResp] = await Promise.all([
-          fetch('/api/crop-health/parcels', { credentials: 'include' }),
-          fetch('/api/crop-health/sources', { credentials: 'include' }),
+          cropHealthFetch<{ parcels: ParcelSummary[] }>('/parcels'),
+          cropHealthFetch<{ parcels: Array<{ parcelId: string; healthIndicator: string; sourcesActive: number; sourcesDegraded: number; sourcesDown: number }> }>('/sources'),
         ]);
 
-        const parcelsData = parcelsResp.ok ? await parcelsResp.json() : { parcels: [] };
-        const sourcesData = sourcesResp.ok ? await sourcesResp.json() : { parcels: [] };
+        const parcelsData = parcelsResp ?? { parcels: [] };
+        const sourcesData = sourcesResp ?? { parcels: [] };
 
         const sourceMap: Record<string, { healthIndicator: string; sourcesActive: number; sourcesDegraded: number; sourcesDown: number }> = {};
         for (const s of sourcesData.parcels || []) {
@@ -74,6 +54,7 @@ const ParcelList: React.FC<ParcelListProps> = ({ onSelectParcel, selectedParcelI
         }));
 
         setParcels(merged);
+        onParcelsLoaded?.(merged);
       } catch (e: any) {
         setError(e.message);
       } finally {
@@ -183,7 +164,7 @@ const ParcelList: React.FC<ParcelListProps> = ({ onSelectParcel, selectedParcelI
                         CWSI {p.cwsiValue.toFixed(2)}
                       </span>
                     )}
-                    <p className="text-xs text-nkz-text-muted">{relativeTime(p.assessedAt)}</p>
+                    <p className="text-xs text-nkz-text-muted">{relativeTime(p.assessedAt, t)}</p>
                   </>
                 ) : (
                   <span className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium leading-4 bg-gray-100 text-gray-800 border border-gray-200">

@@ -8,10 +8,16 @@ from fastapi import APIRouter, Query, Request
 
 from app.api.assessment_mapper import (
     dedupe_latest_per_parcel,
+    dedupe_latest_per_zone,
+    extract_parcel_id,
+    extract_zone_id,
+    extract_zone_urn,
     map_entity_to_assessment,
+    map_entity_to_zone_assessment,
     prop_value,
 )
 from app.config import get_settings
+from app.services.zonation import is_whole_parcel, resolve_zones
 from nkz_platform_sdk.orion import OrionClient
 
 router = APIRouter()
@@ -40,6 +46,107 @@ async def _fetch_assessment_entities(tenant_id: str, parcel_id: str = "", limit:
         return []
     finally:
         await client.close()
+
+
+async def _fetch_zone_assessment_entities(tenant_id: str, parcel_id: str = "", limit: int = 100) -> list[dict]:
+    settings = get_settings()
+    client = OrionClient(tenant_id, base_url=settings.orion_ld_url, context_url=settings.orion_ld_context)
+    try:
+        q = None
+        if parcel_id:
+            q = (
+                f'(hasAgriParcel=="urn:ngsi-ld:AgriParcel:{parcel_id}"'
+                f'|refAgriParcel=="urn:ngsi-ld:AgriParcel:{parcel_id}")'
+            )
+        return await client.query_entities(
+            type="CropHealthZoneAssessment",
+            q=q,
+            limit=limit,
+            options="keyValues",
+        )
+    except Exception as e:
+        logger.warning("Orion CropHealthZoneAssessment query failed: %s", e)
+        return []
+    finally:
+        await client.close()
+
+
+def _zone_geometry_lookup(zones: list) -> dict[str, dict]:
+    """Map zoneId and zone URN to AgriParcelZone geometry metadata."""
+    by_id: dict[str, dict] = {}
+    for z in zones:
+        entry = {
+            "geometry": z.geometry,
+            "sensorNearby": z.sensor_nearby,
+        }
+        by_id[z.zone_id] = entry
+        if z.urn:
+            by_id[z.urn] = entry
+    return by_id
+
+
+async def _map_zone_entities_with_geometry(
+    tenant_id: str,
+    entities: list[dict],
+) -> tuple[list[dict], bool]:
+    """Attach AgriParcelZone geometry to zone assessment entities."""
+    if not entities:
+        return [], False
+
+    parcel_ids = sorted({extract_parcel_id(e) for e in entities if extract_parcel_id(e)})
+    lookup: dict[str, dict] = {}
+    whole_by_parcel: dict[str, bool] = {}
+
+    for pid in parcel_ids:
+        zones = await resolve_zones(f"urn:ngsi-ld:AgriParcel:{pid}", tenant_id, {})
+        whole_by_parcel[pid] = is_whole_parcel(zones)
+        lookup.update(_zone_geometry_lookup(zones))
+
+    mapped: list[dict] = []
+    for entity in entities:
+        pid = extract_parcel_id(entity)
+        zid = extract_zone_id(entity)
+        zurn = extract_zone_urn(entity)
+        meta = lookup.get(zurn) or lookup.get(zid) or {}
+        mapped.append(
+            map_entity_to_zone_assessment(
+                entity,
+                geometry=meta.get("geometry"),
+                sensor_nearby=meta.get("sensorNearby"),
+            )
+        )
+
+    is_whole = len(parcel_ids) == 1 and whole_by_parcel.get(parcel_ids[0], True)
+    return mapped, is_whole
+
+
+@router.get("/assessments/zones/all")
+async def all_zone_assessments(request: Request):
+    """Latest zone assessment per (parcel, zone) — map-layer compat."""
+    tenant_id = getattr(request.state, "tenant_id", "")
+    entities = await _fetch_zone_assessment_entities(tenant_id, limit=200)
+    latest = dedupe_latest_per_zone(entities)
+    zones, _ = await _map_zone_entities_with_geometry(tenant_id, latest)
+    zones.sort(key=lambda z: (z.get("parcelId", ""), z.get("zoneId", "")))
+    return {"zones": zones}
+
+
+@router.get("/assessments/zones")
+async def zone_assessments(
+    request: Request,
+    parcelId: str = Query("", alias="parcelId"),
+):
+    """Return latest CropHealthZoneAssessment per management zone for one parcel."""
+    if not parcelId:
+        return {"zones": [], "isWholeParcel": True}
+
+    tenant_id = getattr(request.state, "tenant_id", "")
+    entities = await _fetch_zone_assessment_entities(tenant_id, parcel_id=parcelId, limit=100)
+    latest = dedupe_latest_per_zone(entities)
+    zones, _ = await _map_zone_entities_with_geometry(tenant_id, latest)
+    zones.sort(key=lambda z: z.get("zoneId", ""))
+    is_whole = not zones or (len(zones) == 1 and zones[0].get("zoneId") == "parcel")
+    return {"zones": zones, "isWholeParcel": is_whole}
 
 
 def _linear_regression_stats(pairs: list[dict]) -> dict:

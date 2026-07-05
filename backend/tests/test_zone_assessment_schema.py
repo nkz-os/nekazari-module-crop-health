@@ -43,3 +43,24 @@ def test_soil_suitability_parses_graded_verdict_and_legacy():
                              assessed_at=datetime(2026, 6, 21, tzinfo=timezone.utc),
                              soil_suitability=graded)
     assert a.soil_suitability.verdict == "unsuitable"
+
+
+def test_to_ngsi_ld_emits_soil_suitability_when_present():
+    from app.schemas import CropHealthAssessment, SoilSuitability
+    a = CropHealthAssessment(parcel_id="urn:ngsi-ld:AgriParcel:t:1",
+        assessed_at=datetime(2026, 6, 21, tzinfo=timezone.utc),
+        soil_suitability=SoilSuitability(verdict="unsuitable", reason="pH high",
+            confidence="medium", source="crop tolerance × parcel soil",
+            ph={"value": 8.1, "verdict": "unsuitable"}, texture={"verdict": "suitable"},
+            drainage={"verdict": "suitable"}))
+    e = a.to_ngsi_ld()
+    assert e["soilSuitabilityVerdict"]["value"] == "unsuitable"
+    assert e["soilSuitabilityConfidence"]["value"] == "medium"
+    assert e["soilSuitabilityDetail"]["value"]["ph"]["verdict"] == "unsuitable"
+
+
+def test_to_ngsi_ld_omits_soil_suitability_when_absent():
+    from app.schemas import CropHealthAssessment
+    e = CropHealthAssessment(parcel_id="urn:ngsi-ld:AgriParcel:t:1",
+        assessed_at=datetime(2026, 6, 21, tzinfo=timezone.utc)).to_ngsi_ld()
+    assert "soilSuitabilityVerdict" not in e

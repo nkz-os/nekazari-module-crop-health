@@ -770,9 +770,15 @@ async def get_crop_context(
     if gdd is not None:
         params["gdd"] = str(gdd)
 
+    headers = (
+        {"X-Tenant-ID": tenant_id, "X-User-ID": "crop-health-worker"}
+        if tenant_id
+        else {}
+    )
+
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(url, params=params)
+            resp = await client.get(url, params=params, headers=headers)
             if resp.status_code == 200:
                 data = resp.json()
                 ctx = CropContext(**data)

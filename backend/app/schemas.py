@@ -781,7 +781,7 @@ class SoilRequirements(BaseModel):
     ph_min: float | None = None
     ph_max: float | None = None
     textures: list[str] = []
-    drainage: str | None = None
+    drainage: list[str] | str | None = None
     depth_min_cm: float | None = None
     salinity_max_ds_m: float | None = None
 

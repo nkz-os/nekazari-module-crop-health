@@ -68,13 +68,12 @@ async def test_compute_assessment_surfaces_soil_suitability(monkeypatch):
     async def _write(entity, tenant_id):
         pass
 
-    # Sentinel context with a marginal verdict
-    class _Suitability:
-        verdict = "marginal"
-        reason = "pH out of range"
+    # Sentinel context with a marginal verdict (real schema type — its
+    # None-default fields let to_ngsi_ld serialize without AttributeError)
+    from app.schemas import SoilSuitability
 
     class _Soil:
-        suitability = _Suitability()
+        suitability = SoilSuitability(verdict="marginal", reason="pH out of range")
 
     class _SentinelCtx:
         soil = _Soil()

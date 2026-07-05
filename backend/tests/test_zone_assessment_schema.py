@@ -30,3 +30,16 @@ def test_rollup_ngsi_ld_unchanged_type():
     assert e["type"] == "CropHealthAssessment"
     assert e["id"] == "urn:ngsi-ld:CropHealthAssessment:p1-20260621"
     assert "hasAgriParcelZone" not in e
+
+
+def test_soil_suitability_parses_graded_verdict_and_legacy():
+    from app.schemas import SoilSuitability, CropHealthAssessment
+    graded = SoilSuitability(verdict="unsuitable", reason="pH high",
+                             confidence="medium", ph={"value": 8.1, "verdict": "unsuitable"})
+    assert graded.verdict == "unsuitable"
+    legacy = SoilSuitability(ph_match=False, overall="unsuitable", warnings=["x"])
+    assert legacy.verdict is None and legacy.overall == "unsuitable"
+    a = CropHealthAssessment(parcel_id="urn:p:1",
+                             assessed_at=datetime(2026, 6, 21, tzinfo=timezone.utc),
+                             soil_suitability=graded)
+    assert a.soil_suitability.verdict == "unsuitable"

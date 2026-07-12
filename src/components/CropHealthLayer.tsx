@@ -156,7 +156,9 @@ const CropHealthLayer: React.FC = () => {
               material,
               outline: true,
               outlineColor: outline,
-              height: 0,
+              // No height: the polygon drapes on terrain (a height of 0 buries
+              // it under real terrain — IDENA/IGN elevations in the viewer).
+              classificationType: Cesium.ClassificationType.TERRAIN,
             },
           });
         }
@@ -175,6 +177,8 @@ const CropHealthLayer: React.FC = () => {
               style: Cesium.LabelStyle.FILL_AND_OUTLINE,
               verticalOrigin: Cesium.VerticalOrigin.CENTER,
               pixelOffset: new Cesium.Cartesian2(0, -8),
+              heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+              disableDepthTestDistance: Number.POSITIVE_INFINITY,
             },
           });
         }
@@ -203,6 +207,8 @@ const CropHealthLayer: React.FC = () => {
           outlineWidth: 2,
           style: Cesium.LabelStyle.FILL_AND_OUTLINE,
           verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+          heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+          disableDepthTestDistance: Number.POSITIVE_INFINITY,
         };
       }
     };

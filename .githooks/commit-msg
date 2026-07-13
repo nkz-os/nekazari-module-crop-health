@@ -1,24 +1,9 @@
 #!/bin/sh
 MSG=$(cat "$1")
+LEN=$(echo "$MSG" | wc -c)
+LINES=$(echo "$MSG" | wc -l)
 
-CLEAN=$(printf "%s\n" "$MSG" | sed \
-  -e '/^[Cc][Oo]-[Aa]uthored-[Bb]y:/d' \
-  -e '/^[Mm]ade-[Ww]ith:/d' \
-  -e '/^[Mm]ade [Ww]ith [Cc]ursor/d' \
-  -e '/^[Mm]ade [Bb]y [Cc]ursor/d' \
-  -e '/^[Mm]ade-with: [Cc]ursor/d' \
-  -e '/cursoragent@cursor\.com/d' \
-  -e '/^[Cc]ursor-Agent:/d')
-
-if [ "$CLEAN" != "$MSG" ]; then
-  printf "%s" "$CLEAN" > "$1"
-  MSG="$CLEAN"
-  echo "commit-msg: stripped agent attribution line(s)" >&2
-fi
-
-LEN=$(printf "%s" "$MSG" | wc -c)
-LINES=$(printf "%s" "$MSG" | wc -l)
-
+# Check for Spanish-specific characters (never appear in English text)
 if echo "$MSG" | grep -qE "[áéíóúñçÁÉÍÓÚÑÇ]"; then
   echo ""
   echo "ERROR: non-English characters in commit message."
@@ -27,6 +12,7 @@ if echo "$MSG" | grep -qE "[áéíóúñçÁÉÍÓÚÑÇ]"; then
   exit 1
 fi
 
+# Check length
 if [ "$LINES" -gt 4 ] || [ "$LEN" -gt 300 ]; then
   echo ""
   echo "ERROR: commit message too long ($LINES lines, $LEN chars)."
@@ -34,3 +20,4 @@ if [ "$LINES" -gt 4 ] || [ "$LEN" -gt 300 ]; then
   echo ""
   exit 1
 fi
+

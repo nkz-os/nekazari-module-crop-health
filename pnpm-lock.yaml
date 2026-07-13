@@ -12,8 +12,8 @@ importers:
         specifier: ^0.1.0-alpha.0
         version: 0.1.0-alpha.3(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
       '@nekazari/sdk':
-        specifier: ^1.2.0
-        version: 1.2.0(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(typescript@5.9.3)
+        specifier: ^1.0.3
+        version: 1.1.0(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
       '@nekazari/ui-kit':
         specifier: ^1.0.2-alpha.4
         version: 1.0.2-alpha.4(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
@@ -32,10 +32,10 @@ importers:
     devDependencies:
       '@nekazari/module-builder':
         specifier: ^2.0.3
-        version: 2.0.3(@nekazari/module-kit@0.8.0(@nekazari/sdk@1.2.0(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(typescript@5.9.3))(@nekazari/viewer-kit@0.1.1-alpha.6(react-dom@18.3.1(react@18.3.1))(react@18.3.1))(@tanstack/react-query@5.100.10(react@18.3.1))(react@18.3.1))(@vitejs/plugin-react@4.7.0(vite@5.4.21))(node-fetch@2.7.0)(typescript@5.9.3)(vite@5.4.21)
+        version: 2.0.3(@nekazari/module-kit@0.6.0)(@vitejs/plugin-react@4.7.0(vite@5.4.21))(node-fetch@2.7.0)(typescript@5.9.3)(vite@5.4.21)
       '@nekazari/module-kit':
-        specifier: ^0.8.0
-        version: 0.8.0(@nekazari/sdk@1.2.0(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(typescript@5.9.3))(@nekazari/viewer-kit@0.1.1-alpha.6(react-dom@18.3.1(react@18.3.1))(react@18.3.1))(@tanstack/react-query@5.100.10(react@18.3.1))(react@18.3.1)
+        specifier: ^0.6.0
+        version: 0.6.0(@nekazari/module-builder@2.0.3)(@nekazari/sdk@1.1.0(react-dom@18.3.1(react@18.3.1))(react@18.3.1))(@tanstack/react-query@5.100.10(react@18.3.1))(react@18.3.1)
       '@vitejs/plugin-react':
         specifier: ^4.3.1
         version: 4.7.0(vite@5.4.21)
@@ -360,16 +360,16 @@ packages:
       '@vitejs/plugin-react': ^4.0.0
       vite: '>=5.0.0'
 
-  '@nekazari/module-kit@0.8.0':
-    resolution: {integrity: sha512-Qwj4ZtLhpx2RM0Ms2pAvgLzdLbvtiAu7CEBWi3h8VS489+cICj27BTzCLK2Sa4FYutNrX8bBGUhiQhWfR5Ic2Q==}
+  '@nekazari/module-kit@0.6.0':
+    resolution: {integrity: sha512-pIuYKit/pV1H06yT12u1ShF6hOGbyVc4KV7NNxnNZ2QBX9SQeREvxKAWfJUEMr4hfI3B8oZopTwPUF1WeQG8Hg==}
     peerDependencies:
-      '@nekazari/sdk': '>=1.2.0'
-      '@nekazari/viewer-kit': '*'
+      '@nekazari/module-builder': '>=1.0.0'
+      '@nekazari/sdk': '>=1.1.0'
       '@tanstack/react-query': '>=5.0.0'
       react: '>=18.0.0'
 
-  '@nekazari/sdk@1.2.0':
-    resolution: {integrity: sha512-Hx2PGSSKbLnWmWGZxdip//HuChkUUsrqMDY6ZSLQpV9kN9R9+oS3qb15PtPHFfu8ibZMZKSCl1+TFzIHAy4cIg==}
+  '@nekazari/sdk@1.1.0':
+    resolution: {integrity: sha512-DkMbtXWpqvncq6sl/fYL/KnoVtvQ9mVUU3p9I6nGkXf3OMINHRoBKbv7Oosc53TbgpEVveKFasbMs78jKZSTFA==}
     peerDependencies:
       react: ^18.3.1
 
@@ -1205,6 +1205,9 @@ packages:
     resolution: {integrity: sha512-p0SaNjrHOnQeR8/VnfGbmg9te2kfyYSQ7Sc/j/6DtPL3JQvKxmjO9TSjNFpujqV3vEYYBvNNvXSxzyksBWAx1Q==}
     engines: {node: '>=12.0.0'}
 
+  cross-fetch@4.0.0:
+    resolution: {integrity: sha512-e4a5N8lVvuLgAWgnCrLr2PP0YyDOTHa9H/Rj54dirp61qXnNq46m82bRhNqIA5VccJtWBvPTFRV3TtvHUKPB1g==}
+
   debug@4.4.3:
     resolution: {integrity: sha512-RGwwWnwQvkVfavKVt22FGLw+xYSdzARwm0ru6DhTVA3umU5hZc28V3kO4stgYryrTlLpuvgI9GiijltAjNbcqA==}
     engines: {node: '>=6.0'}
@@ -1281,6 +1284,12 @@ packages:
 
   html-parse-stringify@3.0.1:
     resolution: {integrity: sha512-KknJ50kTInJ7qIScF3jeaFRpMpE8/lfiTdzf/twXyPBLAGrLRTmkz3AdTnKeh40X8k9L2fdYwEp/42WGXIRGcg==}
+
+  i18next-browser-languagedetector@8.2.1:
+    resolution: {integrity: sha512-bZg8+4bdmaOiApD7N7BPT9W8MLZG+nPTOFlLiJiT8uzKXFjhxw4v2ierCXOwB5sFDMtuA5G4kgYZ0AznZxQ/cw==}
+
+  i18next-http-backend@2.7.3:
+    resolution: {integrity: sha512-FgZxrXdRA5u44xfYsJlEBL4/KH3f2IluBpgV/7riW0YW2VEyM8FzVt2XHAOi6id0Ppj7vZvCZVpp5LrGXnc8Ig==}
 
   i18next@23.16.8:
     resolution: {integrity: sha512-06r/TitrM88Mg5FdUXAKL96dJMzgqLE5dv3ryBAra4KCwD9mJ4ndOTS95ZuymIGoE+2hzfdaMak2X11/es7ZWg==}
@@ -1390,20 +1399,17 @@ packages:
     peerDependencies:
       react: ^18.3.1
 
-  react-i18next@15.7.4:
-    resolution: {integrity: sha512-nyU8iKNrI5uDJch0z9+Y5XEr34b0wkyYj3Rp+tfbahxtlswxSCjcUL9H0nqXo9IR3/t5Y5PKIA3fx3MfUyR9Xw==}
+  react-i18next@14.1.3:
+    resolution: {integrity: sha512-wZnpfunU6UIAiJ+bxwOiTmBOAaB14ha97MjOEnLGac2RJ+h/maIYXZuTHlmyqQVX1UVHmU1YDTQ5vxLmwfXTjw==}
     peerDependencies:
-      i18next: '>= 23.4.0'
+      i18next: '>= 23.2.3'
       react: '>= 16.8.0'
       react-dom: '*'
       react-native: '*'
-      typescript: ^5
     peerDependenciesMeta:
       react-dom:
         optional: true
       react-native:
-        optional: true
-      typescript:
         optional: true
 
   react-i18next@17.0.8:
@@ -1607,8 +1613,8 @@ packages:
   yallist@3.1.1:
     resolution: {integrity: sha512-a4UGQaWPH59mOXUYnAG2ewncQS4i4F43Tv3JoAM+s2VDAmS9NsK8GpDMLrCHPksFT7h3K6TOoUNn2pb7RoXx4g==}
 
-  zod@4.4.3:
-    resolution: {integrity: sha512-ytENFjIJFl2UwYglde2jchW2Hwm4GJFLDiSXWdTrJQBIN9Fcyp7n4DhxJEiWNAJMV1/BqWfW/kkg71UDcHJyTQ==}
+  zod@3.25.76:
+    resolution: {integrity: sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ==}
 
 snapshots:
 
@@ -1903,10 +1909,10 @@ snapshots:
       react: 18.3.1
       react-dom: 18.3.1(react@18.3.1)
 
-  '@nekazari/module-builder@2.0.3(@nekazari/module-kit@0.8.0(@nekazari/sdk@1.2.0(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(typescript@5.9.3))(@nekazari/viewer-kit@0.1.1-alpha.6(react-dom@18.3.1(react@18.3.1))(react@18.3.1))(@tanstack/react-query@5.100.10(react@18.3.1))(react@18.3.1))(@vitejs/plugin-react@4.7.0(vite@5.4.21))(node-fetch@2.7.0)(typescript@5.9.3)(vite@5.4.21)':
+  '@nekazari/module-builder@2.0.3(@nekazari/module-kit@0.6.0)(@vitejs/plugin-react@4.7.0(vite@5.4.21))(node-fetch@2.7.0)(typescript@5.9.3)(vite@5.4.21)':
     dependencies:
       '@module-federation/vite': 1.15.5(node-fetch@2.7.0)(typescript@5.9.3)(vite@5.4.21)
-      '@nekazari/module-kit': 0.8.0(@nekazari/sdk@1.2.0(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(typescript@5.9.3))(@nekazari/viewer-kit@0.1.1-alpha.6(react-dom@18.3.1(react@18.3.1))(react@18.3.1))(@tanstack/react-query@5.100.10(react@18.3.1))(react@18.3.1)
+      '@nekazari/module-kit': 0.6.0(@nekazari/module-builder@2.0.3)(@nekazari/sdk@1.1.0(react-dom@18.3.1(react@18.3.1))(react@18.3.1))(@tanstack/react-query@5.100.10(react@18.3.1))(react@18.3.1)
       '@vitejs/plugin-react': 4.7.0(vite@5.4.21)
       esbuild: 0.21.5
       vite: 5.4.21
@@ -1917,23 +1923,25 @@ snapshots:
       - utf-8-validate
       - vue-tsc
 
-  '@nekazari/module-kit@0.8.0(@nekazari/sdk@1.2.0(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(typescript@5.9.3))(@nekazari/viewer-kit@0.1.1-alpha.6(react-dom@18.3.1(react@18.3.1))(react@18.3.1))(@tanstack/react-query@5.100.10(react@18.3.1))(react@18.3.1)':
+  '@nekazari/module-kit@0.6.0(@nekazari/module-builder@2.0.3)(@nekazari/sdk@1.1.0(react-dom@18.3.1(react@18.3.1))(react@18.3.1))(@tanstack/react-query@5.100.10(react@18.3.1))(react@18.3.1)':
     dependencies:
-      '@nekazari/sdk': 1.2.0(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(typescript@5.9.3)
-      '@nekazari/viewer-kit': 0.1.1-alpha.6(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
+      '@nekazari/module-builder': 2.0.3(@nekazari/module-kit@0.6.0)(@vitejs/plugin-react@4.7.0(vite@5.4.21))(node-fetch@2.7.0)(typescript@5.9.3)(vite@5.4.21)
+      '@nekazari/sdk': 1.1.0(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
       '@tanstack/react-query': 5.100.10(react@18.3.1)
       react: 18.3.1
-      zod: 4.4.3
+      zod: 3.25.76
 
-  '@nekazari/sdk@1.2.0(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(typescript@5.9.3)':
+  '@nekazari/sdk@1.1.0(react-dom@18.3.1(react@18.3.1))(react@18.3.1)':
     dependencies:
       i18next: 23.16.8
+      i18next-browser-languagedetector: 8.2.1
+      i18next-http-backend: 2.7.3
       react: 18.3.1
-      react-i18next: 15.7.4(i18next@23.16.8)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(typescript@5.9.3)
+      react-i18next: 14.1.3(i18next@23.16.8)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
     transitivePeerDependencies:
+      - encoding
       - react-dom
       - react-native
-      - typescript
 
   '@nekazari/ui-kit@1.0.2-alpha.4(react-dom@18.3.1(react@18.3.1))(react@18.3.1)':
     dependencies:
@@ -2575,6 +2583,12 @@ snapshots:
     dependencies:
       luxon: 3.7.2
 
+  cross-fetch@4.0.0:
+    dependencies:
+      node-fetch: 2.7.0
+    transitivePeerDependencies:
+      - encoding
+
   debug@4.4.3:
     dependencies:
       ms: 2.1.3
@@ -2664,6 +2678,16 @@ snapshots:
     dependencies:
       void-elements: 3.1.0
 
+  i18next-browser-languagedetector@8.2.1:
+    dependencies:
+      '@babel/runtime': 7.29.2
+
+  i18next-http-backend@2.7.3:
+    dependencies:
+      cross-fetch: 4.0.0
+    transitivePeerDependencies:
+      - encoding
+
   i18next@23.16.8:
     dependencies:
       '@babel/runtime': 7.29.2
@@ -2715,7 +2739,6 @@ snapshots:
   node-fetch@2.7.0:
     dependencies:
       whatwg-url: 5.0.0
-    optional: true
 
   node-releases@2.0.44: {}
 
@@ -2745,7 +2768,7 @@ snapshots:
       react: 18.3.1
       scheduler: 0.23.2
 
-  react-i18next@15.7.4(i18next@23.16.8)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(typescript@5.9.3):
+  react-i18next@14.1.3(i18next@23.16.8)(react-dom@18.3.1(react@18.3.1))(react@18.3.1):
     dependencies:
       '@babel/runtime': 7.29.2
       html-parse-stringify: 3.0.1
@@ -2753,7 +2776,6 @@ snapshots:
       react: 18.3.1
     optionalDependencies:
       react-dom: 18.3.1(react@18.3.1)
-      typescript: 5.9.3
 
   react-i18next@17.0.8(i18next@26.2.0(typescript@5.9.3))(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(typescript@5.9.3):
     dependencies:
@@ -2856,8 +2878,7 @@ snapshots:
 
   supports-preserve-symlinks-flag@1.0.0: {}
 
-  tr46@0.0.3:
-    optional: true
+  tr46@0.0.3: {}
 
   tslib@2.8.1: {}
 
@@ -2896,14 +2917,12 @@ snapshots:
 
   void-elements@3.1.0: {}
 
-  webidl-conversions@3.0.1:
-    optional: true
+  webidl-conversions@3.0.1: {}
 
   whatwg-url@5.0.0:
     dependencies:
       tr46: 0.0.3
       webidl-conversions: 3.0.1
-    optional: true
 
   which@1.3.1:
     dependencies:
@@ -2913,4 +2932,4 @@ snapshots:
 
   yallist@3.1.1: {}
 
-  zod@4.4.3: {}
+  zod@3.25.76: {}

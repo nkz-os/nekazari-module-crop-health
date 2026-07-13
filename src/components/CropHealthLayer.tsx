@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { useViewer, useViewerLayer } from '@nekazari/sdk';
+import { useViewer } from '@nekazari/sdk';
 import { cropHealthFetch } from '../api/cropHealthApi';
 import { MAP_LAYER_MODE_KEY, type MapLayerMode } from '../constants';
 import type { AssessmentData, ZoneAssessmentData } from '../types/assessment';
@@ -89,8 +89,6 @@ function zoneCentroid(geometry: ZoneAssessmentData['geometry']): [number, number
 
 const CropHealthLayer: React.FC = () => {
   const { cesiumViewer } = useViewer();
-  // Visibility and load status are driven by the host's unified Layers menu.
-  const { visible, setStatus } = useViewerLayer('crop-health-assessment');
   const [mode, setMode] = useState<MapLayerMode>(readMapMode);
 
   useEffect(() => {
@@ -120,38 +118,20 @@ const CropHealthLayer: React.FC = () => {
       });
     };
 
-    // Hidden from the host's Layers menu: clear and skip fetch/render.
-    if (!visible) {
-      clearCropHealthEntities();
-      setStatus('idle');
-      return;
-    }
-
     const fetchAndRender = async () => {
       const currentMode = readMapMode();
       setMode(currentMode);
-      setStatus('loading');
 
-      let parcelData: { assessments: AssessmentData[] } | null;
-      let zoneData: { zones: ZoneAssessmentData[] } | null;
-      try {
-        [parcelData, zoneData] = await Promise.all([
-          cropHealthFetch<{ assessments: AssessmentData[] }>('/assessments/all'),
-          cropHealthFetch<{ zones: ZoneAssessmentData[] }>('/assessments/zones/all'),
-        ]);
-      } catch {
-        setStatus('error');
-        return;
-      }
+      const [parcelData, zoneData] = await Promise.all([
+        cropHealthFetch<{ assessments: AssessmentData[] }>('/assessments/all'),
+        cropHealthFetch<{ zones: ZoneAssessmentData[] }>('/assessments/zones/all'),
+      ]);
 
       const assessments = parcelData?.assessments ?? [];
       const zones = zoneData?.zones ?? [];
 
       clearCropHealthEntities();
-      if (!assessments.length && !zones.length) {
-        setStatus('empty');
-        return;
-      }
+      if (!assessments.length && !zones.length) return;
 
       const Cesium = (window as { Cesium?: typeof import('cesium') }).Cesium;
       if (!Cesium) return;
@@ -231,8 +211,6 @@ const CropHealthLayer: React.FC = () => {
           disableDepthTestDistance: Number.POSITIVE_INFINITY,
         };
       }
-
-      setStatus('ready');
     };
 
     fetchAndRender();
@@ -241,7 +219,7 @@ const CropHealthLayer: React.FC = () => {
       clearInterval(interval);
       clearCropHealthEntities();
     };
-  }, [cesiumViewer, mode, visible, setStatus]);
+  }, [cesiumViewer, mode]);
 
   return null;
 };

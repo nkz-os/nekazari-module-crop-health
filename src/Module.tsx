@@ -16,4 +16,12 @@ export default defineModule({
   icon: 'sprout',
   main: MainPage,
   slots: moduleSlots as never,
+  viewerLayers: [
+    {
+      id: 'crop-health-assessment',
+      titleKey: 'crop-health:title',
+      supportsOpacity: false,
+      defaultVisible: true,
+    },
+  ],
 });

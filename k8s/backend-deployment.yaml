@@ -154,3 +154,4 @@ spec:
       name: http
   selector:
     app: crop-health-backend
+    component: backend

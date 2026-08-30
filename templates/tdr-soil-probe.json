@@ -1,7 +1,7 @@
 {
   "name": "TDR Soil Moisture Probe",
   "description": "Time Domain Reflectometry (TDR) probe for measuring volumetric soil water content. Publishes soilMoisture in % via MQTT. The crop-health engine uses this for the dynamic water balance model (precipitation - ETo × Kc) and provides soil moisture context for irrigation recommendations.",
-  "sdm_entity_type": "AgriSensor",
+  "sdm_entity_type": "Device",
   "is_public": true,
   "mappings": [
     {

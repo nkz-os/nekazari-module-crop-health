@@ -1986,5 +1986,8 @@ async def _resolve_parcel_from_device(device_id: str, tenant_id: str) -> str | N
         else:
             target = link
         if isinstance(target, str) and target:
-            return target.split(":")[-1]
+            # Same normalisation the rest of the module uses (sources.py builds
+            # its parcel map this way, and _resolve_parcel_coords rebuilds the
+            # URN from it): strip the prefix, keep any tenant segment.
+            return target.replace("urn:ngsi-ld:AgriParcel:", "")
     return None

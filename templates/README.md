@@ -5,7 +5,7 @@ Estos templates de Device Profile permiten configurar sensores para el motor de 
 ## Cómo usar
 
 1. En Nekazari, ve al Dashboard → "+ New Sensor"
-2. Selecciona `AgriSensor` como tipo de entidad
+2. Selecciona `Device` como tipo de entidad
 3. En el paso de configuración IoT, haz clic en **"Importar JSON"**
 4. Selecciona uno de los templates de esta carpeta
 5. El wizard rellenará automáticamente el Device Profile con los atributos correctos

@@ -168,3 +168,33 @@ async def test_sources_detail_no_data_parcel():
             assert data["parcelId"] == "Parcela-99"
             for key in ("soil", "iot", "weather", "crop", "bioorchestrator"):
                 assert data["sources"][key]["status"] == "unavailable"
+
+
+@pytest.mark.anyio
+async def test_tenant_qualified_parcel_urns_still_match():
+    """The parcel key must survive a tenant segment.
+
+    Parcels exist in both shapes across the platform: `AgriParcel:{id}` and
+    `AgriParcel:{tenant}:{id}`. Normalising the device link with
+    `split(":")[-1]` drops the tenant and stops matching the parcel map built
+    from the prefix — the parcel silently loses its IoT flag.
+    """
+    with respx.mock as mock:
+        mock.get(url__regex=r".*type=CropHealthAssessment.*").respond(json=[])
+        mock.get(url__regex=r".*type=AgriParcel.*").respond(json=[
+            {"id": "urn:ngsi-ld:AgriParcel:test-tenant:Parcela-4", "name": "Parcela 4"},
+        ])
+        mock.get(url__regex=r".*type=Device(&|$|%).*").respond(json=[
+            {
+                "id": "urn:ngsi-ld:Device:test-tenant:sensor1",
+                "controlledAsset": "urn:ngsi-ld:AgriParcel:test-tenant:Parcela-4",
+            }
+        ])
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test", headers=GATEWAY_HEADERS) as client:
+            resp = await client.get("/api/crop-health/sources")
+            assert resp.status_code == 200
+            parcel = resp.json()["parcels"][0]
+            assert parcel["parcelId"] == "test-tenant:Parcela-4"
+            assert parcel["hasIot"] is True

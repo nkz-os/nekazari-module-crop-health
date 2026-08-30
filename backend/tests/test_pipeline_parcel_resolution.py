@@ -59,7 +59,7 @@ async def test_resolves_parcel_from_controlled_asset(monkeypatch):
         },
         monkeypatch,
     )
-    assert await pipeline._resolve_parcel_from_device(DEVICE_URN, "acme") == "Parcela-4"
+    assert await pipeline._resolve_parcel_from_device(DEVICE_URN, "acme") == "acme:Parcela-4"
 
 
 @pytest.mark.asyncio
@@ -79,7 +79,7 @@ async def test_falls_back_to_legacy_relationship_names(monkeypatch, legacy_attr)
         },
         monkeypatch,
     )
-    assert await pipeline._resolve_parcel_from_device(DEVICE_URN, "acme") == "Parcela-9"
+    assert await pipeline._resolve_parcel_from_device(DEVICE_URN, "acme") == "acme:Parcela-9"
 
 
 @pytest.mark.asyncio

@@ -120,7 +120,7 @@ async def _list_sources(request: Request) -> dict:
         ref_parcel = d.get("controlledAsset") or d.get("hasAgriParcel") or d.get("refAgriParcel") or ""
         if isinstance(ref_parcel, dict):
             ref_parcel = ref_parcel.get("object", "")
-        pid = str(ref_parcel).split(":")[-1] if ref_parcel else ""
+        pid = str(ref_parcel).replace("urn:ngsi-ld:AgriParcel:", "") if ref_parcel else ""
         if pid:
             iot_by_parcel[pid] = iot_by_parcel.get(pid, 0) + 1
 
@@ -282,6 +282,9 @@ async def _detail_sources(request: Request, parcelId: str) -> dict:
             "lastTs": m.get("dateObserved", ""),
             "unit": unit,
         })
+    # Orion returns no particular order and the query is capped, so pick the
+    # newest explicitly — otherwise a stale sensor can drive the freshness badge.
+    iot_sensors.sort(key=lambda s: str(s.get("lastTs") or ""), reverse=True)
     iot_ok = len(iot_sensors) > 0
     iot_freshness = "none"
     if iot_sensors:

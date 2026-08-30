@@ -72,7 +72,7 @@ async def _list_sources(request: Request) -> dict:
     """Get health summary for all parcels.
 
     Derived from existing Orion-LD entities (CropHealthAssessment,
-    DeviceMeasurement, AgriParcel) — no per-parcel external calls.
+    Device, DeviceMeasurement, AgriParcel) — no per-parcel external calls.
     """
     tenant_id = getattr(request.state, "tenant_id", "")
     settings = get_settings()
@@ -89,9 +89,11 @@ async def _list_sources(request: Request) -> dict:
             logger.warning("AgriParcel query failed: %s", e)
             parcels = []
         try:
-            iot_devices = await client.query_entities(type="DeviceMeasurement", limit=1000, options="keyValues")
+            # Devices, not measurements: the parcel link lives on the Device
+            # (controlledAsset). A DeviceMeasurement carries only refDevice.
+            iot_devices = await client.query_entities(type="Device", limit=1000, options="keyValues")
         except Exception as e:
-            logger.warning("DeviceMeasurement query failed: %s", e)
+            logger.warning("Device query failed: %s", e)
             iot_devices = []
     finally:
         await client.close()
@@ -114,10 +116,11 @@ async def _list_sources(request: Request) -> dict:
     # Count IoT devices per parcel
     iot_by_parcel: dict[str, int] = {}
     for d in iot_devices:
-        ref_parcel = d.get("hasAgriParcel", "")
+        # controlledAsset is canonical; the ref* names are the migration window
+        ref_parcel = d.get("controlledAsset") or d.get("hasAgriParcel") or d.get("refAgriParcel") or ""
         if isinstance(ref_parcel, dict):
             ref_parcel = ref_parcel.get("object", "")
-        pid = ref_parcel.replace("urn:ngsi-ld:AgriParcel:", "")
+        pid = str(ref_parcel).split(":")[-1] if ref_parcel else ""
         if pid:
             iot_by_parcel[pid] = iot_by_parcel.get(pid, 0) + 1
 
@@ -199,9 +202,14 @@ async def _detail_sources(request: Request, parcelId: str) -> dict:
 
     # Query all sources in parallel with dual relationship check (hasAgriParcel|refAgriParcel)
     rel_q = f'(hasAgriParcel=="{parcel_urn}"|refAgriParcel=="{parcel_urn}")'
+    device_q = (
+        f'(controlledAsset=="{parcel_urn}"'
+        f'|hasAgriParcel=="{parcel_urn}"'
+        f'|refAgriParcel=="{parcel_urn}")'
+    )
     results = await asyncio.gather(
         _query("CropHealthAssessment", rel_q, 1),
-        _query("DeviceMeasurement", rel_q, 20),
+        _query("Device", device_q, 20),
         # Canonical optical vegetation: one EOProduct per acquisition (no
         # productType discriminator). Fetch the recent set and pick the latest
         # one that carries an `ndvi` attribute (SAR EOProducts have none).
@@ -213,7 +221,7 @@ async def _detail_sources(request: Request, parcelId: str) -> dict:
     )
 
     assessments = results[0] if not isinstance(results[0], BaseException) else []
-    iot_devices = results[1] if not isinstance(results[1], BaseException) else []
+    parcel_devices = results[1] if not isinstance(results[1], BaseException) else []
     veg_indices = results[2] if not isinstance(results[2], BaseException) else []
     agri_crops = results[3] if not isinstance(results[3], BaseException) else []
     weather_obs = results[4] if not isinstance(results[4], BaseException) else []
@@ -247,18 +255,33 @@ async def _detail_sources(request: Request, parcelId: str) -> dict:
     }
 
     # ── IoT ───────────────────────────────────────────────────────────
+    # Readings are their own entities, one per (device, property), reached from
+    # the parcel's devices via refDevice — they carry no parcel link themselves.
     iot_sensors = []
-    for d in iot_devices:
-        for metric in ("leafTemperature", "trunkDiameter", "soilMoisture", "soilTemp", "soilPh", "soilEC"):
-            val = d.get(metric)
-            if val is not None:
-                unit = "°C" if "Temp" in metric else "µm" if "trunk" in metric.lower() else "%" if "Moisture" in metric else ""
-                iot_sensors.append({
-                    "metric": metric,
-                    "lastValue": val,
-                    "lastTs": d.get("dateObserved", ""),
-                    "unit": unit,
-                })
+    device_urns = [d.get("id", "") for d in parcel_devices if d.get("id")]
+    measurements = []
+    if device_urns:
+        measurements = await _query(
+            "DeviceMeasurement",
+            "|".join(f'refDevice=="{urn}"' for urn in device_urns),
+            50,
+        )
+    for m in measurements:
+        metric = m.get("controlledProperty")
+        if not isinstance(metric, str) or not metric:
+            continue
+        val = m.get("numValue")
+        if val is None:
+            val = m.get("textValue")
+        if val is None:
+            continue
+        unit = "°C" if "Temp" in metric else "µm" if "trunk" in metric.lower() else "%" if "Moisture" in metric else ""
+        iot_sensors.append({
+            "metric": metric,
+            "lastValue": val,
+            "lastTs": m.get("dateObserved", ""),
+            "unit": unit,
+        })
     iot_ok = len(iot_sensors) > 0
     iot_freshness = "none"
     if iot_sensors:

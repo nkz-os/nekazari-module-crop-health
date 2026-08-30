@@ -51,22 +51,26 @@ async def test_webhook_calls_full_trigger(monkeypatch):
     payload = {
         "data": [
             {
-                "id": "urn:ngsi-ld:DeviceMeasurement:d1",
+                "id": "urn:ngsi-ld:DeviceMeasurement:acme:d1:leafTemperature",
                 "type": "DeviceMeasurement",
-                "leafTemperature": {"type": "Property", "value": 28.5},
-                "hasAgriParcel": {
+                "refDevice": {
                     "type": "Relationship",
-                    "object": "urn:ngsi-ld:AgriParcel:p1",
+                    "object": "urn:ngsi-ld:Device:acme:d1",
                 },
+                "controlledProperty": {"type": "Property", "value": "leafTemperature"},
+                "numValue": {"type": "Property", "value": 28.5, "unitCode": "CEL"},
             }
         ]
     }
     response = client.post("/api/crop-health/webhooks/fiware-sensors", json=payload)
     assert response.status_code in (204, 200)
     assert len(calls) == 1
-    _, metric_type, parcel_id, tenant_id = calls[0]
+    entity_id, metric_type, parcel_id, tenant_id = calls[0]
+    assert entity_id == "urn:ngsi-ld:Device:acme:d1"
     assert metric_type == "leafTemperature"
-    assert parcel_id == "p1"
+    # The parcel is not on the measurement; the pipeline resolves it from the
+    # device's controlledAsset.
+    assert parcel_id is None
 
 
 @pytest.mark.asyncio
@@ -88,9 +92,14 @@ async def test_webhook_ignores_untracked_attributes(monkeypatch):
     payload = {
         "data": [
             {
-                "id": "urn:ngsi-ld:DeviceMeasurement:d1",
+                "id": "urn:ngsi-ld:DeviceMeasurement:acme:d1:batteryLevel",
                 "type": "DeviceMeasurement",
-                "batteryLevel": {"type": "Property", "value": 85},
+                "refDevice": {
+                    "type": "Relationship",
+                    "object": "urn:ngsi-ld:Device:acme:d1",
+                },
+                "controlledProperty": {"type": "Property", "value": "batteryLevel"},
+                "numValue": {"type": "Property", "value": 85},
             }
         ]
     }

@@ -52,12 +52,12 @@ async def test_sources_list_with_assessment_data():
             {"id": "urn:ngsi-ld:AgriParcel:Parcela-4", "name": "Parcela 4"},
             {"id": "urn:ngsi-ld:AgriParcel:Parcela-15", "name": "Parcela 15"},
         ])
-        # Route 3: IoT devices query — one device for Parcela-4
-        mock.get(url__regex=r".*type=DeviceMeasurement.*").respond(json=[
+        # Route 3: IoT devices query — one Device for Parcela-4, linked by
+        # controlledAsset (the canonical link; readings live in DeviceMeasurement)
+        mock.get(url__regex=r".*type=Device(&|$|%).*").respond(json=[
             {
-                "id": "urn:ngsi-ld:DeviceMeasurement:Parcela-4-sensor1",
-                "hasAgriParcel": {"type": "Relationship", "object": "urn:ngsi-ld:AgriParcel:Parcela-4"},
-                "leafTemperature": 28.4,
+                "id": "urn:ngsi-ld:Device:test-tenant:sensor1",
+                "controlledAsset": "urn:ngsi-ld:AgriParcel:Parcela-4",
             }
         ])
 
@@ -94,10 +94,18 @@ async def test_sources_detail_returns_source_status():
                 "phenologyStage": "flowering",
             }
         ])
-        mock.get(url__regex=r".*type=DeviceMeasurement.*hasAgriParcel.*").respond(json=[
+        mock.get(url__regex=r".*type=Device(&|%).*").respond(json=[
             {
-                "id": "urn:ngsi-ld:DeviceMeasurement:Parcela-4-sensor1",
-                "leafTemperature": 28.4,
+                "id": "urn:ngsi-ld:Device:test-tenant:sensor1",
+                "controlledAsset": "urn:ngsi-ld:AgriParcel:Parcela-4",
+            }
+        ])
+        mock.get(url__regex=r".*type=DeviceMeasurement.*").respond(json=[
+            {
+                "id": "urn:ngsi-ld:DeviceMeasurement:test-tenant:sensor1:leafTemperature",
+                "refDevice": "urn:ngsi-ld:Device:test-tenant:sensor1",
+                "controlledProperty": "leafTemperature",
+                "numValue": 28.4,
                 "dateObserved": "2026-06-07T10:25:00Z",
             }
         ])
@@ -135,6 +143,11 @@ async def test_sources_detail_returns_source_status():
             assert src["soil"]["details"]["texture"] == "franco-arcilloso"
             assert src["iot"]["status"] == "ok"
             assert len(src["iot"]["sensors"]) >= 1
+            # The metric name is the VALUE of controlledProperty, and the reading
+            # comes from numValue — never from an attribute named after the metric.
+            sensor = src["iot"]["sensors"][0]
+            assert sensor["metric"] == "leafTemperature"
+            assert sensor["lastValue"] == 28.4
             assert src["satellite"]["ndvi"]["status"] == "ok"
             assert src["satellite"]["ndvi"]["lastValue"] == 0.72
             assert src["crop"]["status"] == "ok"

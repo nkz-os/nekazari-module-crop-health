@@ -59,10 +59,13 @@ async def receive_sensor_data(
         "subscriptionId": "...",
         "data": [
             {
-                "id": "urn:ngsi-ld:DeviceMeasurement:...",
+                "id": "urn:ngsi-ld:DeviceMeasurement:{tenant}:{device}:leafTemperature",
                 "type": "DeviceMeasurement",
-                "leafTemperature": {"type": "Property", "value": 32.5},
-                ...
+                "refDevice": {"type": "Relationship",
+                              "object": "urn:ngsi-ld:Device:{tenant}:{device}"},
+                "controlledProperty": {"type": "Property", "value": "leafTemperature"},
+                "numValue": {"type": "Property", "value": 32.5, "unitCode": "CEL"},
+                "dateObserved": {"type": "Property", "value": "2026-08-29T09:00:00Z"}
             }
         ]
     }
@@ -85,62 +88,107 @@ async def receive_sensor_data(
     now_ts = datetime.now(timezone.utc).timestamp()
 
     for entity in data:
-        entity_id = entity.get("id", "")
-        if not entity_id:
+        device_id, metric_name, value, observed_ts = _read_measurement(entity)
+        if device_id is None:
+            logger.debug(
+                "Skipping %s: missing refDevice, controlledProperty or reading",
+                entity.get("id", "<no id>"),
+            )
             continue
 
-        # Extract parcel relationship if present
-        parcel_ref = entity.get("hasAgriParcel", {})
-        parcel_id = None
-        if isinstance(parcel_ref, dict):
-            obj = parcel_ref.get("object", "")
-            if obj:
-                # urn:ngsi-ld:AgriParcel:Parcela-4 → Parcela-4
-                parts = obj.split(":")
-                parcel_id = parts[-1] if parts else None
+        metric_type = _TRACKED_ATTRIBUTES.get(metric_name)
+        if metric_type is None:
+            continue
 
-        # Process each tracked attribute
-        for attr_name, metric_type in _TRACKED_ATTRIBUTES.items():
-            attr_data = entity.get(attr_name)
-            if attr_data is None:
-                continue
+        # Redis sliding window, keyed by device — stable across readings
+        await redis_state.store_reading(
+            device_id=device_id,
+            metric=metric_name,
+            timestamp=observed_ts if observed_ts is not None else now_ts,
+            value=value,
+        )
 
-            value = attr_data.get("value") if isinstance(attr_data, dict) else attr_data
-            if value is None:
-                continue
+        # The parcel is not on the measurement: it hangs off the device's
+        # controlledAsset, one hop away, so the pipeline resolves it rather
+        # than the request path.
+        background_tasks.add_task(
+            pipeline.trigger,
+            entity_id=device_id,
+            metric_type=metric_type.value,
+            redis_state=redis_state,
+            parcel_id=None,
+            tenant_id=tenant_id,
+        )
 
-            try:
-                value = float(value)
-            except (TypeError, ValueError):
-                logger.warning(
-                    "Non-numeric value for %s on %s: %s", attr_name, entity_id, value
-                )
-                continue
-
-            # Store in Redis sliding window
-            await redis_state.store_reading(
-                device_id=entity_id,
-                metric=attr_name,
-                timestamp=now_ts,
-                value=value,
-            )
-
-            # Trigger inference pipeline in background
-            background_tasks.add_task(
-                pipeline.trigger,
-                entity_id=entity_id,
-                metric_type=metric_type.value,
-                redis_state=redis_state,
-                parcel_id=parcel_id,
-                tenant_id=tenant_id,
-            )
-
-            logger.info(
-                "Webhook: %s.%s=%.2f → pipeline queued (parcel=%s)",
-                entity_id,
-                attr_name,
-                value,
-                parcel_id,
-            )
+        logger.info(
+            "Webhook: %s.%s=%.2f -> pipeline queued", device_id, metric_name, value
+        )
 
     return Response(status_code=204)
+
+
+def _read_measurement(
+    entity: dict,
+) -> tuple[str | None, str | None, float | None, float | None]:
+    """Pull (device_id, metric_name, value, observed_ts) out of a `DeviceMeasurement`.
+
+    `DeviceMeasurement` inverts the shape used by entities that carry their
+    readings as attributes: the measured property's name is the VALUE of
+    ``controlledProperty`` rather than an attribute key, the reading sits in
+    ``numValue`` or ``textValue`` (never both), the device is the ``refDevice``
+    relationship — NOT the last segment of this entity's own id, which is the
+    property name — and the instant is ``dateObserved``, a plain Property, not
+    per-attribute ``observedAt`` metadata.
+
+    Returns ``(None, None, None, None)`` when the device or the reading is
+    missing, so the caller skips the entity rather than persisting a guessed
+    device id.
+    """
+    ref_device = entity.get("refDevice")
+    if not isinstance(ref_device, dict):
+        return None, None, None, None
+    device_id = ref_device.get("object")
+    if not isinstance(device_id, str) or not device_id:
+        return None, None, None, None
+
+    controlled_property = entity.get("controlledProperty")
+    if not isinstance(controlled_property, dict):
+        return None, None, None, None
+    metric_name = controlled_property.get("value")
+    if not isinstance(metric_name, str) or not metric_name:
+        return None, None, None, None
+
+    value = None
+    for value_key in ("numValue", "textValue"):
+        value_attr = entity.get(value_key)
+        if isinstance(value_attr, dict) and value_attr.get("value") is not None:
+            value = value_attr["value"]
+            break
+    if value is None:
+        return None, None, None, None
+    try:
+        value = float(value)
+    except (TypeError, ValueError):
+        logger.warning(
+            "Non-numeric %s on %s: %s", metric_name, entity.get("id", "<no id>"), value
+        )
+        return None, None, None, None
+
+    return device_id, metric_name, value, _observed_timestamp(entity)
+
+
+def _observed_timestamp(entity: dict) -> float | None:
+    """Read ``dateObserved`` as a POSIX timestamp; None when absent or unparseable."""
+    date_observed = entity.get("dateObserved")
+    if not isinstance(date_observed, dict):
+        return None
+    raw = date_observed.get("value")
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.timestamp()

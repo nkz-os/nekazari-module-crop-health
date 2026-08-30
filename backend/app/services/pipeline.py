@@ -187,9 +187,9 @@ async def trigger(
     Returns:
         CropHealthAssessment if computed, None on error.
     """
-    effective_parcel = parcel_id or _extract_parcel_from_entity(entity_id)
+    effective_parcel = parcel_id or await _resolve_parcel_from_device(entity_id, tenant_id)
     if not effective_parcel:
-        logger.warning("Cannot resolve parcel for entity %s — skipping", entity_id)
+        logger.warning("Cannot resolve parcel for device %s — skipping", entity_id)
         return None
 
     logger.info(
@@ -1941,23 +1941,50 @@ def _resolve_data_fidelity(assessment: CropHealthAssessment) -> str:
     return "mixed"
 
 
-def _extract_parcel_from_entity(entity_id: str) -> str | None:
-    """Extract parcel ID from device entity ID.
+async def _resolve_parcel_from_device(device_id: str, tenant_id: str) -> str | None:
+    """Resolve a device's parcel through its canonical ``controlledAsset`` link.
 
-    Convention: device entities follow the pattern
-    urn:ngsi-ld:DeviceMeasurement:{parcel}-{sensor}
-    or carry a hasAgriParcel relationship.
+    There is no id convention to fall back on: a `DeviceMeasurement` id ends in
+    the measured property, and a `Device` id ends in the device's own external
+    id — neither carries the parcel. Parsing one would return the tenant and the
+    pipeline would compute against a parcel that does not exist. The link is a
+    broker hop, so take the hop.
 
-    For now, use a simple heuristic; the webhook handler can
-    pass parcel_id directly if resolved upstream.
+    ``hasAgriParcel``/``refAgriParcel`` stay as fallbacks for devices provisioned
+    before the cutover. Returns None when the device is unlinked or unreachable —
+    the caller skips rather than guessing.
     """
-    # Simple heuristic: extract the first segment after DeviceMeasurement:
-    parts = entity_id.split(":")
-    if len(parts) >= 4:
-        # urn:ngsi-ld:DeviceMeasurement:Parcela-4-sensor-1 → Parcela-4
-        sensor_part = parts[3]
-        # Take everything before the last dash-delimited segment
-        segments = sensor_part.rsplit("-", 1)
-        if len(segments) >= 1:
-            return segments[0]
+    if not device_id or not tenant_id:
+        return None
+
+    from app.config import get_settings
+    from nkz_platform_sdk.orion import OrionClient
+
+    settings = get_settings()
+    client = OrionClient(
+        tenant_id,
+        base_url=settings.orion_ld_url,
+        context_url=settings.orion_ld_context,
+    )
+    try:
+        device = await client.get_entity(device_id)
+    except Exception as exc:  # noqa: BLE001 — an unreachable broker is not a parcel
+        logger.warning("Cannot read device %s to resolve its parcel: %s", device_id, exc)
+        return None
+    finally:
+        try:
+            await client.close()
+        except Exception:  # noqa: BLE001
+            pass
+
+    if not isinstance(device, dict):
+        return None
+    for attr in ("controlledAsset", "hasAgriParcel", "refAgriParcel"):
+        link = device.get(attr)
+        if isinstance(link, dict):
+            target = link.get("object")
+        else:
+            target = link
+        if isinstance(target, str) and target:
+            return target.split(":")[-1]
     return None

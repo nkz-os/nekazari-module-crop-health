@@ -14,14 +14,13 @@ triggers the inference pipeline in a background task.
 
 from __future__ import annotations
 
+import hmac
 import logging
+import os
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, BackgroundTasks, Request, Response
+from fastapi import APIRouter, BackgroundTasks, Header, HTTPException, Request, Response
 
-from fastapi import HTTPException
-
-from app.config import get_settings
 from app.schemas import MetricType
 from app.services import pipeline
 
@@ -37,20 +36,28 @@ _TRACKED_ATTRIBUTES = {
 }
 
 
-def _validate_webhook_secret(request: Request) -> None:
-    """Validate X-Orion-Webhook-Secret if configured (defense-in-depth)."""
-    secret = get_settings().orion_webhook_secret
-    if not secret:
-        return
-    provided = request.headers.get("X-Orion-Webhook-Secret", "")
-    if provided != secret:
-        raise HTTPException(status_code=403, detail="Invalid webhook secret")
+def _reject_unauthenticated_notify(x_internal_secret: str | None) -> HTTPException | None:
+    """401 unless the notification carries the internal secret (flag-gated).
+
+    Two-phase rollout: NOTIFY_REQUIRE_INTERNAL_SECRET stays off until subscription
+    creators have converged to carry receiverInfo, then flips on with no code deploy.
+    """
+    require = os.getenv("NOTIFY_REQUIRE_INTERNAL_SECRET", "").lower() in (
+        "1", "true", "yes", "on"
+    )
+    if not require:
+        return None
+    secret = os.getenv("INTERNAL_SERVICE_SECRET", "")
+    if not secret or not hmac.compare_digest(x_internal_secret or "", secret):
+        return HTTPException(status_code=401, detail="missing or invalid internal secret")
+    return None
 
 
 @router.post("/webhooks/fiware-sensors", status_code=204)
 async def receive_sensor_data(
     request: Request,
     background_tasks: BackgroundTasks,
+    x_internal_secret: str | None = Header(None, alias="X-Internal-Service-Secret"),
 ) -> Response:
     """Receive FIWARE Orion-LD subscription notifications.
 
@@ -70,7 +77,9 @@ async def receive_sensor_data(
         ]
     }
     """
-    _validate_webhook_secret(request)
+    reject = _reject_unauthenticated_notify(x_internal_secret)
+    if reject:
+        raise reject
     try:
         body = await request.json()
     except Exception as exc:

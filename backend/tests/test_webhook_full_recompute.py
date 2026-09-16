@@ -42,7 +42,6 @@ async def test_webhook_calls_full_trigger(monkeypatch):
 
     from app.api import webhooks
     monkeypatch.setattr(webhooks.pipeline, "trigger", _trigger, raising=False)
-    monkeypatch.setattr(webhooks, "_validate_webhook_secret", lambda r: None, raising=False)
 
     from app.main import app
     from fastapi.testclient import TestClient
@@ -83,7 +82,6 @@ async def test_webhook_ignores_untracked_attributes(monkeypatch):
 
     from app.api import webhooks
     monkeypatch.setattr(webhooks.pipeline, "trigger", _trigger, raising=False)
-    monkeypatch.setattr(webhooks, "_validate_webhook_secret", lambda r: None, raising=False)
 
     from app.main import app
     from fastapi.testclient import TestClient

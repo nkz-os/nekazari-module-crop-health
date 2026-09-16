@@ -28,3 +28,4 @@ async def test_activate_ensures_subscription_for_tenant():
     sub_defs = SR.call_args.kwargs["subscriptions"]
     assert any(s["type"] == "DeviceMeasurement" for s in sub_defs)
     assert "/webhooks/fiware-sensors" in SR.call_args.kwargs["notification_url"]
+    assert SR.call_args.kwargs["notification_headers"] == {"X-Internal-Service-Secret": "s3cr3t"}

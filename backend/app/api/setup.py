@@ -80,6 +80,10 @@ async def setup_parcel(request: Request, body: SetupParcelRequest):
         subscriptions=[{"type": "DeviceMeasurement", "throttling": 30}],
         module_name="crop-health",
         context_url=settings.orion_ld_context,
+        notification_headers=(
+            {"X-Internal-Service-Secret": INTERNAL_SECRET}
+            if INTERNAL_SECRET else None
+        ),
     )
     sub_result = await registrar.ensure_all([body.tenant_id])
     logger.info(

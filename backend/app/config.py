@@ -52,7 +52,6 @@ class Settings(BaseSettings):
     # ── Service-to-service auth ──────────────────────────────────────────────
     module_management_key: str = ""
     internal_service_secret: str = ""
-    orion_webhook_secret: str = ""  # X-Orion-Webhook-Secret for subscription notifications
 
     @property
     def jwt_issuer_url(self) -> str:

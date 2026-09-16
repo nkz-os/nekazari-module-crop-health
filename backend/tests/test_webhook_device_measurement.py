@@ -55,7 +55,6 @@ def triggers(monkeypatch):
     from app.api import webhooks
 
     monkeypatch.setattr(webhooks.pipeline, "trigger", _trigger, raising=False)
-    monkeypatch.setattr(webhooks, "_validate_webhook_secret", lambda r: None, raising=False)
     return calls
 
 
@@ -134,3 +133,28 @@ def test_incomplete_measurement_persists_nothing(fake_redis, triggers, broken):
     assert resp.status_code == 204
     assert triggers == []
     assert fake_redis.readings == []
+
+
+def test_flag_gated_secret_check(monkeypatch):
+    """NOTIFY_REQUIRE_INTERNAL_SECRET=off accepts no secret; on requires X-Internal-Service-Secret."""
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    client = TestClient(app)
+    url = "/api/crop-health/webhooks/fiware-sensors"
+    empty = {"data": []}
+
+    monkeypatch.delenv("NOTIFY_REQUIRE_INTERNAL_SECRET", raising=False)
+    assert client.post(url, json=empty, headers={"Fiware-Service": "acme"}).status_code == 204
+
+    monkeypatch.setenv("NOTIFY_REQUIRE_INTERNAL_SECRET", "true")
+    assert client.post(url, json=empty, headers={"Fiware-Service": "acme"}).status_code == 401
+    assert client.post(
+        url, json=empty,
+        headers={"Fiware-Service": "acme", "X-Internal-Service-Secret": "wrong"},
+    ).status_code == 401
+    assert client.post(
+        url, json=empty,
+        headers={"Fiware-Service": "acme", "X-Internal-Service-Secret": "test-secret"},
+    ).status_code == 204

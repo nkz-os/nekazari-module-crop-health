@@ -15,7 +15,7 @@ interface ParcelHealthWorkbenchProps {
 
 const ParcelHealthWorkbench: React.FC<ParcelHealthWorkbenchProps> = ({ parcelId, parcelName }) => {
   const { t } = useTranslation('crop-health');
-  const [showDiagnostics, setShowDiagnostics] = useState(false);
+  const [showDiagnostics, setShowDiagnostics] = useState(true);
   const data = useParcelHealthData(parcelId);
 
   if (data.loading) {

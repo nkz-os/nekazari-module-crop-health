@@ -399,12 +399,16 @@ async def get_agri_crop(
         entities = await client.query_entities(
             type="AgriCrop",
             q=f'hasAgriParcel==\"urn:ngsi-ld:AgriParcel:{parcel_id}\"|refAgriParcel==\"urn:ngsi-ld:AgriParcel:{parcel_id}\"',
-            limit=1,
+            limit=10,
             options="keyValues",
         )
-        if entities and isinstance(entities, list) and len(entities) > 0:
-            _agri_crop_cache[parcel_id] = entities[0]
-            return entities[0]
+        if entities and isinstance(entities, list):
+            # Skip activation scaffolding placeholders (provenance == "placeholder")
+            # — they are subscription shims, not a real crop assignment.
+            real = next((e for e in entities if e.get("provenance") != "placeholder"), None)
+            if real:
+                _agri_crop_cache[parcel_id] = real
+                return real
     except Exception as exc:
         logger.warning("Failed to fetch AgriCrop for parcel %s: %s", parcel_id, exc)
     finally:

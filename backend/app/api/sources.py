@@ -214,7 +214,7 @@ async def _detail_sources(request: Request, parcelId: str) -> dict:
         # productType discriminator). Fetch the recent set and pick the latest
         # one that carries an `ndvi` attribute (SAR EOProducts have none).
         _query("EOProduct", rel_q, 100),
-        _query("AgriCrop", rel_q, 1),
+        _query("AgriCrop", rel_q, 10),
         _query("WeatherObserved", f'locatedAt=="{parcel_urn}"', 1),
         _query("EOProduct", f'{rel_q};productType=="GRD"', 1),
         return_exceptions=True,
@@ -362,7 +362,12 @@ async def _detail_sources(request: Request, parcelId: str) -> dict:
     }
 
     # ── Crop ───────────────────────────────────────────────────────────
-    ac = agri_crops[0] if agri_crops else {}
+    # Prefer the ACTIVE crop with a species over any empty placeholder
+    # (e.g. a legacy '...-default' AgriCrop with no species).
+    ac = next(
+        (a for a in agri_crops if a.get("species") or a.get("eppoCode")),
+        agri_crops[0] if agri_crops else {},
+    )
     crop_ok = bool(ac.get("species") or ac.get("eppoCode"))
     phenology_stage = assessment.get("phenologyStage")
     crop = {

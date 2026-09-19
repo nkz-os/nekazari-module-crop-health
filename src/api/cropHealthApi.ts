@@ -1,5 +1,14 @@
 const API_BASE = '/api/crop-health';
 
+// Cross-module BioOrchestrator reference data lives under /api/graph, which is
+// only routed on the platform API host (Traefik routes it direct to the
+// bioorchestrator backend). A relative '/api/graph/...' resolves against the
+// frontend host and falls through to the api-gateway auto-proxy, which has no
+// 'graph' module → 404. Use the same absolute base the bioorchestrator module
+// itself uses (VITE_API_URL is the platform API host, no /api suffix).
+const PLATFORM_API_BASE =
+  (import.meta as any).env?.VITE_API_URL || 'https://nkz.robotika.cloud';
+
 export async function cropHealthFetch<T>(path: string): Promise<T | null> {
   try {
     const resp = await fetch(`${API_BASE}${path}`, { credentials: 'include' });
@@ -29,5 +38,5 @@ export function readParcelIdFromLocation(): string | null {
   return params.get('parcel') || params.get('parcelId');
 }
 
-export const CROP_CONTEXT_URL = '/api/graph/agriculture/crop-context';
-export const PHENOLOGY_PARAMS_URL = '/api/graph/phenology-params';
+export const CROP_CONTEXT_URL = `${PLATFORM_API_BASE}/api/graph/agriculture/crop-context`;
+export const PHENOLOGY_PARAMS_URL = `${PLATFORM_API_BASE}/api/graph/phenology-params`;

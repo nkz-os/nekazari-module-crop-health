@@ -190,10 +190,11 @@ export interface DiseaseRisk {
 
 export interface PhenologyStageProjection {
   stage: string;
-  status: string;
+  current?: boolean;
+  reached?: boolean;
   gddMin?: number;
   gddMax?: number;
-  projectedStart?: string;
+  projectedDate?: string;
   projectedEnd?: string;
 }
 

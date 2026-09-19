@@ -1,6 +1,6 @@
 import React from 'react';
 import { useTranslation } from '@nekazari/sdk';
-import type { PhenologyStatus } from '../types/assessment';
+import type { PhenologyStageProjection, PhenologyStatus } from '../types/assessment';
 
 interface PhenologyTimelineProps {
   status: PhenologyStatus | null;
@@ -17,6 +17,13 @@ function stageStatusClass(status: string): string {
     default:
       return 'border-nkz-border bg-nkz-surface-raised text-nkz-text-secondary';
   }
+}
+
+// The backend emits `current`/`reached` booleans (not a `status` string).
+function deriveStageStatus(stage: PhenologyStageProjection): 'current' | 'completed' | 'upcoming' {
+  if (stage.current) return 'current';
+  if (stage.reached) return 'completed';
+  return 'upcoming';
 }
 
 const PhenologyTimeline: React.FC<PhenologyTimelineProps> = ({ status }) => {
@@ -38,19 +45,22 @@ const PhenologyTimeline: React.FC<PhenologyTimelineProps> = ({ status }) => {
       </div>
 
       <div className="flex gap-1 overflow-x-auto pb-1">
-        {status.stages.map((stage) => (
-          <div
-            key={stage.stage}
-            className={`min-w-[88px] flex-shrink-0 rounded-md border px-2 py-1.5 text-center ${stageStatusClass(stage.status)}`}
-          >
-            <p className="text-[11px] font-medium leading-tight">
-              {t(`phenology.stage.${stage.stage}`, stage.stage)}
-            </p>
-            {stage.projectedStart && (
-              <p className="text-[10px] opacity-80 mt-0.5">{stage.projectedStart.slice(5)}</p>
-            )}
-          </div>
-        ))}
+        {status.stages.map((stage) => {
+          const stageStatus = deriveStageStatus(stage);
+          return (
+            <div
+              key={stage.stage}
+              className={`min-w-[88px] flex-shrink-0 rounded-md border px-2 py-1.5 text-center ${stageStatusClass(stageStatus)}`}
+            >
+              <p className="text-[11px] font-medium leading-tight">
+                {t(`phenology.stage.${stage.stage}`, stage.stage)}
+              </p>
+              {stage.projectedDate && (
+                <p className="text-[10px] opacity-80 mt-0.5">{stage.projectedDate.slice(5)}</p>
+              )}
+            </div>
+          );
+        })}
       </div>
 
       {status.deviation && status.deviation !== 'on_track' && (

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { cropHealthFetch, PHENOLOGY_PARAMS_URL } from '../api/cropHealthApi';
+import { authHeaders, cropHealthFetch, PHENOLOGY_PARAMS_URL } from '../api/cropHealthApi';
 import type {
   AssessmentData,
   CorrelationPoint,
@@ -87,6 +87,7 @@ export function useParcelHealthData(parcelId: string | null): ParcelHealthBundle
         try {
           const pResp = await fetch(`${PHENOLOGY_PARAMS_URL}?species=${encodeURIComponent(species)}`, {
             credentials: 'include',
+            headers: authHeaders(),
           });
           setPhenologyParams(pResp.ok ? await pResp.json() : null);
         } catch {

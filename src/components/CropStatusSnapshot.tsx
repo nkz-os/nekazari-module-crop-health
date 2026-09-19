@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useTranslation } from '@nekazari/sdk';
-import { CROP_CONTEXT_URL, cropHealthFetch } from '../api/cropHealthApi';
+import { authHeaders, CROP_CONTEXT_URL, cropHealthFetch } from '../api/cropHealthApi';
 import { SeverityBadge } from './shared/SeverityBadge';
 
 interface CropContext {
@@ -139,7 +139,10 @@ const CropStatusSnapshot: React.FC<CropStatusSnapshotProps> = ({ parcelId, parce
       try {
         const [aRes, cRes] = await Promise.allSettled([
           cropHealthFetch<{ assessments: Assessment[] }>(`/assessments/latest?parcelId=${parcelId}`),
-          fetch(`${CROP_CONTEXT_URL}?parcel_id=${parcelId}`).then(r => r.ok ? r.json() : null),
+          fetch(`${CROP_CONTEXT_URL}?parcel_id=${parcelId}`, {
+            credentials: 'include',
+            headers: authHeaders(),
+          }).then(r => r.ok ? r.json() : null),
         ]);
 
         const a = aRes.status === 'fulfilled' ? aRes.value?.assessments?.[0] : null;

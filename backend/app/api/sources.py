@@ -21,7 +21,15 @@ _DETAIL_CACHE_TTL = 45  # seconds
 
 
 
+def _dt(value):
+    """Extract an ISO string from an NGSI-LD DateTime literal (or pass through)."""
+    if isinstance(value, dict):
+        return value.get("@value") or value.get("value")
+    return value
+
+
 def _freshness(iso_ts: str | None) -> str:
+    iso_ts = _dt(iso_ts)
     if not iso_ts:
         return "none"
     try:
@@ -283,7 +291,7 @@ async def _detail_sources(request: Request, parcelId: str) -> dict:
         iot_sensors.append({
             "metric": metric,
             "lastValue": val,
-            "lastTs": m.get("dateObserved", ""),
+            "lastTs": _dt(m.get("dateObserved")),
             "unit": unit,
         })
     # Orion returns no particular order and the query is capped, so pick the
@@ -314,7 +322,7 @@ async def _detail_sources(request: Request, parcelId: str) -> dict:
         et0 = wo.get("et0")
         if et0 is not None:
             weather_parts.append(f"ET0 {et0}mm")
-        weather_last_ts = wo.get("dateObserved")
+        weather_last_ts = _dt(wo.get("dateObserved"))
     # Fallback: CropHealthAssessment VPD
     if assessment.get("vpdKpa") is not None:
         weather_parts.append(f"VPD {assessment['vpdKpa']:.1f}kPa")
@@ -342,7 +350,7 @@ async def _detail_sources(request: Request, parcelId: str) -> dict:
         if isinstance(nd, dict):  # non-keyValues fallback
             nd = nd.get("value")
         ndvi_val = nd
-        ndvi_ts = latest.get("sensingDate")
+        ndvi_ts = _dt(latest.get("sensingDate"))
     ndvi = {
         "status": "ok" if ndvi_val is not None else "unavailable",
         "freshness": _freshness(ndvi_ts) if isinstance(ndvi_ts, str) else "none",
@@ -356,7 +364,7 @@ async def _detail_sources(request: Request, parcelId: str) -> dict:
     if sar_products:
         sp = sar_products[0]
         sar_val = sp.get("backscatterVH") or sp.get("backscatterVV") or sp.get("value")
-        sar_ts = sp.get("dateObserved") or sp.get("sensingDate")
+        sar_ts = _dt(sp.get("dateObserved") or sp.get("sensingDate"))
     sar = {
         "status": "ok" if sar_val is not None else "unavailable",
         "freshness": _freshness(sar_ts) if isinstance(sar_ts, str) else "none",

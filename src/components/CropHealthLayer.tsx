@@ -14,7 +14,7 @@ const SEVERITY_COLORS: Record<string, { fill: string; alpha: number }> = {
 function readMapMode(): MapLayerMode {
   if (typeof window === 'undefined') return 'severity';
   const stored = window.localStorage.getItem(MAP_LAYER_MODE_KEY);
-  if (stored === 'cwsi' || stored === 'composite' || stored === 'vigor' || stored === 'severity') {
+  if (stored === 'cwsi' || stored === 'composite' || stored === 'vigor' || stored === 'severity' || stored === 'off') {
     return stored;
   }
   return 'severity';
@@ -121,6 +121,13 @@ const CropHealthLayer: React.FC = () => {
     const fetchAndRender = async () => {
       const currentMode = readMapMode();
       setMode(currentMode);
+
+      // 'off' = user turned the layer off — clear everything and stop rendering
+      // so the crop-health overlay never blocks the parcel or other layers.
+      if (currentMode === 'off') {
+        clearCropHealthEntities();
+        return;
+      }
 
       const [parcelData, zoneData] = await Promise.all([
         cropHealthFetch<{ assessments: AssessmentData[] }>('/assessments/all'),

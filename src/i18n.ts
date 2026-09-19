@@ -160,6 +160,7 @@ const en = {
             cwsi: 'CWSI',
             composite: 'Composite',
             vigor: 'Vigor',
+            off: 'Off',
         },
         metrics: {
             cwsi: 'CWSI',
@@ -418,7 +419,7 @@ const es = {
         },
         tabs: { water: 'Agua', plant: 'Planta', yield: 'Rendimiento y acción', analytics: 'Analítica' },
         phenologyTimeline: { title: 'Línea fenológica', deviation: 'Desviación fenológica: {{value}}' },
-        mapLayer: { title: 'Capa del mapa', severity: 'Severidad', cwsi: 'CWSI', composite: 'Compuesto', vigor: 'Vigor' },
+        mapLayer: { title: 'Capa del mapa', severity: 'Severidad', cwsi: 'CWSI', composite: 'Compuesto', vigor: 'Vigor', off: 'Apagar' },
         metrics: { cwsi: 'CWSI', stress: 'Estrés', yield: 'Rendimiento', bioSource: 'BioOrchestrator' },
         risks: { title: 'Riesgos activos', noneActive: 'Sin alertas activas de enfermedad o compactación' },
         disease: {

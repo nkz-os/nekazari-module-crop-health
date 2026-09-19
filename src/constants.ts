@@ -8,6 +8,6 @@ export const CROP_HEALTH_ACCENT = {
 
 export const MAP_LAYER_MODE_KEY = 'nkz-crop-health-map-mode';
 
-export type MapLayerMode = 'cwsi' | 'composite' | 'vigor' | 'severity';
+export type MapLayerMode = 'cwsi' | 'composite' | 'vigor' | 'severity' | 'off';
 
-export const MAP_LAYER_MODES: MapLayerMode[] = ['severity', 'cwsi', 'composite', 'vigor'];
+export const MAP_LAYER_MODES: MapLayerMode[] = ['severity', 'cwsi', 'composite', 'vigor', 'off'];

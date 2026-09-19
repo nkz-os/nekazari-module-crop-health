@@ -1350,12 +1350,16 @@ const NAMESPACE = 'crop-health';
 
 export function registerCropHealthTranslations(): void {
   if (!i18n || typeof (i18n as any).addResourceBundle !== 'function') return;
-  i18n.addResourceBundle('en', NAMESPACE, en, true, true);
-  i18n.addResourceBundle('es', NAMESPACE, es, true, true);
-  i18n.addResourceBundle('ca', NAMESPACE, ca, true, true);
-  i18n.addResourceBundle('eu', NAMESPACE, eu, true, true);
-  i18n.addResourceBundle('fr', NAMESPACE, fr, true, true);
-  i18n.addResourceBundle('pt', NAMESPACE, pt, true, true);
+  // The translation objects wrap every key under the namespace itself
+  // (e.g. en = { 'crop-health': { title: ... } }). addResourceBundle already
+  // namespaces by its `ns` argument, so pass the INNER object — otherwise the
+  // keys land under crop-health.crop-health.* and every t() returns the raw key.
+  i18n.addResourceBundle('en', NAMESPACE, (en as any)[NAMESPACE], true, true);
+  i18n.addResourceBundle('es', NAMESPACE, (es as any)[NAMESPACE], true, true);
+  i18n.addResourceBundle('ca', NAMESPACE, (ca as any)[NAMESPACE], true, true);
+  i18n.addResourceBundle('eu', NAMESPACE, (eu as any)[NAMESPACE], true, true);
+  i18n.addResourceBundle('fr', NAMESPACE, (fr as any)[NAMESPACE], true, true);
+  i18n.addResourceBundle('pt', NAMESPACE, (pt as any)[NAMESPACE], true, true);
 }
 
 registerCropHealthTranslations();

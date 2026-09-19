@@ -193,7 +193,11 @@ async def _detail_sources(request: Request, parcelId: str) -> dict:
         orion = OrionClient(tenant_id, base_url=settings.orion_ld_url, context_url=settings.orion_ld_context)
         try:
             result = await orion.query_entities(type=type_, q=q or None, limit=limit, options="keyValues")
-            return result if isinstance(result, list) else []
+            if not isinstance(result, list):
+                return []
+            # Exclude activation scaffolding placeholders (provenance == "placeholder"):
+            # they are subscription shims with no data and pollute "latest" picks.
+            return [e for e in result if e.get("provenance") != "placeholder"]
         except Exception as e:
             logger.warning("Source query failed for %s: %s", type_, e)
             return []
@@ -208,7 +212,7 @@ async def _detail_sources(request: Request, parcelId: str) -> dict:
         f'|refAgriParcel=="{parcel_urn}")'
     )
     results = await asyncio.gather(
-        _query("CropHealthAssessment", rel_q, 1),
+        _query("CropHealthAssessment", rel_q, 10),
         _query("Device", device_q, 20),
         # Canonical optical vegetation: one EOProduct per acquisition (no
         # productType discriminator). Fetch the recent set and pick the latest

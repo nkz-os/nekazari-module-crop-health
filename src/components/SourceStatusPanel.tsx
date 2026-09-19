@@ -61,11 +61,11 @@ const STATUS_DOT: Record<string, string> = {
 
 function StatusBadge({ status, label }: { status: string; label: string }) {
   const cls: Record<string, string> = {
-    ok: 'bg-green-100 text-green-800 border border-green-200',
-    degraded: 'bg-amber-100 text-amber-800 border border-amber-200',
-    error: 'bg-red-100 text-red-800 border border-red-200',
-    unavailable: 'bg-red-100 text-red-800 border border-red-200',
-    none: 'bg-gray-100 text-gray-800 border border-gray-200',
+    ok: 'bg-nkz-success-soft text-nkz-success-strong border border-nkz-success',
+    degraded: 'bg-nkz-warning-soft text-nkz-warning-strong border border-nkz-warning',
+    error: 'bg-nkz-danger-soft text-nkz-danger-strong border border-nkz-danger',
+    unavailable: 'bg-nkz-danger-soft text-nkz-danger-strong border border-nkz-danger',
+    none: 'bg-nkz-surface-sunken text-nkz-text-secondary border border-nkz-border',
   };
   return (
     <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium leading-4 ${cls[status] || cls.none}`}>

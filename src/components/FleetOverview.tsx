@@ -47,19 +47,19 @@ const FleetOverview: React.FC<FleetOverviewProps> = ({ parcels, assessments, dis
       key: 'critical',
       value: stats.critical + stats.high,
       label: t('fleet.stressed'),
-      intent: stats.critical + stats.high > 0 ? 'text-red-600' : 'text-nkz-text-muted',
+      intent: stats.critical + stats.high > 0 ? 'text-nkz-danger' : 'text-nkz-text-muted',
     },
     {
       key: 'irrigate',
       value: stats.irrigateNow,
       label: t('fleet.irrigateNow'),
-      intent: stats.irrigateNow > 0 ? 'text-orange-600' : 'text-nkz-text-muted',
+      intent: stats.irrigateNow > 0 ? 'text-nkz-warning' : 'text-nkz-text-muted',
     },
     {
       key: 'disease',
       value: diseaseCount,
       label: t('fleet.diseaseAlerts'),
-      intent: diseaseCount > 0 ? 'text-amber-600' : 'text-nkz-text-muted',
+      intent: diseaseCount > 0 ? 'text-nkz-warning' : 'text-nkz-text-muted',
     },
     {
       key: 'pending',

@@ -9,11 +9,11 @@ export function ProgressBar({
 }) {
   const barCls =
     intent === 'negative'
-      ? 'bg-red-500'
+      ? 'bg-nkz-danger'
       : intent === 'warning'
-        ? 'bg-amber-500'
+        ? 'bg-nkz-warning'
         : intent === 'positive'
-          ? 'bg-green-500'
+          ? 'bg-nkz-success'
           : 'bg-nkz-accent-base';
   return (
     <div className="flex items-center gap-2">
@@ -33,10 +33,10 @@ export function Badge({
   children: React.ReactNode;
 }) {
   const cls: Record<string, string> = {
-    positive: 'bg-green-100 text-green-800 border border-green-200',
-    warning: 'bg-amber-100 text-amber-800 border border-amber-200',
-    negative: 'bg-red-100 text-red-800 border border-red-200',
-    info: 'bg-blue-100 text-blue-800 border border-blue-200',
+    positive: 'bg-nkz-success-soft text-nkz-success-strong border border-nkz-success',
+    warning: 'bg-nkz-warning-soft text-nkz-warning-strong border border-nkz-warning',
+    negative: 'bg-nkz-danger-soft text-nkz-danger-strong border border-nkz-danger',
+    info: 'bg-nkz-info-soft text-nkz-info-strong border border-nkz-info',
     default: 'bg-nkz-surface-sunken text-nkz-text-secondary border border-nkz-border',
   };
   return (

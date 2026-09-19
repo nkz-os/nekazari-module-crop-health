@@ -98,31 +98,30 @@ const actionLabelKey = (action: string): string => {
 function FidelityBadge({ fidelity }: { fidelity: string }) {
   const key = fidelity.replace(/^(onsite_|regional_)/, '').replace(/_proxy$/, '');
   const cls: Record<string, string> = {
-    calibrated: 'bg-green-100 text-green-800 border border-green-200',
-    onsite: 'bg-amber-100 text-amber-800 border border-amber-200',
-    uncalibrated: 'bg-amber-100 text-amber-800 border border-amber-200',
-    local: 'bg-gray-100 text-gray-800 border border-gray-200',
-    regional: 'bg-blue-100 text-blue-800 border border-blue-200',
-    modeled: 'bg-blue-100 text-blue-800 border border-blue-200',
-    proxy: 'bg-blue-100 text-blue-800 border border-blue-200',
+    calibrated: 'bg-nkz-success-soft text-nkz-success-strong border border-nkz-success',
+    onsite: 'bg-nkz-warning-soft text-nkz-warning-strong border border-nkz-warning',
+    uncalibrated: 'bg-nkz-warning-soft text-nkz-warning-strong border border-nkz-warning',
+    local: 'bg-nkz-surface-sunken text-nkz-text-secondary border border-nkz-border',
+    regional: 'bg-nkz-info-soft text-nkz-info-strong border border-nkz-info',
+    modeled: 'bg-nkz-info-soft text-nkz-info-strong border border-nkz-info',
+    proxy: 'bg-nkz-info-soft text-nkz-info-strong border border-nkz-info',
   };
   return (
-    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium leading-4 ${cls[key] || 'bg-gray-100 text-gray-800 border border-gray-200'}`}>
+    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium leading-4 ${cls[key] || 'bg-nkz-surface-sunken text-nkz-text-secondary border border-nkz-border'}`}>
       {fidelity}
     </span>
   );
 }
 
-function MetricChip({ icon, text, color }: { icon: string; text: string; color?: string }) {
-  const defaultCls = 'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium';
-  const colorCls = color === '#dc2626' || color === '#ea580c'
-    ? 'bg-red-100 text-red-800'
-    : color === '#d97706'
-    ? 'bg-amber-100 text-amber-800'
-    : color === '#16a34a'
-    ? 'bg-green-100 text-green-800'
-    : 'bg-gray-100 text-gray-800';
-  return <span className={`${defaultCls} ${colorCls}`}>{icon} {text}</span>;
+function MetricChip({ icon, text, intent }: { icon: string; text: string; intent?: 'positive' | 'warning' | 'negative' | 'default' }) {
+  const cls = intent === 'negative'
+    ? 'bg-nkz-danger-soft text-nkz-danger-strong border border-nkz-danger'
+    : intent === 'warning'
+    ? 'bg-nkz-warning-soft text-nkz-warning-strong border border-nkz-warning'
+    : intent === 'positive'
+    ? 'bg-nkz-success-soft text-nkz-success-strong border border-nkz-success'
+    : 'bg-nkz-surface-sunken text-nkz-text-secondary border border-nkz-border';
+  return <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${cls}`}>{icon} {text}</span>;
 }
 
 const CropStatusSnapshot: React.FC<CropStatusSnapshotProps> = ({ parcelId, parcelName }) => {
@@ -160,9 +159,9 @@ const CropStatusSnapshot: React.FC<CropStatusSnapshotProps> = ({ parcelId, parce
   if (loading) {
     return (
       <div className="bg-nkz-surface-raised border border-nkz-border rounded-lg p-3 mb-3 animate-pulse space-y-2">
-        <div className="h-4 bg-gray-200 rounded w-3/4" />
-        <div className="h-3 bg-gray-200 rounded w-1/2" />
-        <div className="h-3 bg-gray-200 rounded w-2/3" />
+        <div className="h-4 bg-nkz-border rounded w-3/4" />
+        <div className="h-3 bg-nkz-border rounded w-1/2" />
+        <div className="h-3 bg-nkz-border rounded w-2/3" />
       </div>
     );
   }
@@ -190,17 +189,16 @@ const CropStatusSnapshot: React.FC<CropStatusSnapshotProps> = ({ parcelId, parce
   const vigor = assessment.vigorIndex;
 
   const fidelity = assessment.dataFidelity || 'regional_proxy';
-  const chips: { icon: string; text: string; color?: string }[] = [];
+  const chips: { icon: string; text: string; intent?: 'positive' | 'warning' | 'negative' }[] = [];
 
   if (cwsi != null && cwsi >= 0.2) {
-    chips.push({ icon: '⚠️', text: t(cwsiPhrase(cwsi)), color: cwsi > 0.6 ? '#dc2626' : '#d97706' });
+    chips.push({ icon: '⚠️', text: t(cwsiPhrase(cwsi)), intent: cwsi > 0.6 ? 'negative' : 'warning' });
   }
   if (balance != null && balance < 0) {
-    const balColor = balance < -15 ? '#dc2626' : balance < -5 ? '#d97706' : '#d97706';
-    chips.push({ icon: '💧', text: `${Math.abs(balance).toFixed(1)}mm deficit`, color: balColor });
+    chips.push({ icon: '💧', text: `${Math.abs(balance).toFixed(1)}mm deficit`, intent: balance < -15 ? 'negative' : 'warning' });
   }
   if (assessment.mdsSeverity && assessment.mdsSeverity !== 'LOW' && assessment.mdsValue != null) {
-    chips.push({ icon: '📏', text: `${assessment.mdsValue.toFixed(0)}µm ${assessment.mdsSeverity}`, color: assessment.mdsSeverity === 'CRITICAL' ? '#dc2626' : '#d97706' });
+    chips.push({ icon: '📏', text: `${assessment.mdsValue.toFixed(0)}µm ${assessment.mdsSeverity}`, intent: assessment.mdsSeverity === 'CRITICAL' ? 'negative' : 'warning' });
   }
   if (assessment.thermalCondition && assessment.thermalCondition !== 'no_stress') {
     chips.push({ icon: assessment.thermalCondition?.startsWith('frost') ? '❄️' : '🔥', text: t(assessment.thermalCondition?.startsWith('frost') ? 'summary.thermal.frost' : 'summary.thermal.heat') });
@@ -208,7 +206,7 @@ const CropStatusSnapshot: React.FC<CropStatusSnapshotProps> = ({ parcelId, parce
     chips.push({ icon: '✅', text: t('summary.thermal.none') });
   }
   if (vigor != null && vigor < 0.7) {
-    chips.push({ icon: '🌿', text: `${t(vigor >= 0.4 ? 'summary.vigor.below' : 'summary.vigor.low', { value: vigor.toFixed(2) })}`, color: vigor >= 0.4 ? '#d97706' : '#dc2626' });
+    chips.push({ icon: '🌿', text: `${t(vigor >= 0.4 ? 'summary.vigor.below' : 'summary.vigor.low', { value: vigor.toFixed(2) })}`, intent: vigor >= 0.4 ? 'warning' : 'negative' });
   }
 
   return (
@@ -263,7 +261,7 @@ const CropStatusSnapshot: React.FC<CropStatusSnapshotProps> = ({ parcelId, parce
       {/* Waterlogging risk */}
       {assessment.waterloggingRisk && assessment.waterloggingRisk.riskLevel !== 'LOW' && (
         <div className="mt-1">
-          <p className="text-xs" style={{ color: '#1e40af' }}>
+          <p className="text-xs" style={{ color: 'var(--nkz-color-info)' }}>
             💦 {t('waterlogging.' + assessment.waterloggingRisk.riskLevel, { hours: assessment.waterloggingRisk.saturationHours.toFixed(0) })}
           </p>
         </div>

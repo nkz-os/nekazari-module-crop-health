@@ -1,6 +1,6 @@
 import React from 'react';
 import { useTranslation } from '@nekazari/sdk';
-import { SeverityBadge } from './shared/SeverityBadge';
+import { SeverityBadge, severityColor } from './shared/SeverityBadge';
 import type { AssessmentData, DiseaseRisk } from '../types/assessment';
 
 interface CropHealthRisksPanelProps {
@@ -14,12 +14,6 @@ const DISEASE_EMOJIS: Record<string, string> = {
   alternaria: '🍅',
   powdery_mildew: '🌿',
 };
-
-function riskColor(level: string): string {
-  if (level === 'HIGH') return '#dc2626';
-  if (level === 'MEDIUM') return '#d97706';
-  return '#16a34a';
-}
 
 const CropHealthRisksPanel: React.FC<CropHealthRisksPanelProps> = ({ diseases, assessment }) => {
   const { t } = useTranslation('crop-health');
@@ -43,7 +37,7 @@ const CropHealthRisksPanel: React.FC<CropHealthRisksPanelProps> = ({ diseases, a
       {hasDiseases && (
         <div className="space-y-2">
           {diseases.map((r, i) => {
-            const color = riskColor(r.risk_level);
+            const color = severityColor(r.risk_level);
             return (
               <div
                 key={`${r.disease}-${i}`}
@@ -68,17 +62,17 @@ const CropHealthRisksPanel: React.FC<CropHealthRisksPanelProps> = ({ diseases, a
       )}
 
       {hasCompaction && compaction && (
-        <div className="rounded-lg border border-nkz-border p-2.5 border-l-[3px] bg-nkz-surface border-l-orange-500">
+        <div className="rounded-lg border border-nkz-border p-2.5 border-l-[3px] bg-nkz-surface border-l-nkz-warning">
           <div className="flex items-center justify-between gap-2">
             <span className="text-sm font-semibold text-nkz-text-primary">🪨 {t('compaction.title')}</span>
-            <span className="text-xs font-medium text-orange-700">
+            <span className="text-xs font-medium text-nkz-warning-strong">
               {t(`compaction.level.${compaction.level}`)}
             </span>
           </div>
           <div className="mt-2 flex items-center gap-2">
             <div className="flex-1 h-1.5 bg-nkz-border rounded-full overflow-hidden">
               <div
-                className="h-full rounded-full bg-orange-500"
+                className="h-full rounded-full bg-nkz-warning"
                 style={{ width: `${Math.min(compaction.score ?? 0, 100)}%` }}
               />
             </div>

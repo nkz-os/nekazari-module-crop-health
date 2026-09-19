@@ -5,11 +5,11 @@ import { formatRelativeTime } from '../utils/relativeTime';
 import type { ParcelSummary } from '../types/assessment';
 
 const INDICATOR_COLORS: Record<string, string> = {
-  green: '#16a34a',
-  blue: '#2563eb',
-  yellow: '#d97706',
-  red: '#dc2626',
-  grey: '#9ca3af',
+  green: 'var(--nkz-color-success)',
+  blue: 'var(--nkz-color-info)',
+  yellow: 'var(--nkz-color-warning)',
+  red: 'var(--nkz-color-danger)',
+  grey: 'var(--nkz-color-text-muted)',
 };
 
 function relativeTime(iso: string | undefined, t: ReturnType<typeof useTranslation>['t']): string {
@@ -77,10 +77,10 @@ const ParcelList: React.FC<ParcelListProps> = ({ onSelectParcel, selectedParcelI
     return (
       <div className="p-2 space-y-2">
         <div className="animate-pulse mb-2">
-          <div className="h-9 bg-gray-200 rounded" />
+          <div className="h-9 bg-nkz-border rounded" />
         </div>
         {[1, 2, 3, 4, 5].map(i => (
-          <div key={i} className="animate-pulse h-14 bg-gray-100 rounded" />
+          <div key={i} className="animate-pulse h-14 bg-nkz-surface-sunken rounded" />
         ))}
       </div>
     );
@@ -139,8 +139,7 @@ const ParcelList: React.FC<ParcelListProps> = ({ onSelectParcel, selectedParcelI
                   width: 10,
                   height: 10,
                   borderRadius: '50%',
-                  backgroundColor: INDICATOR_COLORS[p.healthIndicator || 'grey'] || '#9ca3af',
-                  boxShadow: p.healthIndicator === 'green' ? '0 0 6px rgba(22,163,74,0.4)' : undefined,
+                  backgroundColor: INDICATOR_COLORS[p.healthIndicator || 'grey'] || 'var(--nkz-color-text-muted)',
                 }}
               />
               <div className="min-w-0 flex-1">
@@ -159,7 +158,7 @@ const ParcelList: React.FC<ParcelListProps> = ({ onSelectParcel, selectedParcelI
                     {p.cwsiValue != null && (
                       <span
                         className="text-xs font-mono"
-                        style={{ color: p.cwsiValue > 0.6 ? '#dc2626' : p.cwsiValue > 0.3 ? '#d97706' : '#16a34a' }}
+                        style={{ color: p.cwsiValue > 0.6 ? 'var(--nkz-color-danger)' : p.cwsiValue > 0.3 ? 'var(--nkz-color-warning)' : 'var(--nkz-color-success)' }}
                       >
                         CWSI {p.cwsiValue.toFixed(2)}
                       </span>
@@ -167,7 +166,7 @@ const ParcelList: React.FC<ParcelListProps> = ({ onSelectParcel, selectedParcelI
                     <p className="text-xs text-nkz-text-muted">{relativeTime(p.assessedAt, t)}</p>
                   </>
                 ) : (
-                  <span className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium leading-4 bg-gray-100 text-gray-800 border border-gray-200">
+                  <span className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium leading-4 bg-nkz-surface-sunken text-nkz-text-secondary border border-nkz-border">
                     {t('parcelList.noData')}
                   </span>
                 )}

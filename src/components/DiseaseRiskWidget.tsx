@@ -44,7 +44,7 @@ const DiseaseRiskWidget: React.FC = () => {
     <SlotShell moduleId="crop-health" title={t('diseaseRisk')} icon={<Bug className="w-4 h-4" />} accent={CROP_HEALTH_ACCENT}>
       <div className="space-y-2">
         {risks.map((r, i) => (
-          <div key={i} className="bg-nkz-surface border border-nkz-border rounded-lg p-2.5 border-l-[3px] border-l-amber-500">
+          <div key={i} className="bg-nkz-surface border border-nkz-border rounded-lg p-2.5 border-l-[3px] border-l-nkz-warning">
             <div className="flex items-center justify-between gap-2">
               <span className="text-sm font-semibold text-nkz-text-primary">
                 {(DISEASE_EMOJIS[r.disease] || '🦠')} {t(`disease.${r.disease}`, r.disease)}

@@ -86,11 +86,11 @@ const CropHealthDetailTabs: React.FC<CropHealthDetailTabsProps> = ({
             <span className="text-xs text-nkz-text-secondary font-medium uppercase tracking-wider">
               {t('contextPanel.cwsiLabel')}
             </span>
-            {trendCW.length >= 2 && <Sparkline data={trendCW} color="#dc2626" />}
+            {trendCW.length >= 2 && <Sparkline data={trendCW} color="var(--nkz-color-danger)" />}
           </div>
           <ProgressBar value={assessment.cwsiValue * 100} intent={assessment.cwsiValue > 0.6 ? 'negative' : assessment.cwsiValue > 0.3 ? 'warning' : 'positive'} />
           {trendDir != null && (
-            <p className="text-xs mt-1" style={{ color: Number(trendDir) > 0 ? '#dc2626' : '#16a34a' }}>
+            <p className="text-xs mt-1" style={{ color: Number(trendDir) > 0 ? 'var(--nkz-color-danger)' : 'var(--nkz-color-success)' }}>
               {Number(trendDir) > 0 ? '↑' : '↓'} {Math.abs(Number(trendDir)).toFixed(2)} 7d
               {' — '}
               {Number(trendDir) > 0.05 ? t('contextPanel.declining') : Number(trendDir) < -0.05 ? t('contextPanel.improving') : t('contextPanel.stable')}
@@ -106,7 +106,7 @@ const CropHealthDetailTabs: React.FC<CropHealthDetailTabsProps> = ({
             <span className="text-xs text-nkz-text-secondary font-medium uppercase tracking-wider">
               {t('contextPanel.mdsLabel')}
             </span>
-            {trendMDS.length >= 2 && <Sparkline data={trendMDS} color="#7c3aed" />}
+            {trendMDS.length >= 2 && <Sparkline data={trendMDS} color="var(--nkz-color-info)" />}
           </div>
           <div className="flex items-center gap-2">
             <span className="text-sm font-mono text-nkz-text-primary">{assessment.mdsValue.toFixed(0)}µm</span>
@@ -121,7 +121,7 @@ const CropHealthDetailTabs: React.FC<CropHealthDetailTabsProps> = ({
           <span className="text-xs text-nkz-text-secondary font-medium uppercase tracking-wider block mb-1">
             {t('contextPanel.waterBalanceLabel')}
           </span>
-          <span className="font-mono text-sm" style={{ color: assessment.waterBalanceDeficit < 0 ? '#dc2626' : '#16a34a' }}>
+          <span className="font-mono text-sm" style={{ color: assessment.waterBalanceDeficit < 0 ? 'var(--nkz-color-danger)' : 'var(--nkz-color-success)' }}>
             {assessment.waterBalanceDeficit > 0 ? '+' : ''}{assessment.waterBalanceDeficit.toFixed(1)}mm
           </span>
         </MetricSection>
@@ -167,7 +167,7 @@ const CropHealthDetailTabs: React.FC<CropHealthDetailTabsProps> = ({
           )}
           {(assessment.waterloggingRisk?.riskLevel ?? assessment.waterloggingRiskLevel) &&
             (assessment.waterloggingRisk?.riskLevel ?? assessment.waterloggingRiskLevel) !== 'LOW' && (
-            <p className="text-xs mt-1" style={{ color: '#1e40af' }}>
+            <p className="text-xs mt-1" style={{ color: 'var(--nkz-color-info)' }}>
               💦 {assessment.waterloggingRisk?.riskLevel ?? assessment.waterloggingRiskLevel}
               {' '}({(assessment.waterloggingRisk?.saturationHours ?? assessment.waterloggingSaturationHours)?.toFixed(0)}h)
               {assessment.waterloggingRisk?.excessMm != null && ` · +${assessment.waterloggingRisk.excessMm.toFixed(0)} mm`}
@@ -458,8 +458,8 @@ const CropHealthDetailTabs: React.FC<CropHealthDetailTabsProps> = ({
             {correlation.slice(-5).map((p, i) => (
               <div key={i} className="flex items-center gap-2 text-xs">
                 <span className="text-nkz-text-muted w-20">{p.date?.slice(0, 10)}</span>
-                <span style={{ color: (p.ndvi || 0) > 0.5 ? '#16a34a' : '#d97706' }}>NDVI {(p.ndvi || 0).toFixed(2)}</span>
-                <span style={{ color: (p.cwsi || 0) > 0.5 ? '#dc2626' : '#16a34a' }}>CWSI {(p.cwsi || 0).toFixed(2)}</span>
+                <span style={{ color: (p.ndvi || 0) > 0.5 ? 'var(--nkz-color-success)' : 'var(--nkz-color-warning)' }}>NDVI {(p.ndvi || 0).toFixed(2)}</span>
+                <span style={{ color: (p.cwsi || 0) > 0.5 ? 'var(--nkz-color-danger)' : 'var(--nkz-color-success)' }}>CWSI {(p.cwsi || 0).toFixed(2)}</span>
               </div>
             ))}
           </div>

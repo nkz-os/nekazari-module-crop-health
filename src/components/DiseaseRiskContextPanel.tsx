@@ -1,5 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useTranslation } from '@nekazari/sdk';
+import { cropHealthFetch } from '../api/cropHealthApi';
+import { severityColor } from './shared/SeverityBadge';
 
 interface DiseaseRisk {
     disease: string;
@@ -13,13 +15,6 @@ interface DiseaseRisk {
     parcelId?: string;
 }
 
-const DISEASE_LABELS: Record<string, string> = {
-    downy_mildew: 'Mildiu',
-    apple_scab: 'Sarna del manzano',
-    alternaria: 'Alternaria',
-    powdery_mildew: 'Oídio',
-};
-
 const DISEASE_EMOJIS: Record<string, string> = {
     downy_mildew: '🍇',
     apple_scab: '🍎',
@@ -29,9 +24,9 @@ const DISEASE_EMOJIS: Record<string, string> = {
 
 function RiskBadge({ level }: { level: string }) {
     const classes: Record<string, string> = {
-        LOW: 'bg-green-100 text-green-800 border border-green-200',
-        MEDIUM: 'bg-amber-100 text-amber-800 border border-amber-200',
-        HIGH: 'bg-red-100 text-red-800 border border-red-200',
+        LOW: 'bg-nkz-success-soft text-nkz-success-strong border border-nkz-success',
+        MEDIUM: 'bg-nkz-warning-soft text-nkz-warning-strong border border-nkz-warning',
+        HIGH: 'bg-nkz-danger-soft text-nkz-danger-strong border border-nkz-danger',
     };
     return (
         <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium leading-4 ${classes[level] || classes.LOW}`}>
@@ -53,12 +48,9 @@ const DiseaseRiskContextPanel: React.FC<Props> = ({ parcelId, parcelName }) => {
     useEffect(() => {
         if (!parcelId) return;
         setLoading(true);
-        fetch(`/api/crop-health/diseases/active?parcelId=${encodeURIComponent(parcelId)}`)
-            .then(r => r.ok ? r.json() : null)
+        cropHealthFetch<{ risks: DiseaseRisk[] }>(`/diseases/active?parcelId=${encodeURIComponent(parcelId)}`)
             .then(data => setRisks(data?.risks || []))
-            .catch(() => {})
-            .finally(() => setLoading(false));
-    }, [parcelId]);
+            .finally(() => setLoading(false));    }, [parcelId]);
 
     return (
         <div className="space-y-2">
@@ -81,12 +73,12 @@ const DiseaseRiskContextPanel: React.FC<Props> = ({ parcelId, parcelName }) => {
                 </div>
             ) : (
                 risks.map((r, i) => {
-                    const color = r.risk_level === 'HIGH' ? '#dc2626' : r.risk_level === 'MEDIUM' ? '#d97706' : '#16a34a';
+                    const color = severityColor(r.risk_level);
                     return (
                         <div key={i} className="bg-nkz-surface-raised border border-nkz-border rounded-lg p-3 border-l-[3px]" style={{ borderLeftColor: color }}>
                             <div className="flex items-center justify-between">
                                 <span className="text-sm font-semibold text-nkz-text-primary">
-                                    {(DISEASE_EMOJIS[r.disease] || '🦠')} {DISEASE_LABELS[r.disease] || r.disease}
+                                    {(DISEASE_EMOJIS[r.disease] || '🦠')} {t(`disease.${r.disease}`, r.disease)}
                                 </span>
                                 <RiskBadge level={r.risk_level} />
                             </div>

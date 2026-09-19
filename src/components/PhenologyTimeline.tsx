@@ -11,7 +11,7 @@ function stageStatusClass(status: string): string {
     case 'current':
       return 'border-nkz-accent-base bg-nkz-accent-soft text-nkz-accent-strong';
     case 'completed':
-      return 'border-green-300 bg-green-50 text-green-800';
+      return 'border-nkz-success bg-nkz-success-soft text-nkz-success-strong';
     case 'upcoming':
       return 'border-nkz-border bg-nkz-surface text-nkz-text-muted';
     default:
@@ -64,7 +64,7 @@ const PhenologyTimeline: React.FC<PhenologyTimelineProps> = ({ status }) => {
       </div>
 
       {status.deviation && status.deviation !== 'on_track' && (
-        <p className="text-xs text-amber-700 mt-2">
+        <p className="text-xs text-nkz-warning-strong mt-2">
           {t('phenologyTimeline.deviation', { value: status.deviation })}
         </p>
       )}

@@ -1,5 +1,8 @@
 import React from 'react';
 import { useTranslation } from '@nekazari/sdk';
+import { Sprout } from 'lucide-react';
+import { SlotShell } from '@nekazari/viewer-kit';
+import { CROP_HEALTH_ACCENT } from '../constants';
 import ParcelHealthWorkbench from './ParcelHealthWorkbench';
 
 interface Props {
@@ -32,17 +35,17 @@ const CropHealthContextPanel: React.FC<Props> = ({
   const effectiveParcelId = propParcelId || resolveParcelId(entityData);
   const effectiveParcelName = propParcelName || entityData?.name?.value || entityData?.name || '';
 
-  if (!effectiveParcelId) {
-    return (
-      <div className="text-center p-4">
-        <span className="text-2xl">🌱</span>
-        <p className="text-sm text-nkz-text-muted mt-1">{t('contextPanel.noData')}</p>
-      </div>
-    );
-  }
-
   return (
-    <ParcelHealthWorkbench parcelId={effectiveParcelId} parcelName={effectiveParcelName} />
+    <SlotShell moduleId="crop-health" title={t('title')} icon={<Sprout className="w-4 h-4" />} accent={CROP_HEALTH_ACCENT}>
+      {!effectiveParcelId ? (
+        <div className="text-center p-4">
+          <span className="text-2xl">🌱</span>
+          <p className="text-sm text-nkz-text-muted mt-1">{t('contextPanel.noData')}</p>
+        </div>
+      ) : (
+        <ParcelHealthWorkbench parcelId={effectiveParcelId} parcelName={effectiveParcelName} />
+      )}
+    </SlotShell>
   );
 };
 

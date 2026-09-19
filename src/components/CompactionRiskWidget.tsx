@@ -18,10 +18,10 @@ interface CompactionRiskData {
 }
 
 const RISK_BAR: Record<string, string> = {
-  low: 'bg-green-500',
-  moderate: 'bg-amber-500',
-  high: 'bg-orange-500',
-  very_high: 'bg-red-500',
+  low: 'bg-nkz-success',
+  moderate: 'bg-nkz-warning',
+  high: 'bg-nkz-warning',
+  very_high: 'bg-nkz-danger',
 };
 
 const CompactionRiskWidget: React.FC = () => {

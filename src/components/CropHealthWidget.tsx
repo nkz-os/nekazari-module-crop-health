@@ -17,7 +17,7 @@ const ACTION_LABELS: Record<ActionKey, string> = {
 };
 
 function MiniProgress({ value, intent }: { value: number; intent: 'positive' | 'warning' | 'negative' }) {
-  const barCls = intent === 'negative' ? 'bg-red-500' : intent === 'warning' ? 'bg-amber-500' : 'bg-green-500';
+  const barCls = intent === 'negative' ? 'bg-nkz-danger' : intent === 'warning' ? 'bg-nkz-warning' : 'bg-nkz-success';
   return (
     <div className="flex items-center gap-2">
       <div className="flex-1 h-1.5 bg-nkz-border rounded-full overflow-hidden">

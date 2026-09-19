@@ -7,9 +7,9 @@ import { CROP_HEALTH_ACCENT, MAP_LAYER_MODE_KEY, MAP_LAYER_MODES, type MapLayerM
 const CropHealthMapModeWidget: React.FC = () => {
   const { t } = useTranslation('crop-health');
   const [mode, setMode] = React.useState<MapLayerMode>(() => {
-    if (typeof window === 'undefined') return 'severity';
+    if (typeof window === 'undefined') return 'off';
     const stored = window.localStorage.getItem(MAP_LAYER_MODE_KEY);
-    return MAP_LAYER_MODES.includes(stored as MapLayerMode) ? (stored as MapLayerMode) : 'severity';
+    return MAP_LAYER_MODES.includes(stored as MapLayerMode) ? (stored as MapLayerMode) : 'off';
   });
 
   const selectMode = (next: MapLayerMode) => {

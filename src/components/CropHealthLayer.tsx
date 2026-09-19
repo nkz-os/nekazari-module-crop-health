@@ -12,12 +12,12 @@ const SEVERITY_COLORS: Record<string, { fill: string; alpha: number }> = {
 };
 
 function readMapMode(): MapLayerMode {
-  if (typeof window === 'undefined') return 'severity';
+  if (typeof window === 'undefined') return 'off';
   const stored = window.localStorage.getItem(MAP_LAYER_MODE_KEY);
   if (stored === 'cwsi' || stored === 'composite' || stored === 'vigor' || stored === 'severity' || stored === 'off') {
     return stored;
   }
-  return 'severity';
+  return 'off';
 }
 
 function layerValue(a: AssessmentData, mode: MapLayerMode): number | null {

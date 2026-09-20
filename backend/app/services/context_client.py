@@ -712,6 +712,7 @@ async def get_soil_properties(parcel_id: str, tenant_id: str = "") -> "SoilPrope
                         ),
                         "scs_hydrologic_group": h.get("hydrologicGroup") or "B",
                         "usda_texture_class": h.get("usdaTextureClass") or "loam",
+                        "ph": h.get("ph"),
                         "source": _summary_data_source(data, h),
                         "has_data": True,
                     }

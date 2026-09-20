@@ -183,6 +183,7 @@ class SoilProperties(BaseModel):
     ksat_mm_h: float = 13.0            # mm/h
     scs_hydrologic_group: str = "B"
     usda_texture_class: str = "loam"
+    ph: float | None = None
     source: str = "default_modeled"
     has_data: bool = False
 

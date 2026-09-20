@@ -919,7 +919,11 @@ async def _run_engines(
     assessment.data_fidelity = _resolve_data_fidelity(assessment)
 
     # Soil sensor pass-through values
-    assessment.soil_ph = soil_ph_val
+    assessment.soil_ph = (
+        soil_ph_val
+        if soil_ph_val is not None
+        else (soil.ph if soil is not None and soil.has_data else None)
+    )
     assessment.soil_ec = soil_ec_val
     assessment.soil_moisture_pct = soil_moisture_val
     assessment.soil_temperature_c = soil_temp_val

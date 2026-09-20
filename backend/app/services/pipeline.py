@@ -918,6 +918,10 @@ async def _run_engines(
 
     assessment.data_fidelity = _resolve_data_fidelity(assessment)
 
+    # Soil physical properties — unconditional (not weather-dependent).
+    if soil is not None and soil.has_data:
+        assessment.soil_properties = soil
+
     # Soil sensor pass-through values
     assessment.soil_ph = (
         soil_ph_val

@@ -35,12 +35,15 @@ async def _fetch_assessment_entities(tenant_id: str, parcel_id: str = "", limit:
                 f'(hasAgriParcel=="urn:ngsi-ld:AgriParcel:{parcel_id}"'
                 f'|refAgriParcel=="urn:ngsi-ld:AgriParcel:{parcel_id}")'
             )
-        return await client.query_entities(
+        entities = await client.query_entities(
             type="CropHealthAssessment",
             q=q,
             limit=limit,
             options="keyValues",
         )
+        # Exclude activation scaffolding placeholders (provenance == "placeholder"):
+        # they carry no data and out-rank real dated assessments by assessedAt.
+        return [e for e in entities if e.get("provenance") != "placeholder"]
     except Exception as e:
         logger.warning("Orion CropHealthAssessment query failed: %s", e)
         return []

@@ -11,3 +11,18 @@ export const MAP_LAYER_MODE_KEY = 'nkz-crop-health-map-mode';
 export type MapLayerMode = 'cwsi' | 'composite' | 'vigor' | 'severity' | 'off';
 
 export const MAP_LAYER_MODES: MapLayerMode[] = ['severity', 'cwsi', 'composite', 'vigor', 'off'];
+
+/**
+ * Map layer mode shared by the dashboard widget, the viewer's layer options and
+ * the map layer. Unset means 'severity': the viewer's Layers panel switches the
+ * whole module on and off, so an active module shows its layer straight away.
+ */
+export function readMapLayerMode(): MapLayerMode {
+  if (typeof window === 'undefined') return 'severity';
+  try {
+    const stored = window.localStorage.getItem(MAP_LAYER_MODE_KEY);
+    return MAP_LAYER_MODES.includes(stored as MapLayerMode) ? (stored as MapLayerMode) : 'severity';
+  } catch {
+    return 'severity';
+  }
+}

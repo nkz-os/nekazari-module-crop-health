@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useViewer } from '@nekazari/sdk';
 import { cropHealthFetch } from '../api/cropHealthApi';
-import { MAP_LAYER_MODE_KEY, type MapLayerMode } from '../constants';
+import { MAP_LAYER_MODE_KEY, readMapLayerMode, type MapLayerMode } from '../constants';
 import type { AssessmentData, ZoneAssessmentData } from '../types/assessment';
 
 const SEVERITY_COLORS: Record<string, { fill: string; alpha: number }> = {
@@ -10,15 +10,6 @@ const SEVERITY_COLORS: Record<string, { fill: string; alpha: number }> = {
   HIGH: { fill: '#ea580c', alpha: 0.5 },
   CRITICAL: { fill: '#dc2626', alpha: 0.55 },
 };
-
-function readMapMode(): MapLayerMode {
-  if (typeof window === 'undefined') return 'off';
-  const stored = window.localStorage.getItem(MAP_LAYER_MODE_KEY);
-  if (stored === 'cwsi' || stored === 'composite' || stored === 'vigor' || stored === 'severity' || stored === 'off') {
-    return stored;
-  }
-  return 'off';
-}
 
 function layerValue(a: AssessmentData, mode: MapLayerMode): number | null {
   switch (mode) {
@@ -89,12 +80,12 @@ function zoneCentroid(geometry: ZoneAssessmentData['geometry']): [number, number
 
 const CropHealthLayer: React.FC = () => {
   const { cesiumViewer } = useViewer();
-  const [mode, setMode] = useState<MapLayerMode>(readMapMode);
+  const [mode, setMode] = useState<MapLayerMode>(readMapLayerMode);
 
   useEffect(() => {
     const onStorage = (event: StorageEvent) => {
       if (event.key === MAP_LAYER_MODE_KEY && event.newValue) {
-        setMode(readMapMode());
+        setMode(readMapLayerMode());
       }
     };
     window.addEventListener('storage', onStorage);
@@ -119,7 +110,7 @@ const CropHealthLayer: React.FC = () => {
     };
 
     const fetchAndRender = async () => {
-      const currentMode = readMapMode();
+      const currentMode = readMapLayerMode();
       setMode(currentMode);
 
       // 'off' = user turned the layer off — clear everything and stop rendering

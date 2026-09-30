@@ -4,6 +4,7 @@ import CropHealthLayer from '../components/CropHealthLayer';
 import DiseaseRiskWidget from '../components/DiseaseRiskWidget';
 import CompactionRiskWidget from '../components/CompactionRiskWidget';
 import CropHealthMapModeWidget from '../components/CropHealthMapModeWidget';
+import CropHealthLayerToggle from '../components/CropHealthLayerToggle';
 
 const MODULE_ID = 'crop-health';
 
@@ -45,6 +46,15 @@ export const moduleSlots = {
       component: 'CropHealthContextPanel',
       localComponent: CropHealthContextPanel,
       priority: 10,
+    },
+  ],
+  'layer-toggle': [
+    {
+      id: 'crop-health-layer-toggle',
+      moduleId: MODULE_ID,
+      component: 'CropHealthLayerToggle',
+      localComponent: CropHealthLayerToggle,
+      priority: 20,
     },
   ],
   'map-layer': [

@@ -620,11 +620,19 @@ async def active_disease_risks(
         if isinstance(confidence, (int, float)):
             confidence = "high" if confidence >= 0.9 else ("medium" if confidence >= 0.7 else "low")
 
+        # `conditions` es un string en los modelos epidemiológicos, pero un
+        # árbol de condiciones (list/dict) en los presets threshold. Coercer a
+        # texto legible: si es árbol, usar los `factors` humanizables.
+        conditions = eval_data.get("conditions", "")
+        if isinstance(conditions, (list, dict)):
+            factors = eval_data.get("factors")
+            conditions = "; ".join(str(f) for f in factors) if isinstance(factors, list) else ""
+
         risks.append({
             "disease": eval_data.get("disease") or str(e.get("alertType") or "unknown"),
             "crop": eval_data.get("crop", ""),
             "risk_level": str(e.get("severity") or "LOW").upper(),
-            "conditions": eval_data.get("conditions", ""),
+            "conditions": conditions if isinstance(conditions, str) else "",
             "lwd_method": eval_data.get("lwd_method", ""),
             "confidence": confidence,
             "source_model": eval_data.get("source_model", ""),

@@ -248,6 +248,37 @@ class TestAssessmentsAPI:
             assert r["source_model"].startswith("Gubler-Thomas")
             assert r["confidence"] == "high"
 
+    def test_disease_risks_coerces_threshold_conditions(self, client):
+        threshold_alert = {
+            "id": "urn:ngsi-ld:Alert:montiko:botrytis-p1",
+            "type": "Alert",
+            "alertType": "botrytis",
+            "category": "disease",
+            "severity": "medium",
+            "confidence": 0.7,
+            "evaluationData": {
+                "factors": ["lwd_hours_ok: 9.0", "temp_ok: 18.0C"],
+                "conditions": [
+                    {"logical_operator": "OR", "conditions": [
+                        {"source": "leaf_wetness", "attribute": "hours", "operator": ">", "value": 8},
+                    ]},
+                ],
+            },
+            "refEntity": {"type": "Relationship", "object": "urn:ngsi-ld:AgriParcel:p1"},
+            "status": "active",
+        }
+        with patch("app.api.assessments.OrionClient") as mock_cls:
+            inst = AsyncMock()
+            inst.query_entities = AsyncMock(return_value=[threshold_alert])
+            inst.close = AsyncMock()
+            mock_cls.return_value = inst
+            resp = client.get("/api/crop-health/diseases/active")
+            assert resp.status_code == 200
+            r = resp.json()["risks"][0]
+            assert isinstance(r["conditions"], str)
+            assert r["conditions"] == "lwd_hours_ok: 9.0; temp_ok: 18.0C"
+            assert r["disease"] == "botrytis"
+
     def test_zone_assessments_requires_parcel(self, client):
         resp = client.get("/api/crop-health/assessments/zones")
         assert resp.status_code == 200

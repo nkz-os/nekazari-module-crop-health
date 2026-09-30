@@ -51,6 +51,39 @@ async def _fetch_assessment_entities(tenant_id: str, parcel_id: str = "", limit:
         await client.close()
 
 
+async def _fetch_parcel_names(tenant_id: str) -> dict[str, str]:
+    """Fetch AgriParcel display names keyed by short parcel id.
+
+    The assessment mapper only sees the CropHealthAssessment entity, so it
+    cannot know the human-readable parcel name (AgriParcel.name). Widgets
+    fall back to the bare UUID without this lookup.
+    """
+    settings = get_settings()
+    client = OrionClient(tenant_id, base_url=settings.orion_ld_url, context_url=settings.orion_ld_context)
+    try:
+        parcels = await client.query_entities(
+            type="AgriParcel",
+            limit=200,
+            options="keyValues",
+        )
+    except Exception as e:
+        logger.warning("Orion AgriParcel query failed (names): %s", e)
+        return {}
+    finally:
+        await client.close()
+
+    names: dict[str, str] = {}
+    for p in parcels:
+        pid = str(p.get("id", "")).replace("urn:ngsi-ld:AgriParcel:", "")
+        if not pid:
+            continue
+        name = p.get("name")
+        if isinstance(name, dict):
+            name = name.get("value")
+        names[pid] = name or pid
+    return names
+
+
 async def _fetch_zone_assessment_entities(tenant_id: str, parcel_id: str = "", limit: int = 100) -> list[dict]:
     settings = get_settings()
     client = OrionClient(tenant_id, base_url=settings.orion_ld_url, context_url=settings.orion_ld_context)
@@ -201,11 +234,20 @@ async def latest_assessments(
         if not entities:
             return {"assessments": []}
         latest = max(entities, key=lambda e: prop_value(e, "assessedAt", ""))
-        return {"assessments": [map_entity_to_assessment(latest)]}
+        assessments = [map_entity_to_assessment(latest)]
+    else:
+        latest_entities = dedupe_latest_per_parcel(entities)
+        assessments = [map_entity_to_assessment(e) for e in latest_entities]
+        assessments.sort(key=lambda a: a.get("assessedAt", ""), reverse=True)
 
-    latest_entities = dedupe_latest_per_parcel(entities)
-    assessments = [map_entity_to_assessment(e) for e in latest_entities]
-    assessments.sort(key=lambda a: a.get("assessedAt", ""), reverse=True)
+    # Resolve human-readable parcel names (AgriParcel.name) so widgets label
+    # parcels instead of falling back to the bare UUID.
+    parcel_names = await _fetch_parcel_names(tenant_id)
+    for a in assessments:
+        pid = a.get("parcelId")
+        if pid and pid in parcel_names:
+            a["parcelName"] = parcel_names[pid]
+
     return {"assessments": assessments}
 
 

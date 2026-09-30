@@ -114,6 +114,9 @@ class TestAssessmentsAPI:
         with patch(
             "app.api.assessments._fetch_assessment_entities",
             AsyncMock(return_value=[]),
+        ), patch(
+            "app.api.assessments._fetch_parcel_names",
+            AsyncMock(return_value={}),
         ):
             resp = client.get("/api/crop-health/assessments/latest")
             assert resp.status_code == 200
@@ -123,6 +126,9 @@ class TestAssessmentsAPI:
         with patch(
             "app.api.assessments._fetch_assessment_entities",
             AsyncMock(return_value=[SAMPLE_ENTITY]),
+        ), patch(
+            "app.api.assessments._fetch_parcel_names",
+            AsyncMock(return_value={"parcel-a": "Parcela A"}),
         ):
             resp = client.get("/api/crop-health/assessments/latest?parcelId=parcel-a")
             assert resp.status_code == 200
@@ -131,10 +137,27 @@ class TestAssessmentsAPI:
             assert data["assessments"][0]["parcelId"] == "parcel-a"
             assert data["assessments"][0]["compactionRiskLevel"] == "moderate"
 
+    def test_latest_resolves_parcel_name(self, client):
+        with patch(
+            "app.api.assessments._fetch_assessment_entities",
+            AsyncMock(return_value=[SAMPLE_ENTITY]),
+        ), patch(
+            "app.api.assessments._fetch_parcel_names",
+            AsyncMock(return_value={"parcel-a": "Parcela A"}),
+        ):
+            resp = client.get("/api/crop-health/assessments/latest")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["assessments"][0]["parcelId"] == "parcel-a"
+            assert data["assessments"][0]["parcelName"] == "Parcela A"
+
     def test_assessments_all_alias(self, client):
         with patch(
             "app.api.assessments._fetch_assessment_entities",
             AsyncMock(return_value=[SAMPLE_ENTITY]),
+        ), patch(
+            "app.api.assessments._fetch_parcel_names",
+            AsyncMock(return_value={}),
         ):
             resp = client.get("/api/crop-health/assessments/all")
             assert resp.status_code == 200

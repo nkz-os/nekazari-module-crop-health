@@ -204,6 +204,46 @@ class TestAssessmentsAPI:
             assert resp.status_code == 200
             assert resp.json() == {"risks": []}
 
+    def test_disease_risks_maps_alerts(self, client):
+        disease_alert = {
+            "id": "urn:ngsi-ld:Alert:montiko:disease:powdery_mildew-da36ccd2",
+            "type": "Alert",
+            "alertType": "disease_powdery_mildew",
+            "category": "agronomic",
+            "severity": "high",
+            "disease": "powdery_mildew",
+            "crop": "grapevine",
+            "description": "T > 25C for 3 days",
+            "confidence": "high",
+            "sourceModel": "Gubler-Thomas (UC Davis Powdery Mildew Risk Index)",
+            "recommendedAction": "Monitor and consider sulfur application",
+            "refEntity": {"type": "Relationship", "object": "urn:ngsi-ld:AgriParcel:da36ccd2"},
+            "status": "active",
+        }
+        non_disease_alert = {
+            "id": "urn:ngsi-ld:Alert:montiko:gdd_pest-da36ccd2",
+            "type": "Alert",
+            "alertType": "gdd_pest",
+            "severity": "high",
+            "refEntity": {"type": "Relationship", "object": "urn:ngsi-ld:AgriParcel:da36ccd2"},
+        }
+        with patch("app.api.assessments.OrionClient") as mock_cls:
+            inst = AsyncMock()
+            inst.query_entities = AsyncMock(return_value=[disease_alert, non_disease_alert])
+            inst.close = AsyncMock()
+            mock_cls.return_value = inst
+            resp = client.get("/api/crop-health/diseases/active")
+            assert resp.status_code == 200
+            body = resp.json()
+            assert len(body["risks"]) == 1
+            r = body["risks"][0]
+            assert r["disease"] == "powdery_mildew"
+            assert r["risk_level"] == "HIGH"
+            assert r["crop"] == "grapevine"
+            assert r["conditions"] == "T > 25C for 3 days"
+            assert r["parcelId"] == "da36ccd2"
+            assert r["source_model"].startswith("Gubler-Thomas")
+
     def test_zone_assessments_requires_parcel(self, client):
         resp = client.get("/api/crop-health/assessments/zones")
         assert resp.status_code == 200

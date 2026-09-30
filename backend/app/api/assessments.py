@@ -571,15 +571,19 @@ async def active_disease_risks(
     request: Request,
     parcelId: str = "",
 ):
-    """Return active disease risks from Orion-LD DiseaseRiskAssessment entities.
+    """Return active disease risks from Orion-LD.
 
-    Optionally filter by parcelId (hasAgriParcel relationship).
+    Disease risks are published by the risk module as Alert entities
+    (alertType = disease_<code>, category = agronomic). The legacy
+    DiseaseRiskAssessment type is no longer written.
+
+    Optionally filter by parcelId (refEntity relationship).
     """
     tenant_id = getattr(request.state, "tenant_id", "")
     settings = get_settings()
     client = OrionClient(tenant_id, base_url=settings.orion_ld_url, context_url=settings.orion_ld_context)
     try:
-        entities = await client.query_entities(type="DiseaseRiskAssessment", limit=50, options="keyValues")
+        entities = await client.query_entities(type="Alert", limit=100, options="keyValues")
     except Exception as e:
         logger.warning("active_disease_risks Orion query failed: %s", e)
         entities = []
@@ -588,11 +592,20 @@ async def active_disease_risks(
 
     risks = []
     for e in entities:
+        alert_type = str(e.get("alertType") or "")
+        if not alert_type.startswith("disease_"):
+            continue
+
+        status = e.get("status")
+        if status and status != "active":
+            continue
+
         parcel = ""
-        if isinstance(e.get("hasAgriParcel"), dict):
-            parcel = e["hasAgriParcel"].get("object", "").replace("urn:ngsi-ld:AgriParcel:", "")
-        elif isinstance(e.get("hasAgriParcel"), str):
-            parcel = e["hasAgriParcel"].replace("urn:ngsi-ld:AgriParcel:", "")
+        ref = e.get("refEntity")
+        if isinstance(ref, dict):
+            parcel = str(ref.get("object", "")).replace("urn:ngsi-ld:AgriParcel:", "")
+        elif isinstance(ref, str):
+            parcel = ref.replace("urn:ngsi-ld:AgriParcel:", "")
 
         if parcelId and parcel != parcelId:
             continue
@@ -600,8 +613,8 @@ async def active_disease_risks(
         risks.append({
             "disease": e.get("disease", "unknown"),
             "crop": e.get("crop", ""),
-            "risk_level": e.get("riskLevel", "LOW"),
-            "conditions": e.get("conditions", ""),
+            "risk_level": str(e.get("severity") or "LOW").upper(),
+            "conditions": e.get("description", ""),
             "lwd_method": e.get("lwdMethod", ""),
             "confidence": e.get("confidence", "medium"),
             "source_model": e.get("sourceModel", ""),

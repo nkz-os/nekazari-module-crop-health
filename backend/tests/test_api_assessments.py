@@ -208,15 +208,17 @@ class TestAssessmentsAPI:
         disease_alert = {
             "id": "urn:ngsi-ld:Alert:montiko:disease:powdery_mildew-da36ccd2",
             "type": "Alert",
-            "alertType": "disease_powdery_mildew",
-            "category": "agronomic",
+            "alertType": "powdery_mildew",
+            "category": "disease",
             "severity": "high",
-            "disease": "powdery_mildew",
-            "crop": "grapevine",
-            "description": "T > 25C for 3 days",
-            "confidence": "high",
-            "sourceModel": "Gubler-Thomas (UC Davis Powdery Mildew Risk Index)",
-            "recommendedAction": "Monitor and consider sulfur application",
+            "confidence": 0.9,
+            "evaluationData": {
+                "disease": "powdery_mildew",
+                "crop": "grapevine",
+                "conditions": "T > 25C for 3 days",
+                "source_model": "Gubler-Thomas (UC Davis Powdery Mildew Risk Index)",
+                "recommended_action": "Monitor and consider sulfur application",
+            },
             "refEntity": {"type": "Relationship", "object": "urn:ngsi-ld:AgriParcel:da36ccd2"},
             "status": "active",
         }
@@ -224,6 +226,7 @@ class TestAssessmentsAPI:
             "id": "urn:ngsi-ld:Alert:montiko:gdd_pest-da36ccd2",
             "type": "Alert",
             "alertType": "gdd_pest",
+            "category": "agronomic",
             "severity": "high",
             "refEntity": {"type": "Relationship", "object": "urn:ngsi-ld:AgriParcel:da36ccd2"},
         }
@@ -243,6 +246,7 @@ class TestAssessmentsAPI:
             assert r["conditions"] == "T > 25C for 3 days"
             assert r["parcelId"] == "da36ccd2"
             assert r["source_model"].startswith("Gubler-Thomas")
+            assert r["confidence"] == "high"
 
     def test_zone_assessments_requires_parcel(self, client):
         resp = client.get("/api/crop-health/assessments/zones")

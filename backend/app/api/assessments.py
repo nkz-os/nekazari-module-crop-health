@@ -573,9 +573,10 @@ async def active_disease_risks(
 ):
     """Return active disease risks from Orion-LD.
 
-    Disease risks are published by the risk module as Alert entities
-    (alertType = disease_<code>, category = agronomic). The legacy
-    DiseaseRiskAssessment type is no longer written.
+    Disease risks are published by the risk module as Alert entities with
+    category = disease. The disease metadata (code, crop, conditions, model,
+    action) lives in evaluationData. The legacy DiseaseRiskAssessment type is
+    no longer written.
 
     Optionally filter by parcelId (refEntity relationship).
     """
@@ -592,8 +593,7 @@ async def active_disease_risks(
 
     risks = []
     for e in entities:
-        alert_type = str(e.get("alertType") or "")
-        if not alert_type.startswith("disease_"):
+        if e.get("category") != "disease":
             continue
 
         status = e.get("status")
@@ -610,15 +610,25 @@ async def active_disease_risks(
         if parcelId and parcel != parcelId:
             continue
 
+        eval_data = e.get("evaluationData") or {}
+        if isinstance(eval_data, dict) and "value" in eval_data:
+            eval_data = eval_data["value"]
+        if not isinstance(eval_data, dict):
+            eval_data = {}
+
+        confidence = e.get("confidence", "medium")
+        if isinstance(confidence, (int, float)):
+            confidence = "high" if confidence >= 0.9 else ("medium" if confidence >= 0.7 else "low")
+
         risks.append({
-            "disease": e.get("disease", "unknown"),
-            "crop": e.get("crop", ""),
+            "disease": eval_data.get("disease") or str(e.get("alertType") or "unknown"),
+            "crop": eval_data.get("crop", ""),
             "risk_level": str(e.get("severity") or "LOW").upper(),
-            "conditions": e.get("description", ""),
-            "lwd_method": e.get("lwdMethod", ""),
-            "confidence": e.get("confidence", "medium"),
-            "source_model": e.get("sourceModel", ""),
-            "recommended_action": e.get("recommendedAction", ""),
+            "conditions": eval_data.get("conditions", ""),
+            "lwd_method": eval_data.get("lwd_method", ""),
+            "confidence": confidence,
+            "source_model": eval_data.get("source_model", ""),
+            "recommended_action": eval_data.get("recommended_action", ""),
             "parcelId": parcel,
         })
 

@@ -801,11 +801,11 @@ async def get_crop_context(
     if gdd is not None:
         params["gdd"] = str(gdd)
 
-    headers = (
-        {"X-Tenant-ID": tenant_id, "X-User-ID": "crop-health-worker"}
-        if tenant_id
-        else {}
-    )
+    headers: dict[str, str] = {}
+    if tenant_id:
+        headers = {"X-Tenant-ID": tenant_id, "X-User-ID": "crop-health-worker"}
+        if settings.internal_service_secret:
+            headers["X-Internal-Service-Secret"] = settings.internal_service_secret
 
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:

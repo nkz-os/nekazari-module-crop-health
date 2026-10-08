@@ -1190,7 +1190,7 @@ async def _regional_meteo(parcel_id: str, tenant_id: str) -> dict:
             resp = await cl.get(
                 f"{base}/ngsi-ld/v1/entities",
                 params={"type": "WeatherObserved", "q": rel_q,
-                        "limit": 1, "options": "keyValues",
+                        "limit": 5, "options": "keyValues",
                         "orderBy": "!dateObserved"},
                 headers=headers,
             )
@@ -1200,12 +1200,16 @@ async def _regional_meteo(parcel_id: str, tenant_id: str) -> dict:
                 resp = await cl.get(
                     f"{base}/ngsi-ld/v1/entities",
                     params={"type": "WeatherObserved",
-                            "limit": 1, "options": "keyValues",
+                            "limit": 5, "options": "keyValues",
                             "orderBy": "!dateObserved"},
                     headers=headers,
                 )
                 entities = resp.json() if resp.status_code == 200 else []
 
+        # Skip closed-day entities (dailySummary true): the water balance wants
+        # the running station; keyValues makes dailySummary a bare bool (#1043).
+        # Entities without the attribute are pre-migration running stations.
+        entities = [e for e in entities if e.get("dailySummary") is not True]
         if not entities:
             return {}
 

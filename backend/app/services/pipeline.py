@@ -1200,11 +1200,15 @@ async def _regional_meteo(parcel_id: str, tenant_id: str) -> dict:
                 resp = await cl.get(
                     f"{base}/ngsi-ld/v1/entities",
                     params={"type": "WeatherObserved",
-                            "limit": 1, "options": "keyValues",
+                            "limit": 10, "options": "keyValues",
                             "orderBy": "!dateObserved"},
                     headers=headers,
                 )
                 entities = resp.json() if resp.status_code == 200 else []
+                # Closed-day series entities ("...-daily") carry no current
+                # conditions and have no dateObserved to order by.
+                entities = [e for e in entities
+                            if not str(e.get("id", "")).endswith("-daily")]
 
         if not entities:
             return {}

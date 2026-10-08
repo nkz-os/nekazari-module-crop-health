@@ -227,7 +227,7 @@ async def _detail_sources(request: Request, parcelId: str) -> dict:
         # one that carries an `ndvi` attribute (SAR EOProducts have none).
         _query("EOProduct", rel_q, 100),
         _query("AgriCrop", rel_q, 10),
-        _query("WeatherObserved", f'locatedAt=="{parcel_urn}"', 1),
+        _query("WeatherObserved", f'locatedAt=="{parcel_urn}"', 10),
         _query("EOProduct", f'{rel_q};productType=="GRD"', 1),
         return_exceptions=True,
     )
@@ -237,6 +237,8 @@ async def _detail_sources(request: Request, parcelId: str) -> dict:
     veg_indices = results[2] if not isinstance(results[2], BaseException) else []
     agri_crops = results[3] if not isinstance(results[3], BaseException) else []
     weather_obs = results[4] if not isinstance(results[4], BaseException) else []
+    # Closed-day series entities ("...-daily") carry no current conditions.
+    weather_obs = [w for w in weather_obs if not str(w.get("id", "")).endswith("-daily")]
     sar_products = results[5] if not isinstance(results[5], BaseException) else []
 
     assessment = assessments[0] if assessments else {}

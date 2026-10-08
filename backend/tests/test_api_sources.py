@@ -198,3 +198,24 @@ async def test_tenant_qualified_parcel_urns_still_match():
             parcel = resp.json()["parcels"][0]
             assert parcel["parcelId"] == "test-tenant:Parcela-4"
             assert parcel["hasIot"] is True
+
+
+@pytest.mark.anyio
+async def test_sources_detail_skips_daily_weather_entity():
+    """The closed-day series entity ("...-daily") is not the parcel's live weather."""
+    with respx.mock as mock:
+        mock.get(url__regex=r".*type=WeatherObserved.*").respond(json=[
+            {"id": "urn:ngsi-ld:WeatherObserved:test-tenant:parcel-Parcela-77-daily",
+             "tempMin": 3.1, "tempMax": 14.2},
+            {"id": "urn:ngsi-ld:WeatherObserved:test-tenant:parcel-Parcela-77",
+             "temperature": 12.5, "dateObserved": "2026-06-07T10:00:00Z"},
+        ])
+        mock.get().respond(json=[])
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test", headers=GATEWAY_HEADERS) as client:
+            resp = await client.get("/api/crop-health/sources?parcelId=Parcela-77")
+            assert resp.status_code == 200
+            weather = resp.json()["sources"]["weather"]
+            assert weather["status"] == "ok"
+            assert "12.5°C" in weather["summary"]

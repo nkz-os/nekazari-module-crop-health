@@ -419,138 +419,55 @@ async def get_agri_crop(
 
 
 # ── Season Start Resolution ─────────────────────────────────────────────────
-# Cache for completed sowing dates (per parcel, 5 min TTL)
-_sowing_date_cache: TTLCache[str, str | None] = TTLCache(
-    maxsize=256,
-    ttl=300,
-)
-
-
-async def _get_completed_sowing_date(
-    parcel_id: str,
-    tenant_id: str,
-) -> str | None:
-    """Query AgriParcelOperation for the most recent completed sowing.
-
-    Returns endedAt as ISO date (YYYY-MM-DD) or None if no completed
-    sowing operation exists for this parcel.
-    """
-    cache_key = f"{tenant_id}:{parcel_id}"
-    if cache_key in _sowing_date_cache:
-        return _sowing_date_cache[cache_key]
-
+async def _fetch_platform_crop_cycles(parcel_urn: str, tenant_id: str) -> dict | None:
     settings = get_settings()
-    if not settings.orion_ld_url:
+    url = f"{settings.entity_manager_url.rstrip('/')}/api/internal/parcels/{parcel_urn}/crop-cycles"
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            resp = await client.get(url, params={"tenant_id": tenant_id},
+                                    headers={"X-Internal-Service-Secret": settings.internal_service_secret})
+        return resp.json() if resp.status_code == 200 else None
+    except httpx.HTTPError as e:
+        logger.warning("crop-cycles unavailable for %s: %s", parcel_urn, e)
         return None
 
-    client = OrionClient(
-        tenant_id,
-        base_url=settings.orion_ld_url,
-        context_url=settings.orion_ld_context,
-    )
+
+async def _read_crops_and_operations(parcel_urn: str, tenant_id: str) -> tuple[list, list]:
+    settings = get_settings()
+    client = OrionClient(tenant_id, base_url=settings.orion_ld_url, context_url=settings.orion_ld_context)
     try:
-        entities = await client.query_entities(
-            type="AgriParcelOperation",
-            q=(
-                f'hasAgriParcel=="urn:ngsi-ld:AgriParcel:{parcel_id}"'
-                f'|refAgriParcel=="urn:ngsi-ld:AgriParcel:{parcel_id}"'
-                f';operationType=="sowing";status=="completed"'
-            ),
-            limit=10,
-            options="keyValues",
-        )
-        if entities and isinstance(entities, list) and len(entities) > 0:
-            # Sort by endedAt descending, take most recent
-            with_ended = [e for e in entities if e.get("endedAt")]
-            if with_ended:
-                with_ended.sort(
-                    key=lambda e: str(e.get("endedAt", "")),
-                    reverse=True,
-                )
-                raw = with_ended[0].get("endedAt")
-                # Normalize to ISO date (handle nested Property and plain)
-                if isinstance(raw, dict):
-                    raw = raw.get("value") or raw.get("@value")
-                if raw:
-                    result = str(raw)[:10]
-                    _sowing_date_cache[cache_key] = result
-                    logger.info(
-                        "Resolved sowing date for parcel %s from AgriParcelOperation: %s",
-                        parcel_id, result,
-                    )
-                    return result
-    except Exception as exc:
-        logger.warning(
-            "_get_completed_sowing_date failed for %s: %s",
-            parcel_id, exc,
-        )
+        q = f'hasAgriParcel=="{parcel_urn}"'
+        crops = await client.query_entities(type="AgriCrop", q=q, limit=200, options="keyValues")
+        ops = await client.query_entities(type="AgriParcelOperation", q=q, limit=500, options="keyValues")
+        return crops or [], ops or []
     finally:
         await client.close()
 
-    _sowing_date_cache[cache_key] = None
-    return None
 
+async def resolve_season_start(parcel_id: str, tenant_id: str) -> str:
+    """Accumulation start of the parcel's current crop cycle (platform resolution).
 
-async def resolve_season_start(
-    parcel_id: str,
-    tenant_id: str,
-) -> str:
-    """Resolve actual season start date with priority chain.
-
-    1. AgriCrop.plantingDate with plantingDateSource == "manual" — user override
-    2. AgriParcelOperation.endedAt (sowing, completed) — field reality
-    3. AgriCrop.plantingDate — planned date (BioOrch or other)
-    4. March 1st of current year — ultimate fallback
-
-    The ``plantingDateSource`` metadata on AgriCrop is forward-compatible:
-    it is absent today, so all AgriCrop dates fall to priority 3 after
-    field-operations reality is checked. When the manual-override UI adds
-    ``plantingDateSource: "manual"``, it automatically takes priority 1.
+    entity-manager owns the rule; if it is unreachable the same SDK resolver runs
+    here over the broker. Never a planned future date, never a fixed default
+    other than the campaign start (1 January).
     """
     from datetime import date as dt_date
+    from datetime import datetime, timezone
 
-    agri_crop = await get_agri_crop(parcel_id, tenant_id)
-    crop_date = agri_crop.get("plantingDate") if agri_crop else None
-    crop_source = agri_crop.get("plantingDateSource") if agri_crop else None
+    from nkz_platform_sdk.crop_cycles import resolve_crop_cycles
 
-    # Normalize crop_date (may be nested Property or plain string keyValues)
-    if isinstance(crop_date, dict):
-        crop_date = crop_date.get("value") or crop_date.get("@value")
-    if isinstance(crop_source, dict):
-        crop_source = crop_source.get("value") or crop_source.get("@value")
+    today = datetime.now(timezone.utc).date()
 
-    # Priority 1: Manual override (forward-compatible — no-op today)
-    if crop_date and crop_source == "manual":
-        logger.info(
-            "Season start for parcel %s: manual override %s",
-            parcel_id, crop_date,
-        )
-        return str(crop_date)[:10]
-
-    # Priority 2: Field reality from completed sowing operation
-    sowing_date = await _get_completed_sowing_date(parcel_id, tenant_id)
-    if sowing_date:
-        logger.info(
-            "Season start for parcel %s: field-operation sowing %s",
-            parcel_id, sowing_date,
-        )
-        return sowing_date
-
-    # Priority 3: AgriCrop planned date
-    if crop_date:
-        logger.info(
-            "Season start for parcel %s: AgriCrop plan %s",
-            parcel_id, crop_date,
-        )
-        return str(crop_date)[:10]
-
-    # Priority 4: Default — March 1st current year
-    default = dt_date(dt_date.today().year, 3, 1).isoformat()
-    logger.info(
-        "Season start for parcel %s: default %s (no AgriCrop, no sowing operation)",
-        parcel_id, default,
-    )
-    return default
+    urn = parcel_id if parcel_id.startswith("urn:") else f"urn:ngsi-ld:AgriParcel:{parcel_id}"
+    cycles = await _fetch_platform_crop_cycles(urn, tenant_id)
+    if cycles and (cycles.get("accumulation") or {}).get("start"):
+        return cycles["accumulation"]["start"]
+    try:
+        crops, ops = await _read_crops_and_operations(urn, tenant_id)
+        return resolve_crop_cycles(urn, crops, ops, today).accumulation_start.isoformat()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("season start: broker unavailable for %s (%s) — campaign start", urn, e)
+        return dt_date(today.year, 1, 1).isoformat()
 
 
 def clear_phenology_cache() -> None:

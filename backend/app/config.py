@@ -43,6 +43,7 @@ class Settings(BaseSettings):
     weather_map_url: str = "http://weather-map-backend:8080"  # parcel-level weather stats (sensorless meteo); metrics under data["metrics"][name]["mean"]
     weather_db_url: str = ""  # deprecated — use weather_api_url instead
     soil_module_url: str = "http://soil-module-service:8000"
+    entity_manager_url: str = "http://entity-manager-service:5000"  # crop-cycle resolution (internal route)
     self_url: str = "http://crop-health-backend-service:8000"  # this module's in-cluster base URL (for Orion notification callbacks)
 
     # ── Cache TTLs (seconds) ─────────────────────────────────────────────────

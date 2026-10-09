@@ -25,6 +25,11 @@ def _patch_crop_level(monkeypatch):
     monkeypatch.setattr(pipeline.context_client, "get_phenology_stages", _stages)
     monkeypatch.setattr(pipeline, "_fetch_gdd", _gdd, raising=False)
 
+    async def _season_in_progress(parcel_id, tenant_id):
+        return "2026-04-15"  # a sown crop; season resolution is not under test here
+
+    monkeypatch.setattr(pipeline.context_client, "resolve_season_start", _season_in_progress)
+
 
 @pytest.mark.asyncio
 async def test_two_zones_emit_two_zone_assessments_plus_rollup(monkeypatch):

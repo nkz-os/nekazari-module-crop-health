@@ -243,11 +243,12 @@ async def trigger(
 
         gdd_base_temp = stage_table.base_temp if stage_table else 10.0
         gdd_upper_cutoff = stage_table.upper_cutoff if stage_table else None
+        # No crop cycle in progress: no season to accumulate over.
         gdd_data = await _fetch_gdd(
             tenant_id, season_start, effective_parcel,
             base_temp=gdd_base_temp,
             upper_cutoff=gdd_upper_cutoff,
-        )
+        ) if season_start else None
         if gdd_data and gdd_data.get("gdd_total"):
             gdd = float(gdd_data["gdd_total"])
     except Exception as exc:
@@ -1436,11 +1437,15 @@ async def compute_assessment(
 
     # Seasonal GDD (authoritative stage source) — uses crop-specific base_temp/upper_cutoff
     thresholds = await context_client.get_phenology_stages(species)
-    gdd_data = await _fetch_gdd(
-        tenant_id, season_start, parcel_id,
-        base_temp=thresholds.base_temp if thresholds else 10.0,
-        upper_cutoff=thresholds.upper_cutoff if thresholds else None,
-    ) or {}
+    if season_start is None:
+        # No crop cycle in progress (sowing still planned): nothing accumulated.
+        gdd_data = {"gdd_total": 0.0}
+    else:
+        gdd_data = await _fetch_gdd(
+            tenant_id, season_start, parcel_id,
+            base_temp=thresholds.base_temp if thresholds else 10.0,
+            upper_cutoff=thresholds.upper_cutoff if thresholds else None,
+        ) or {}
     gdd = gdd_data.get("gdd_total")
     if gdd is not None:
         gdd = float(gdd)

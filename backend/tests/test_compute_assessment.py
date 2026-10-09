@@ -13,6 +13,12 @@ async def test_returns_none_when_no_crop(monkeypatch):
     assert out is None
 
 
+
+async def _season_in_progress(parcel_id, tenant_id):
+    """A sown crop: these tests are about stage-from-GDD, not season resolution."""
+    return "2026-04-15"
+
+
 @pytest.mark.asyncio
 async def test_sets_stage_from_gdd_and_writes(monkeypatch):
     async def _read_crop(parcel_id, tenant_id):
@@ -38,6 +44,7 @@ async def test_sets_stage_from_gdd_and_writes(monkeypatch):
     monkeypatch.setattr(pipeline, "_read_assigned_crop", _read_crop, raising=False)
     monkeypatch.setattr(pipeline.context_client, "get_phenology_stages", _stages)
     monkeypatch.setattr(pipeline, "_fetch_gdd", _gdd, raising=False)
+    monkeypatch.setattr(pipeline.context_client, "resolve_season_start", _season_in_progress)
     monkeypatch.setattr(pipeline, "_publish_assessment", _write, raising=False)
 
     out = await pipeline.compute_assessment("urn:ngsi-ld:AgriParcel:t:p1", "t")
@@ -93,6 +100,7 @@ async def test_compute_assessment_surfaces_soil_suitability(monkeypatch):
     monkeypatch.setattr(pipeline, "_read_assigned_crop", _read_crop, raising=False)
     monkeypatch.setattr(pipeline.context_client, "get_phenology_stages", _stages)
     monkeypatch.setattr(pipeline, "_fetch_gdd", _gdd, raising=False)
+    monkeypatch.setattr(pipeline.context_client, "resolve_season_start", _season_in_progress)
     monkeypatch.setattr(pipeline, "_publish_assessment", _write, raising=False)
     monkeypatch.setattr(context_client, "get_crop_context", _get_crop_ctx)
     monkeypatch.setattr(pipeline, "attach_soil_suitability", _spy_attach)

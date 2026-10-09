@@ -444,30 +444,32 @@ async def _read_crops_and_operations(parcel_urn: str, tenant_id: str) -> tuple[l
         await client.close()
 
 
-async def resolve_season_start(parcel_id: str, tenant_id: str) -> str:
-    """Accumulation start of the parcel's current crop cycle (platform resolution).
+async def resolve_season_start(parcel_id: str, tenant_id: str) -> str | None:
+    """Degree-day accumulation start of the parcel's crop cycle in progress.
 
     entity-manager owns the rule; if it is unreachable the same SDK resolver runs
-    here over the broker. Never a planned future date, never a fixed default
-    other than the campaign start (1 January).
+    here over the broker. None when no crop is growing (not sown yet, nothing
+    assigned, or the broker unreachable): a crop that is not in the ground has
+    accumulated nothing, and a calendar default would model it from January.
     """
-    from datetime import date as dt_date
     from datetime import datetime, timezone
 
     from nkz_platform_sdk.crop_cycles import resolve_crop_cycles
 
     today = datetime.now(timezone.utc).date()
-
     urn = parcel_id if parcel_id.startswith("urn:") else f"urn:ngsi-ld:AgriParcel:{parcel_id}"
     cycles = await _fetch_platform_crop_cycles(urn, tenant_id)
-    if cycles and (cycles.get("accumulation") or {}).get("start"):
-        return cycles["accumulation"]["start"]
+    if cycles is not None:
+        if not cycles.get("current"):
+            return None
+        return (cycles.get("accumulation") or {}).get("start")
     try:
         crops, ops = await _read_crops_and_operations(urn, tenant_id)
-        return resolve_crop_cycles(urn, crops, ops, today).accumulation_start.isoformat()
+        timeline = resolve_crop_cycles(urn, crops, ops, today)
+        return timeline.accumulation_start.isoformat() if timeline.current else None
     except Exception as e:  # noqa: BLE001
-        logger.warning("season start: broker unavailable for %s (%s) — campaign start", urn, e)
-        return dt_date(today.year, 1, 1).isoformat()
+        logger.warning("season start: broker unavailable for %s (%s) — none", urn, e)
+        return None
 
 
 def clear_phenology_cache() -> None:

@@ -119,10 +119,31 @@ function zoneCentroid(geometry: ZoneAssessmentData['geometry']): [number, number
   return [lon / ring.length, lat / ring.length];
 }
 
+interface ViewerPolygon {
+  material?: unknown;
+  outline?: unknown;
+  outlineColor?: unknown;
+}
+
+interface ViewerEntity {
+  id?: string;
+  name?: string;
+  polygon?: ViewerPolygon;
+  label?: unknown;
+}
+
 interface ViewerEntityCollection {
   add: (e: unknown) => void;
   remove: (e: unknown) => void;
-  values: Array<{ id?: string; name?: string; polygon?: unknown; label?: unknown }>;
+  values: ViewerEntity[];
+}
+
+/** What a parcel entity looked like before the layer painted a historical state on it. */
+interface PaintSnapshot {
+  material: unknown;
+  outline: unknown;
+  outlineColor: unknown;
+  label: unknown;
 }
 
 const CropHealthLayer: React.FC = () => {
@@ -165,11 +186,29 @@ const CropHealthLayer: React.FC = () => {
     }
 
     const clearCropHealthEntities = () => {
-      viewerEntities!.values.forEach((e: { id?: string }) => {
+      // `values` is a live array: removing while iterating it skips elements, and the entities left
+      // behind make the next `add` of the same id throw. Iterate over a copy.
+      viewerEntities!.values.slice().forEach((e: { id?: string }) => {
         if (e.id?.startsWith('crop-health-')) {
           viewerEntities!.remove(e);
         }
       });
+    };
+
+    // Parcel entities belong to the host and the layer paints them in place. A historical colour must
+    // never outlive its date, so each one is snapshotted before it is painted and put back before the
+    // next paint (which then repaints the current state as usual) and when the layer goes away.
+    const snapshots = new Map<ViewerEntity, PaintSnapshot>();
+    const restoreSnapshots = () => {
+      snapshots.forEach((snapshot, entity) => {
+        if (entity.polygon) {
+          entity.polygon.material = snapshot.material;
+          entity.polygon.outline = snapshot.outline;
+          entity.polygon.outlineColor = snapshot.outlineColor;
+        }
+        entity.label = snapshot.label;
+      });
+      snapshots.clear();
     };
 
     // Last fetched data, so a change of the historical colour repaints without refetching.
@@ -183,6 +222,7 @@ const CropHealthLayer: React.FC = () => {
       // so the crop-health overlay never blocks the parcel or other layers.
       if (currentMode === 'off') {
         clearCropHealthEntities();
+        restoreSnapshots();
         return;
       }
 
@@ -196,6 +236,7 @@ const CropHealthLayer: React.FC = () => {
 
       const { assessments, zones } = cache;
 
+      restoreSnapshots();
       clearCropHealthEntities();
       if (!assessments.length && !zones.length) return;
 
@@ -204,8 +245,12 @@ const CropHealthLayer: React.FC = () => {
 
       const zonedParcels = new Set(zones.map((z) => z.parcelId).filter(Boolean) as string[]);
 
+      // Zones have no history: while the cursor is in the past the selected parcel is painted whole instead.
+      const historicalParcelId = historicalRef.current?.parcelId;
+
       for (const zone of zones) {
         if (!zone.geometry || !zone.parcelId || !zone.zoneId) continue;
+        if (zone.parcelId === historicalParcelId) continue;
         if (currentMode !== 'severity' && layerValue(zone, currentMode) == null) continue;
 
         const colors = layerColor(zone, currentMode);
@@ -251,9 +296,9 @@ const CropHealthLayer: React.FC = () => {
       }
 
       for (const a of assessments) {
-        if (!a.parcelId || zonedParcels.has(a.parcelId)) continue;
-
+        if (!a.parcelId) continue;
         const historical = historicalRef.current?.parcelId === a.parcelId ? historicalRef.current : null;
+        if (zonedParcels.has(a.parcelId) && !historical) continue;
         // History still loading: leave the parcel as it is rather than paint today's state for a past date.
         if (historical && historical.point === undefined) continue;
         const shown = historical ? historicalAssessment(a, historical.point ?? null) : a;
@@ -264,6 +309,15 @@ const CropHealthLayer: React.FC = () => {
             e.id?.includes(a.parcelId || '') || e.name?.includes(a.parcelId || ''),
         );
         if (!parcelEntity?.polygon) continue;
+
+        if (historical && !snapshots.has(parcelEntity)) {
+          snapshots.set(parcelEntity, {
+            material: parcelEntity.polygon.material,
+            outline: parcelEntity.polygon.outline,
+            outlineColor: parcelEntity.polygon.outlineColor,
+            label: parcelEntity.label,
+          });
+        }
 
         const colors = historical ? historicalColor(shown, currentMode) : layerColor(a, currentMode);
         parcelEntity.polygon.material = Cesium.Color.fromCssColorString(colors.fill)?.withAlpha(colors.alpha);
@@ -293,6 +347,7 @@ const CropHealthLayer: React.FC = () => {
       clearInterval(interval);
       repaintRef.current = null;
       clearCropHealthEntities();
+      restoreSnapshots();
     };
   }, [cesiumViewer, mode]);
 

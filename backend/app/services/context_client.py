@@ -432,14 +432,33 @@ async def _fetch_platform_crop_cycles(parcel_urn: str, tenant_id: str) -> dict |
         return None
 
 
+_CYCLE_PAGE = 500
+
+
+async def _query_all(client, entity_type: str, q: str) -> list:
+    out, offset = [], 0
+    while True:
+        page = await client.query_entities(
+            type=entity_type, q=q, limit=_CYCLE_PAGE, offset=offset, options="keyValues",
+        ) or []
+        out.extend(page)
+        if len(page) < _CYCLE_PAGE:
+            return out
+        offset += _CYCLE_PAGE
+
+
 async def _read_crops_and_operations(parcel_urn: str, tenant_id: str) -> tuple[list, list]:
     settings = get_settings()
     client = OrionClient(tenant_id, base_url=settings.orion_ld_url, context_url=settings.orion_ld_context)
     try:
         q = f'hasAgriParcel=="{parcel_urn}"'
-        crops = await client.query_entities(type="AgriCrop", q=q, limit=200, options="keyValues")
-        ops = await client.query_entities(type="AgriParcelOperation", q=q, limit=500, options="keyValues")
-        return crops or [], ops or []
+        crops = await _query_all(client, "AgriCrop", q)
+        # Only operations that can set a cycle boundary, so years of sprays and
+        # irrigations never push the sowings out of the page.
+        ops = await _query_all(
+            client, "AgriParcelOperation", f'{q};operationType=="sowing","harvesting","tillage"',
+        )
+        return crops, ops
     finally:
         await client.close()
 

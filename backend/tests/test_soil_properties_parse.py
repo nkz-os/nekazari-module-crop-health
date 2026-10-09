@@ -17,7 +17,7 @@ def test_summary_data_source_ngsi_property():
 
 @pytest.mark.asyncio
 async def test_get_soil_properties_summary_empty_data_source(monkeypatch):
-    """ORAINBAI shape: horizons present, dataSource is empty string."""
+    """Real-world shape: horizons present, dataSource is empty string."""
     context_client._soil_cache.clear()
 
     summary = {
@@ -55,7 +55,7 @@ async def test_get_soil_properties_summary_empty_data_source(monkeypatch):
 
     monkeypatch.setattr(context_client.httpx, "AsyncClient", lambda **kw: _Client())
 
-    soil = await context_client.get_soil_properties("da36ccd2-test", "montiko")
+    soil = await context_client.get_soil_properties("da36ccd2-test", "test-tenant")
     assert soil.usda_texture_class == "silt-loam"
     assert soil.sand_pct == 20
     assert soil.source == "soilgrids"
@@ -123,7 +123,7 @@ async def test_get_soil_properties_point_null_texture(monkeypatch):
     monkeypatch.setattr(context_client.httpx, "AsyncClient", lambda **kw: _Client())
     monkeypatch.setattr(context_client, "_resolve_parcel_coords", _coords)
 
-    soil = await context_client.get_soil_properties("parcel-x", "montiko")
+    soil = await context_client.get_soil_properties("parcel-x", "test-tenant")
     assert soil.sand_pct == 40
     assert soil.usda_texture_class == "clay-loam"
     assert soil.source == "LUCAS-Texture"

@@ -35,7 +35,7 @@ class _FakeClient:
         # assert we send the live-correct route, valid metrics, and tenant header
         assert "/api/weather-map/stats/urn:ngsi-ld:AgriParcel:" in url
         assert params["metrics"] == "temperature_avg,eto"
-        assert headers.get("X-Tenant-ID") == "montiko"
+        assert headers.get("X-Tenant-ID") == "test-tenant"
         # weather-map returns 401 "Missing X-User-ID" without this header (AGENTS.md §9)
         assert headers.get("X-User-ID") == "crop-health-worker"
         return _FakeResp(self._status, self._payload)
@@ -58,7 +58,7 @@ async def test_parses_nested_metrics_mean(monkeypatch):
         "parcel_id": "x",
     })
     out = await pipeline._weather_map_meteo(
-        "urn:ngsi-ld:AgriParcel:62a6e83b", "montiko"
+        "urn:ngsi-ld:AgriParcel:62a6e83b", "test-tenant"
     )
     assert out == {"air_temp_c": 22.4, "et0_mm": 4.1}
 
@@ -67,7 +67,7 @@ async def test_parses_nested_metrics_mean(monkeypatch):
 async def test_no_cog_data_returns_empty(monkeypatch):
     _patch(monkeypatch, 200, {"error": "No COG data available", "metrics": {}})
     out = await pipeline._weather_map_meteo(
-        "urn:ngsi-ld:AgriParcel:62a6e83b", "montiko"
+        "urn:ngsi-ld:AgriParcel:62a6e83b", "test-tenant"
     )
     assert out == {}
 
@@ -76,6 +76,6 @@ async def test_no_cog_data_returns_empty(monkeypatch):
 async def test_non_200_returns_empty(monkeypatch):
     _patch(monkeypatch, 401, {"detail": "Unauthorized"})
     out = await pipeline._weather_map_meteo(
-        "urn:ngsi-ld:AgriParcel:62a6e83b", "montiko"
+        "urn:ngsi-ld:AgriParcel:62a6e83b", "test-tenant"
     )
     assert out == {}

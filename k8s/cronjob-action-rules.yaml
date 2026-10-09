@@ -47,7 +47,7 @@ spec:
                 - name: SELF_URL
                   value: "http://crop-health-api-service:8000"
                 - name: ACTION_RULE_TENANTS
-                  value: "montiko"     # cimiento: env-driven; wire to registry later
+                  value: "YOUR_TENANT_ID"     # comma-separated tenant ids
                 - name: INTERNAL_SERVICE_SECRET
                   valueFrom:
                     secretKeyRef:

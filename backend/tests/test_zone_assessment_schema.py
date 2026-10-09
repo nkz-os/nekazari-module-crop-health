@@ -18,9 +18,9 @@ def test_zone_ngsi_ld_uses_zone_type_and_relationships():
 
 
 def test_zone_ngsi_ld_uses_real_zone_urn_when_present():
-    a = _mk(zone_id="zABC-e3-N", zone_urn="urn:ngsi-ld:AgriParcelZone:montiko:p1:zABC-e3-N")
+    a = _mk(zone_id="zABC-e3-N", zone_urn="urn:ngsi-ld:AgriParcelZone:test-tenant:p1:zABC-e3-N")
     e = a.to_zone_ngsi_ld()
-    assert e["hasAgriParcelZone"]["object"] == "urn:ngsi-ld:AgriParcelZone:montiko:p1:zABC-e3-N"
+    assert e["hasAgriParcelZone"]["object"] == "urn:ngsi-ld:AgriParcelZone:test-tenant:p1:zABC-e3-N"
     assert e["zoneId"]["value"] == "zABC-e3-N"
 
 

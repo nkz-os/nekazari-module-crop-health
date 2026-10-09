@@ -32,7 +32,7 @@ def test_crop_context_parses_depth_cm_range_string():
 def test_crop_context_parses_bioorch_shaped_payload():
     """Full crop-context shape after soil slug + C.5 assess (post A+B+C fixes)."""
     data = {
-        "parcel_id": "urn:ngsi-ld:AgriParcel:montiko:p1",
+        "parcel_id": "urn:ngsi-ld:AgriParcel:test-tenant:p1",
         "crop": {"eppo": "TRZAX", "name": "trigo", "scientific_name": "Triticum aestivum"},
         "soil": {
             "requirements": {
@@ -100,8 +100,8 @@ async def test_get_crop_context_forwards_tenant_headers(monkeypatch):
     )
 
     ctx = await context_client.get_crop_context(
-        "urn:ngsi-ld:AgriParcel:t:1", tenant_id="montiko"
+        "urn:ngsi-ld:AgriParcel:t:1", tenant_id="test-tenant"
     )
     assert ctx is not None
-    assert captured["headers"]["X-Tenant-ID"] == "montiko"
+    assert captured["headers"]["X-Tenant-ID"] == "test-tenant"
     assert captured["headers"]["X-User-ID"] == "crop-health-worker"

@@ -206,7 +206,7 @@ class TestAssessmentsAPI:
 
     def test_disease_risks_maps_alerts(self, client):
         disease_alert = {
-            "id": "urn:ngsi-ld:Alert:montiko:disease:powdery_mildew-da36ccd2",
+            "id": "urn:ngsi-ld:Alert:test-tenant:disease:powdery_mildew-da36ccd2",
             "type": "Alert",
             "alertType": "powdery_mildew",
             "category": "disease",
@@ -223,7 +223,7 @@ class TestAssessmentsAPI:
             "status": "active",
         }
         non_disease_alert = {
-            "id": "urn:ngsi-ld:Alert:montiko:gdd_pest-da36ccd2",
+            "id": "urn:ngsi-ld:Alert:test-tenant:gdd_pest-da36ccd2",
             "type": "Alert",
             "alertType": "gdd_pest",
             "category": "agronomic",
@@ -250,7 +250,7 @@ class TestAssessmentsAPI:
 
     def test_disease_risks_coerces_threshold_conditions(self, client):
         threshold_alert = {
-            "id": "urn:ngsi-ld:Alert:montiko:botrytis-p1",
+            "id": "urn:ngsi-ld:Alert:test-tenant:botrytis-p1",
             "type": "Alert",
             "alertType": "botrytis",
             "category": "disease",

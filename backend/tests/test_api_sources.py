@@ -115,7 +115,7 @@ async def test_sources_detail_returns_source_status():
         mock.get(url__regex=r".*type=EOProduct.*productType.*GRD.*").respond(json=[])
         mock.get(url__regex=r".*type=EOProduct.*").respond(json=[
             {
-                "id": "urn:ngsi-ld:EOProduct:montiko:Parcela-4:2026-06-05",
+                "id": "urn:ngsi-ld:EOProduct:test-tenant:Parcela-4:2026-06-05",
                 "hasAgriParcel": "urn:ngsi-ld:AgriParcel:Parcela-4",
                 "sensingDate": "2026-06-05",
                 "ndvi": 0.72,

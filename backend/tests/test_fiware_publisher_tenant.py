@@ -2,8 +2,8 @@
 
 The canonical tenant format is hyphenated; OrionClient sends NGSILD-Tenant
 verbatim. An earlier _make_headers underscored the tenant, routing writes to a
-phantom tenant for hyphenated (paying) tenants (asociacion-allotarra ->
-asociacion_allotarra). This test pins that publish_assessment constructs
+phantom tenant for hyphenated (paying) tenants (example-coop ->
+example_coop). This test pins that publish_assessment constructs
 OrionClient with the tenant unchanged.
 """
 
@@ -13,7 +13,7 @@ import pytest
 
 from app.schemas import CropHealthAssessment
 
-HYPHEN_TENANT = "asociacion-allotarra"
+HYPHEN_TENANT = "example-coop"
 
 
 @pytest.mark.asyncio

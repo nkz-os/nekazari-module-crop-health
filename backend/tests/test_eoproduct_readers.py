@@ -12,7 +12,7 @@ import pytest
 def _eoproduct(sensing_date: str, ndvi: float) -> dict:
     # keyValues representation, as returned with options=keyValues.
     return {
-        "id": f"urn:ngsi-ld:EOProduct:montiko:da36ccd2e5:{sensing_date}",
+        "id": f"urn:ngsi-ld:EOProduct:test-tenant:da36ccd2e5:{sensing_date}",
         "type": "EOProduct",
         "hasAgriParcel": "urn:ngsi-ld:AgriParcel:da36ccd2-85d2-4c76-b552-c5c835a987c1",
         "sensingDate": sensing_date,
@@ -33,7 +33,7 @@ async def test_fetch_parcel_ndvi_reads_latest_eoproduct():
 
     with patch("nkz_platform_sdk.orion.OrionClient", return_value=client):
         val = await pipeline._fetch_parcel_ndvi(
-            "da36ccd2-85d2-4c76-b552-c5c835a987c1", "montiko"
+            "da36ccd2-85d2-4c76-b552-c5c835a987c1", "test-tenant"
         )
 
     assert val == 0.72  # newest acquisition's ndvi mean
@@ -45,7 +45,7 @@ async def test_fetch_parcel_ndvi_reads_latest_eoproduct():
 
 def _eoproduct_with_lst(sensing_date: str, lst_c: float) -> dict:
     return {
-        "id": f"urn:ngsi-ld:EOProduct:montiko:da36ccd2e5:{sensing_date}",
+        "id": f"urn:ngsi-ld:EOProduct:test-tenant:da36ccd2e5:{sensing_date}",
         "type": "EOProduct",
         "hasAgriParcel": "urn:ngsi-ld:AgriParcel:da36ccd2-85d2-4c76-b552-c5c835a987c1",
         "sensingDate": sensing_date,
@@ -66,7 +66,7 @@ async def test_fetch_parcel_lst_reads_latest_eoproduct():
 
     with patch("nkz_platform_sdk.orion.OrionClient", return_value=client):
         val = await pipeline._fetch_parcel_lst(
-            "da36ccd2-85d2-4c76-b552-c5c835a987c1", "montiko"
+            "da36ccd2-85d2-4c76-b552-c5c835a987c1", "test-tenant"
         )
 
     assert val == 31.2
@@ -85,7 +85,7 @@ async def test_ndvi_climatology_reads_eoproduct_history():
 
     with patch("app.services.context_client.OrionClient", return_value=client):
         result = await context_client.get_ndvi_climatology(
-            "da36ccd2-unique-clim", "montiko", target_month=6, eppo_code=None
+            "da36ccd2-unique-clim", "test-tenant", target_month=6, eppo_code=None
         )
 
     assert client.query_entities.call_args.kwargs.get("type") == "EOProduct"
@@ -101,7 +101,7 @@ async def test_ndvi_cwsi_correlation_reads_eoproduct():
 
     orion = AsyncMock()
     orion.query_entities = AsyncMock(return_value=[
-        {"id": "urn:ngsi-ld:EOProduct:montiko:p:2026-06-05", "sensingDate": "2026-06-05", "ndvi": 0.72},
+        {"id": "urn:ngsi-ld:EOProduct:test-tenant:p:2026-06-05", "sensingDate": "2026-06-05", "ndvi": 0.72},
     ])
     orion.close = AsyncMock()
 
@@ -112,7 +112,7 @@ async def test_ndvi_cwsi_correlation_reads_eoproduct():
         "data": [{"observed_at": "2026-06-05T00:00:00", "cwsiValue": 0.42}]
     })
 
-    req = SimpleNamespace(state=SimpleNamespace(tenant_id="montiko"), headers={})
+    req = SimpleNamespace(state=SimpleNamespace(tenant_id="test-tenant"), headers={})
     fake_settings = SimpleNamespace(
         orion_ld_url="http://orion", orion_ld_context="http://ctx",
         weather_api_url="http://timeseries-reader:5000",

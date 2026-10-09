@@ -5,7 +5,6 @@ import { cropHealthFetch } from '../api/cropHealthApi';
 import { MAP_LAYER_MODE_KEY, readMapLayerMode, type MapLayerMode } from '../constants';
 import type { AssessmentData, ZoneAssessmentData } from '../types/assessment';
 import {
-  PARCEL_URN_PREFIX,
   fetchAssessmentHistory,
   parcelIdFromEntityId,
   toDailyPoints,
@@ -16,6 +15,12 @@ import {
 const HISTORY_DEBOUNCE_MS = 250;
 /** How far back from the cursor the latest assessment may be (the layer paints the last known state). */
 const HISTORY_WINDOW_DAYS = 14;
+
+/**
+ * The entity types the timeline track is shown for (`showWhen` in slots/index.ts). The past is only
+ * painted while that track is on screen: it is the axis that explains why the parcel looks as it does.
+ */
+const TIMELINE_PARCEL_TYPES: readonly string[] = ['AgriParcel', 'https://saref.etsi.org/saref4agri/AgriParcel'];
 
 const NO_DATA_COLOR = { fill: '#9ca3af', alpha: 0.2 };
 
@@ -152,9 +157,10 @@ const CropHealthLayer: React.FC = () => {
 
   // Cursor in the past + a parcel selected: that parcel is painted with its state on the cursor's day.
   // Today and yesterday count as "now", so the layer then behaves exactly as without a timeline.
+  // The selection must carry one of the track's entity types: the host's default cursor is in the past,
+  // and a selection without a type (a deep link) shows no track, so nothing would explain the old colour.
   const cursorMs = currentDate ? snapToUtcDay(currentDate.getTime()) : Number.NaN;
-  const isParcelSelected =
-    Boolean(selectedEntityId?.startsWith(PARCEL_URN_PREFIX)) || Boolean(selectedEntityType?.endsWith('AgriParcel'));
+  const isParcelSelected = Boolean(selectedEntityType && TIMELINE_PARCEL_TYPES.includes(selectedEntityType));
   const isCursorInPast = snapToUtcDay(Date.now()) - cursorMs > DAY_MS;
   const historyParcelId = isCursorInPast && isParcelSelected && selectedEntityId ? parcelIdFromEntityId(selectedEntityId) : null;
   const historyCursor = historyParcelId ? cursorMs : null;
@@ -213,6 +219,9 @@ const CropHealthLayer: React.FC = () => {
 
     // Last fetched data, so a change of the historical colour repaints without refetching.
     let cache: { assessments: AssessmentData[]; zones: ZoneAssessmentData[] } | null = null;
+    // Set when this effect is torn down (mode change, unmount). A fetch still in flight must then paint
+    // nothing: it would write into entities whose snapshots belong to a map nobody restores any more.
+    let disposed = false;
 
     const fetchAndRender = async (fromCache = false) => {
       const currentMode = readMapLayerMode();
@@ -231,6 +240,7 @@ const CropHealthLayer: React.FC = () => {
           cropHealthFetch<{ assessments: AssessmentData[] }>('/assessments/all'),
           cropHealthFetch<{ zones: ZoneAssessmentData[] }>('/assessments/zones/all'),
         ]);
+        if (disposed) return;
         cache = { assessments: parcelData?.assessments ?? [], zones: zoneData?.zones ?? [] };
       }
 
@@ -344,6 +354,7 @@ const CropHealthLayer: React.FC = () => {
     };
     const interval = setInterval(fetchAndRender, 5 * 60 * 1000);
     return () => {
+      disposed = true;
       clearInterval(interval);
       repaintRef.current = null;
       clearCropHealthEntities();

@@ -1,8 +1,23 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useViewer } from '@nekazari/sdk';
+import { DAY_MS, latestAtOrBefore, snapToUtcDay } from '@nekazari/viewer-kit';
 import { cropHealthFetch } from '../api/cropHealthApi';
 import { MAP_LAYER_MODE_KEY, readMapLayerMode, type MapLayerMode } from '../constants';
 import type { AssessmentData, ZoneAssessmentData } from '../types/assessment';
+import {
+  PARCEL_URN_PREFIX,
+  fetchAssessmentHistory,
+  parcelIdFromEntityId,
+  toDailyPoints,
+  type DailyPoint,
+} from '../utils/assessmentHistory';
+
+/** Wait for the cursor to settle: dragging the axis emits once per day crossed. */
+const HISTORY_DEBOUNCE_MS = 250;
+/** How far back from the cursor the latest assessment may be (the layer paints the last known state). */
+const HISTORY_WINDOW_DAYS = 14;
+
+const NO_DATA_COLOR = { fill: '#9ca3af', alpha: 0.2 };
 
 const SEVERITY_COLORS: Record<string, { fill: string; alpha: number }> = {
   LOW: { fill: '#16a34a', alpha: 0.3 },
@@ -35,7 +50,7 @@ function layerColor(a: AssessmentData, mode: MapLayerMode): { fill: string; alph
     return SEVERITY_COLORS[a.overallSeverity] || SEVERITY_COLORS.LOW;
   }
   const value = layerValue(a, mode);
-  if (value == null) return { fill: '#9ca3af', alpha: 0.2 };
+  if (value == null) return NO_DATA_COLOR;
   if (mode === 'vigor') {
     if (value >= 70) return { fill: '#16a34a', alpha: 0.45 };
     if (value >= 40) return { fill: '#d97706', alpha: 0.45 };
@@ -44,6 +59,32 @@ function layerColor(a: AssessmentData, mode: MapLayerMode): { fill: string; alph
   if (value >= 0.6) return { fill: '#dc2626', alpha: 0.5 };
   if (value >= 0.3) return { fill: '#d97706', alpha: 0.45 };
   return { fill: '#16a34a', alpha: 0.35 };
+}
+
+/**
+ * The parcel's latest assessment with the values it had on the cursor's day.
+ * Vigor has no history, so it is cleared and that mode shows no data.
+ */
+function historicalAssessment(latest: AssessmentData, point: DailyPoint | null): AssessmentData {
+  return {
+    ...latest,
+    compositeStressIndex: point?.composite ?? undefined,
+    cwsiValue: point?.cwsi ?? undefined,
+    overallSeverity: point?.severity ?? '',
+    vigorIndex: undefined,
+  };
+}
+
+function historicalColor(a: AssessmentData, mode: MapLayerMode): { fill: string; alpha: number } {
+  // layerColor's severity branch never reports "no data"; an unknown severity must not read as healthy.
+  if (mode === 'severity' && !a.overallSeverity) return NO_DATA_COLOR;
+  return layerColor(a, mode);
+}
+
+/** The selected parcel painted for a past cursor. point: undefined = still loading, null = no assessment. */
+interface HistoricalSelection {
+  parcelId: string;
+  point: DailyPoint | null | undefined;
 }
 
 function ringToDegreesArray(ring: number[][]): number[] {
@@ -78,9 +119,29 @@ function zoneCentroid(geometry: ZoneAssessmentData['geometry']): [number, number
   return [lon / ring.length, lat / ring.length];
 }
 
+interface ViewerEntityCollection {
+  add: (e: unknown) => void;
+  remove: (e: unknown) => void;
+  values: Array<{ id?: string; name?: string; polygon?: unknown; label?: unknown }>;
+}
+
 const CropHealthLayer: React.FC = () => {
-  const { cesiumViewer } = useViewer();
+  const { cesiumViewer, currentDate, selectedEntityId, selectedEntityType } = useViewer();
   const [mode, setMode] = useState<MapLayerMode>(readMapLayerMode);
+
+  // Cursor in the past + a parcel selected: that parcel is painted with its state on the cursor's day.
+  // Today and yesterday count as "now", so the layer then behaves exactly as without a timeline.
+  const cursorMs = currentDate ? snapToUtcDay(currentDate.getTime()) : Number.NaN;
+  const isParcelSelected =
+    Boolean(selectedEntityId?.startsWith(PARCEL_URN_PREFIX)) || Boolean(selectedEntityType?.endsWith('AgriParcel'));
+  const isCursorInPast = snapToUtcDay(Date.now()) - cursorMs > DAY_MS;
+  const historyParcelId = isCursorInPast && isParcelSelected && selectedEntityId ? parcelIdFromEntityId(selectedEntityId) : null;
+  const historyCursor = historyParcelId ? cursorMs : null;
+
+  // Read by the paint function, so the 5-minute refresh keeps the historical colour.
+  const historicalRef = useRef<HistoricalSelection | null>(null);
+  // Repaints from the last fetched assessments, without refetching them.
+  const repaintRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     const onStorage = (event: StorageEvent) => {
@@ -93,10 +154,12 @@ const CropHealthLayer: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    let viewerEntities: { add: (e: unknown) => void; remove: (e: unknown) => void; values: Array<{ id?: string; name?: string; polygon?: unknown; label?: unknown }> } | null = null;
+    let viewerEntities: ViewerEntityCollection | null = null;
     try {
-      if (!cesiumViewer?.entities) return;
-      viewerEntities = cesiumViewer.entities;
+      // The SDK types cesiumViewer as unknown (it does not depend on cesium).
+      const viewer = cesiumViewer as { entities?: ViewerEntityCollection } | null | undefined;
+      if (!viewer?.entities) return;
+      viewerEntities = viewer.entities;
     } catch {
       return;
     }
@@ -109,7 +172,10 @@ const CropHealthLayer: React.FC = () => {
       });
     };
 
-    const fetchAndRender = async () => {
+    // Last fetched data, so a change of the historical colour repaints without refetching.
+    let cache: { assessments: AssessmentData[]; zones: ZoneAssessmentData[] } | null = null;
+
+    const fetchAndRender = async (fromCache = false) => {
       const currentMode = readMapLayerMode();
       setMode(currentMode);
 
@@ -120,13 +186,15 @@ const CropHealthLayer: React.FC = () => {
         return;
       }
 
-      const [parcelData, zoneData] = await Promise.all([
-        cropHealthFetch<{ assessments: AssessmentData[] }>('/assessments/all'),
-        cropHealthFetch<{ zones: ZoneAssessmentData[] }>('/assessments/zones/all'),
-      ]);
+      if (!fromCache || !cache) {
+        const [parcelData, zoneData] = await Promise.all([
+          cropHealthFetch<{ assessments: AssessmentData[] }>('/assessments/all'),
+          cropHealthFetch<{ zones: ZoneAssessmentData[] }>('/assessments/zones/all'),
+        ]);
+        cache = { assessments: parcelData?.assessments ?? [], zones: zoneData?.zones ?? [] };
+      }
 
-      const assessments = parcelData?.assessments ?? [];
-      const zones = zoneData?.zones ?? [];
+      const { assessments, zones } = cache;
 
       clearCropHealthEntities();
       if (!assessments.length && !zones.length) return;
@@ -184,7 +252,12 @@ const CropHealthLayer: React.FC = () => {
 
       for (const a of assessments) {
         if (!a.parcelId || zonedParcels.has(a.parcelId)) continue;
-        if (currentMode !== 'severity' && layerValue(a, currentMode) == null) continue;
+
+        const historical = historicalRef.current?.parcelId === a.parcelId ? historicalRef.current : null;
+        // History still loading: leave the parcel as it is rather than paint today's state for a past date.
+        if (historical && historical.point === undefined) continue;
+        const shown = historical ? historicalAssessment(a, historical.point ?? null) : a;
+        if (!historical && currentMode !== 'severity' && layerValue(a, currentMode) == null) continue;
 
         const parcelEntity = viewerEntities!.values.find(
           (e: { id?: string; name?: string }) =>
@@ -192,13 +265,13 @@ const CropHealthLayer: React.FC = () => {
         );
         if (!parcelEntity?.polygon) continue;
 
-        const colors = layerColor(a, currentMode);
+        const colors = historical ? historicalColor(shown, currentMode) : layerColor(a, currentMode);
         parcelEntity.polygon.material = Cesium.Color.fromCssColorString(colors.fill)?.withAlpha(colors.alpha);
         parcelEntity.polygon.outline = true;
         parcelEntity.polygon.outlineColor = Cesium.Color.fromCssColorString(colors.fill);
 
         parcelEntity.label = {
-          text: layerLabel(a, currentMode),
+          text: layerLabel(shown, currentMode),
           font: '12px sans-serif',
           fillColor: Cesium.Color.WHITE,
           outlineColor: Cesium.Color.BLACK,
@@ -212,12 +285,45 @@ const CropHealthLayer: React.FC = () => {
     };
 
     fetchAndRender();
+    repaintRef.current = () => {
+      if (cache) void fetchAndRender(true);
+    };
     const interval = setInterval(fetchAndRender, 5 * 60 * 1000);
     return () => {
       clearInterval(interval);
+      repaintRef.current = null;
       clearCropHealthEntities();
     };
   }, [cesiumViewer, mode]);
+
+  // History of the selected parcel on the cursor's day. Debounced: dragging the axis moves the cursor
+  // once per day crossed, and only the position it settles on is worth a request.
+  useEffect(() => {
+    if (!historyParcelId || historyCursor == null) {
+      if (historicalRef.current) {
+        historicalRef.current = null;
+        repaintRef.current?.();
+      }
+      return undefined;
+    }
+
+    historicalRef.current = { parcelId: historyParcelId, point: undefined };
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      void fetchAssessmentHistory(historyParcelId, historyCursor - HISTORY_WINDOW_DAYS * DAY_MS, historyCursor).then(
+        (points) => {
+          if (cancelled) return;
+          const point = latestAtOrBefore(toDailyPoints(points), (p) => p.time, historyCursor);
+          historicalRef.current = { parcelId: historyParcelId, point };
+          repaintRef.current?.();
+        },
+      );
+    }, HISTORY_DEBOUNCE_MS);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [historyParcelId, historyCursor]);
 
   return null;
 };

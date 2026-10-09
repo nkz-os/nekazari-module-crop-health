@@ -5,6 +5,7 @@ import DiseaseRiskWidget from '../components/DiseaseRiskWidget';
 import CompactionRiskWidget from '../components/CompactionRiskWidget';
 import CropHealthMapModeWidget from '../components/CropHealthMapModeWidget';
 import CropHealthLayerToggle from '../components/CropHealthLayerToggle';
+import CropHealthTimelineTrack from '../components/CropHealthTimelineTrack';
 
 const MODULE_ID = 'crop-health';
 
@@ -64,6 +65,16 @@ export const moduleSlots = {
       component: 'CropHealthLayer',
       localComponent: CropHealthLayer,
       priority: 10,
+    },
+  ],
+  'timeline-track': [
+    {
+      id: 'crop-health-timeline-track',
+      moduleId: MODULE_ID,
+      component: 'CropHealthTimelineTrack',
+      localComponent: CropHealthTimelineTrack,
+      priority: 20,
+      showWhen: { entityType: ['AgriParcel', 'https://saref.etsi.org/saref4agri/AgriParcel'] },
     },
   ],
 };

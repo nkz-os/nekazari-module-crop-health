@@ -21,6 +21,16 @@ export interface TrendPoint {
   balance?: number;
 }
 
+/** One point of `/assessments/history`; attributes the assessment lacks come back as null. */
+export interface HistoryPoint {
+  date: string;
+  cwsi?: number | null;
+  mds?: number | null;
+  balance?: number | null;
+  composite?: number | null;
+  severity?: string | null;
+}
+
 export interface CorrelationPoint {
   date: string;
   ndvi?: number;

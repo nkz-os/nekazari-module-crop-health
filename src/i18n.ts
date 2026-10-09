@@ -56,6 +56,9 @@ const en = {
             biomassEstimated: 'Estimated biomass: {{value}} kg/ha',
             waterApplied: 'Water applied: {{value}} mm',
         },
+        timeline: {
+            trackLabel: 'Composite stress',
+        },
         summary: {
             phaseLabel: 'Phase',
             updated: 'Updated',
@@ -330,6 +333,9 @@ const es = {
             dominantStressor: 'Dominante: {{stressor}}',
             biomassEstimated: 'Biomasa estimada: {{value}} kg/ha',
             waterApplied: 'Agua aplicada: {{value}} mm',
+        },
+        timeline: {
+            trackLabel: 'Estrés compuesto',
         },
         summary: {
             phaseLabel: 'Fase',

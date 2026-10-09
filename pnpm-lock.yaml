@@ -18,8 +18,8 @@ importers:
         specifier: ^1.0.2-alpha.4
         version: 1.0.2-alpha.4(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
       '@nekazari/viewer-kit':
-        specifier: https://github.com/nkz-os/nkz/releases/download/viewer-kit-v0.2.0-alpha.1/nekazari-viewer-kit-0.2.0-alpha.1.tgz
-        version: https://github.com/nkz-os/nkz/releases/download/viewer-kit-v0.2.0-alpha.1/nekazari-viewer-kit-0.2.0-alpha.1.tgz(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
+        specifier: https://github.com/nkz-os/nkz/releases/download/viewer-kit-v0.2.0-alpha.2/nekazari-viewer-kit-0.2.0-alpha.2.tgz
+        version: https://github.com/nkz-os/nkz/releases/download/viewer-kit-v0.2.0-alpha.2/nekazari-viewer-kit-0.2.0-alpha.2.tgz(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
       lucide-react:
         specifier: ^0.424.0
         version: 0.424.0(react@18.3.1)
@@ -32,10 +32,10 @@ importers:
     devDependencies:
       '@nekazari/module-builder':
         specifier: ^2.1.1
-        version: 2.1.1(@nekazari/module-kit@0.9.0(@nekazari/sdk@1.4.0(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(typescript@5.9.3))(@nekazari/viewer-kit@https://github.com/nkz-os/nkz/releases/download/viewer-kit-v0.2.0-alpha.1/nekazari-viewer-kit-0.2.0-alpha.1.tgz(react-dom@18.3.1(react@18.3.1))(react@18.3.1))(@tanstack/react-query@5.100.10(react@18.3.1))(react@18.3.1))(@vitejs/plugin-react@4.7.0(vite@5.4.21))(node-fetch@2.7.0)(typescript@5.9.3)(vite@5.4.21)
+        version: 2.1.1(@nekazari/module-kit@0.9.0(@nekazari/sdk@1.4.0(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(typescript@5.9.3))(@nekazari/viewer-kit@https://github.com/nkz-os/nkz/releases/download/viewer-kit-v0.2.0-alpha.2/nekazari-viewer-kit-0.2.0-alpha.2.tgz(react-dom@18.3.1(react@18.3.1))(react@18.3.1))(@tanstack/react-query@5.100.10(react@18.3.1))(react@18.3.1))(@vitejs/plugin-react@4.7.0(vite@5.4.21))(node-fetch@2.7.0)(typescript@5.9.3)(vite@5.4.21)
       '@nekazari/module-kit':
         specifier: ^0.9.0
-        version: 0.9.0(@nekazari/sdk@1.4.0(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(typescript@5.9.3))(@nekazari/viewer-kit@https://github.com/nkz-os/nkz/releases/download/viewer-kit-v0.2.0-alpha.1/nekazari-viewer-kit-0.2.0-alpha.1.tgz(react-dom@18.3.1(react@18.3.1))(react@18.3.1))(@tanstack/react-query@5.100.10(react@18.3.1))(react@18.3.1)
+        version: 0.9.0(@nekazari/sdk@1.4.0(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(typescript@5.9.3))(@nekazari/viewer-kit@https://github.com/nkz-os/nkz/releases/download/viewer-kit-v0.2.0-alpha.2/nekazari-viewer-kit-0.2.0-alpha.2.tgz(react-dom@18.3.1(react@18.3.1))(react@18.3.1))(@tanstack/react-query@5.100.10(react@18.3.1))(react@18.3.1)
       '@vitejs/plugin-react':
         specifier: ^4.3.1
         version: 4.7.0(vite@5.4.21)
@@ -538,9 +538,9 @@ packages:
       react: ^18.3.1
       react-dom: ^18.3.1
 
-  '@nekazari/viewer-kit@https://github.com/nkz-os/nkz/releases/download/viewer-kit-v0.2.0-alpha.1/nekazari-viewer-kit-0.2.0-alpha.1.tgz':
-    resolution: {tarball: https://github.com/nkz-os/nkz/releases/download/viewer-kit-v0.2.0-alpha.1/nekazari-viewer-kit-0.2.0-alpha.1.tgz}
-    version: 0.2.0-alpha.1
+  '@nekazari/viewer-kit@https://github.com/nkz-os/nkz/releases/download/viewer-kit-v0.2.0-alpha.2/nekazari-viewer-kit-0.2.0-alpha.2.tgz':
+    resolution: {tarball: https://github.com/nkz-os/nkz/releases/download/viewer-kit-v0.2.0-alpha.2/nekazari-viewer-kit-0.2.0-alpha.2.tgz}
+    version: 0.2.0-alpha.2
     peerDependencies:
       react: ^18.3.1
       react-dom: ^18.3.1
@@ -2119,10 +2119,10 @@ snapshots:
       react: 18.3.1
       react-dom: 18.3.1(react@18.3.1)
 
-  '@nekazari/module-builder@2.1.1(@nekazari/module-kit@0.9.0(@nekazari/sdk@1.4.0(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(typescript@5.9.3))(@nekazari/viewer-kit@https://github.com/nkz-os/nkz/releases/download/viewer-kit-v0.2.0-alpha.1/nekazari-viewer-kit-0.2.0-alpha.1.tgz(react-dom@18.3.1(react@18.3.1))(react@18.3.1))(@tanstack/react-query@5.100.10(react@18.3.1))(react@18.3.1))(@vitejs/plugin-react@4.7.0(vite@5.4.21))(node-fetch@2.7.0)(typescript@5.9.3)(vite@5.4.21)':
+  '@nekazari/module-builder@2.1.1(@nekazari/module-kit@0.9.0(@nekazari/sdk@1.4.0(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(typescript@5.9.3))(@nekazari/viewer-kit@https://github.com/nkz-os/nkz/releases/download/viewer-kit-v0.2.0-alpha.2/nekazari-viewer-kit-0.2.0-alpha.2.tgz(react-dom@18.3.1(react@18.3.1))(react@18.3.1))(@tanstack/react-query@5.100.10(react@18.3.1))(react@18.3.1))(@vitejs/plugin-react@4.7.0(vite@5.4.21))(node-fetch@2.7.0)(typescript@5.9.3)(vite@5.4.21)':
     dependencies:
       '@module-federation/vite': 1.16.8(node-fetch@2.7.0)(typescript@5.9.3)(vite@5.4.21)
-      '@nekazari/module-kit': 0.9.0(@nekazari/sdk@1.4.0(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(typescript@5.9.3))(@nekazari/viewer-kit@https://github.com/nkz-os/nkz/releases/download/viewer-kit-v0.2.0-alpha.1/nekazari-viewer-kit-0.2.0-alpha.1.tgz(react-dom@18.3.1(react@18.3.1))(react@18.3.1))(@tanstack/react-query@5.100.10(react@18.3.1))(react@18.3.1)
+      '@nekazari/module-kit': 0.9.0(@nekazari/sdk@1.4.0(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(typescript@5.9.3))(@nekazari/viewer-kit@https://github.com/nkz-os/nkz/releases/download/viewer-kit-v0.2.0-alpha.2/nekazari-viewer-kit-0.2.0-alpha.2.tgz(react-dom@18.3.1(react@18.3.1))(react@18.3.1))(@tanstack/react-query@5.100.10(react@18.3.1))(react@18.3.1)
       '@vitejs/plugin-react': 4.7.0(vite@5.4.21)
       esbuild: 0.28.2
       vite: 5.4.21
@@ -2133,10 +2133,10 @@ snapshots:
       - utf-8-validate
       - vue-tsc
 
-  '@nekazari/module-kit@0.9.0(@nekazari/sdk@1.4.0(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(typescript@5.9.3))(@nekazari/viewer-kit@https://github.com/nkz-os/nkz/releases/download/viewer-kit-v0.2.0-alpha.1/nekazari-viewer-kit-0.2.0-alpha.1.tgz(react-dom@18.3.1(react@18.3.1))(react@18.3.1))(@tanstack/react-query@5.100.10(react@18.3.1))(react@18.3.1)':
+  '@nekazari/module-kit@0.9.0(@nekazari/sdk@1.4.0(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(typescript@5.9.3))(@nekazari/viewer-kit@https://github.com/nkz-os/nkz/releases/download/viewer-kit-v0.2.0-alpha.2/nekazari-viewer-kit-0.2.0-alpha.2.tgz(react-dom@18.3.1(react@18.3.1))(react@18.3.1))(@tanstack/react-query@5.100.10(react@18.3.1))(react@18.3.1)':
     dependencies:
       '@nekazari/sdk': 1.4.0(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(typescript@5.9.3)
-      '@nekazari/viewer-kit': https://github.com/nkz-os/nkz/releases/download/viewer-kit-v0.2.0-alpha.1/nekazari-viewer-kit-0.2.0-alpha.1.tgz(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
+      '@nekazari/viewer-kit': https://github.com/nkz-os/nkz/releases/download/viewer-kit-v0.2.0-alpha.2/nekazari-viewer-kit-0.2.0-alpha.2.tgz(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
       '@tanstack/react-query': 5.100.10(react@18.3.1)
       react: 18.3.1
       zod: 4.6.5
@@ -2171,7 +2171,7 @@ snapshots:
       - '@types/react'
       - '@types/react-dom'
 
-  '@nekazari/viewer-kit@https://github.com/nkz-os/nkz/releases/download/viewer-kit-v0.2.0-alpha.1/nekazari-viewer-kit-0.2.0-alpha.1.tgz(react-dom@18.3.1(react@18.3.1))(react@18.3.1)':
+  '@nekazari/viewer-kit@https://github.com/nkz-os/nkz/releases/download/viewer-kit-v0.2.0-alpha.2/nekazari-viewer-kit-0.2.0-alpha.2.tgz(react-dom@18.3.1(react@18.3.1))(react@18.3.1)':
     dependencies:
       '@nekazari/design-tokens': 0.1.0-alpha.3(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
       '@nekazari/ui-kit': 1.0.2-alpha.4(react-dom@18.3.1(react@18.3.1))(react@18.3.1)

@@ -576,6 +576,9 @@ const ca = {
             biomassEstimated: 'Biomassa estimada: {{value}} kg/ha',
             waterApplied: 'Aigua aplicada: {{value}} mm',
         },
+        timeline: {
+            trackLabel: 'Estrès compost',
+        },
         summary: {
             phaseLabel: 'Fase',
             updated: 'Actualitzat',
@@ -783,6 +786,9 @@ const eu = {
             dominantStressor: 'Nagusitasuna: {{stressor}}',
             biomassEstimated: 'Estimaturiko biomasa: {{value}} kg/ha',
             waterApplied: 'Aplikatutako ura: {{value}} mm',
+        },
+        timeline: {
+            trackLabel: 'Estres konposatua',
         },
         summary: {
             phaseLabel: 'Fasea',
@@ -992,6 +998,9 @@ const fr = {
             biomassEstimated: 'Biomasse estimée : {{value}} kg/ha',
             waterApplied: 'Eau appliquée : {{value}} mm',
         },
+        timeline: {
+            trackLabel: 'Stress composite',
+        },
         summary: {
             phaseLabel: 'Phase',
             updated: 'Mis à jour',
@@ -1199,6 +1208,9 @@ const pt = {
             dominantStressor: 'Dominante: {{stressor}}',
             biomassEstimated: 'Biomassa estimada: {{value}} kg/ha',
             waterApplied: 'Água aplicada: {{value}} mm',
+        },
+        timeline: {
+            trackLabel: 'Estresse composto',
         },
         summary: {
             phaseLabel: 'Fase',

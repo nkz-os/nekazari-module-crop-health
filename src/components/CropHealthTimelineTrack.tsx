@@ -8,6 +8,8 @@ import { fetchAssessmentHistory, parcelIdFromEntityId, toDailyPoints } from '../
 /** A value older than this before the cursor is not shown as "the value at the cursor". */
 const MAX_VALUE_AGE_MS = 7 * DAY_MS;
 const NO_VALUE = '–';
+/** Row and sparkline height in px: tall enough to read the curve (viewer-kit's default is 24). */
+const TRACK_HEIGHT = 64;
 
 /**
  * Composite stress of the selected parcel along the shared viewer time axis.
@@ -50,8 +52,8 @@ const CropHealthTimelineTrack: React.FC<TimelineTrackProps> = ({ entityId, range
   );
 
   return (
-    <TimelineTrackRow label={label} range={range} cursor={cursor}>
-      <TimelineSparkline range={range} points={points} valueRange={[0, 1]} color={CROP_HEALTH_ACCENT.base} />
+    <TimelineTrackRow label={label} range={range} cursor={cursor} height={TRACK_HEIGHT}>
+      <TimelineSparkline range={range} points={points} valueRange={[0, 1]} color={CROP_HEALTH_ACCENT.base} height={TRACK_HEIGHT} />
     </TimelineTrackRow>
   );
 };

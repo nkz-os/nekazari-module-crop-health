@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import logging
+from datetime import date, datetime, timedelta, timezone
 
+import httpx
 from fastapi import APIRouter, Query, Request
 
 from app.api.assessment_mapper import (
@@ -23,6 +25,19 @@ from nkz_platform_sdk.orion import OrionClient
 router = APIRouter()
 
 logger = logging.getLogger(__name__)
+
+# Gateway-injected identity the timeseries-reader needs to authorize a call
+# made on behalf of the user (its routes sit behind require_auth).
+_READER_FORWARDED_HEADERS = ("Authorization", "X-Tenant-ID", "X-Auth-Signature")
+
+
+def _reader_headers(request: Request) -> dict[str, str]:
+    """Forward the caller's auth context to the timeseries-reader (only headers present)."""
+    return {
+        name: value
+        for name in _READER_FORWARDED_HEADERS
+        if (value := request.headers.get(name))
+    }
 
 
 async def _fetch_assessment_entities(tenant_id: str, parcel_id: str = "", limit: int = 100) -> list[dict]:
@@ -262,25 +277,32 @@ async def assessment_history(
     request: Request,
     parcelId: str = "",
     days: int = 7,
+    from_: date | None = Query(None, alias="from"),
+    to: date | None = None,
 ):
-    """Return CWSI/MDS/water balance time series for a parcel.
+    """Return CWSI/MDS/water balance/composite time series for a parcel, oldest first.
 
-    Queries timeseries-reader (no direct DB access).
+    Range: ``from``/``to`` (UTC dates, ``to`` inclusive). Without ``from`` it is
+    ``today - days``; without ``to`` the reader's default (now) applies.
+    Queries timeseries-reader (no direct DB access), forwarding the caller's auth.
     """
     if not parcelId:
         return {"points": []}
 
     try:
         settings = get_settings()
-        url = (
-            f"{settings.weather_api_url}/api/timeseries/type/CropHealthAssessment"
-            f"/parcel/{parcelId}/data"
-            f"?attrs=cwsiValue,mdsValue,waterBalanceDeficit"
-            f"&limit=500"
-        )
-        import httpx
+        start = from_ or (datetime.now(timezone.utc).date() - timedelta(days=days))
+        params = {
+            "attrs": "cwsiValue,mdsValue,waterBalanceDeficit,compositeStressIndex,overallSeverity",
+            "limit": 500,
+            "from": f"{start.isoformat()}T00:00:00Z",
+        }
+        if to is not None:
+            # Reader's upper bound is exclusive: close the day so `to` is inclusive.
+            params["to"] = f"{to.isoformat()}T23:59:59.999999Z"
+        url = f"{settings.weather_api_url}/api/timeseries/type/CropHealthAssessment/parcel/{parcelId}/data"
         async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(url)
+            resp = await client.get(url, params=params, headers=_reader_headers(request))
             resp.raise_for_status()
             result = resp.json()
 
@@ -290,11 +312,20 @@ async def assessment_history(
                 "cwsi": p.get("cwsiValue"),
                 "mds": p.get("mdsValue"),
                 "balance": p.get("waterBalanceDeficit"),
+                "composite": p.get("compositeStressIndex"),
+                "severity": p.get("overallSeverity"),
             }
             for p in result.get("data", [])
         ]
         points.sort(key=lambda p: p["date"])
         return {"points": points}
+    except httpx.HTTPStatusError as e:
+        logger.error(
+            "History query failed: timeseries-reader returned HTTP %s (parcel=%s)",
+            e.response.status_code,
+            parcelId,
+        )
+        return {"points": []}
     except Exception as e:
         logger.error("History query failed: %s", e)
         return {"points": []}
@@ -341,10 +372,9 @@ async def ndvi_cwsi_correlation(
             f"/parcel/{parcelId}/data"
             f"?attrs=cwsiValue&limit=500"
         )
-        import httpx as _httpx
         cwsi_by_date = {}
-        async with _httpx.AsyncClient(timeout=10.0) as http_client:
-            resp = await http_client.get(url)
+        async with httpx.AsyncClient(timeout=10.0) as http_client:
+            resp = await http_client.get(url, headers=_reader_headers(request))
             resp.raise_for_status()
             result = resp.json()
             for p in result.get("data", []):

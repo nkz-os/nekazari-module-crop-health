@@ -112,7 +112,7 @@ async def test_ndvi_cwsi_correlation_reads_eoproduct():
         "data": [{"observed_at": "2026-06-05T00:00:00", "cwsiValue": 0.42}]
     })
 
-    req = SimpleNamespace(state=SimpleNamespace(tenant_id="montiko"))
+    req = SimpleNamespace(state=SimpleNamespace(tenant_id="montiko"), headers={})
     fake_settings = SimpleNamespace(
         orion_ld_url="http://orion", orion_ld_context="http://ctx",
         weather_api_url="http://timeseries-reader:5000",

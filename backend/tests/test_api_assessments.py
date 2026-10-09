@@ -322,6 +322,117 @@ class TestAssessmentsAPI:
             assert len(resp.json()["zones"]) == 1
 
 
+class TestHistory:
+    def test_forwards_auth_and_range(self, client):
+        with patch("httpx.AsyncClient") as mock_http:
+            mock_resp = MagicMock()
+            mock_resp.raise_for_status = MagicMock()
+            mock_resp.json = MagicMock(return_value={"data": [
+                {"observed_at": "2026-09-02T10:00:00Z", "cwsiValue": 0.2,
+                 "compositeStressIndex": 0.31, "overallSeverity": "LOW"},
+                {"observed_at": "2026-09-01T10:00:00Z", "cwsiValue": 0.1,
+                 "compositeStressIndex": 0.12, "overallSeverity": "LOW"},
+            ]})
+            get = AsyncMock(return_value=mock_resp)
+            mock_http.return_value.__aenter__.return_value.get = get
+
+            resp = client.get(
+                "/api/crop-health/assessments/history",
+                params={"parcelId": "parcel-a", "from": "2026-09-01", "to": "2026-10-01"},
+                headers={"Authorization": "Bearer tok", "X-Auth-Signature": "sig:1"},
+            )
+
+        assert resp.status_code == 200
+        kwargs = get.call_args.kwargs
+        assert kwargs["headers"]["Authorization"] == "Bearer tok"
+        assert kwargs["headers"]["X-Tenant-ID"] == "test-tenant"
+        assert kwargs["headers"]["X-Auth-Signature"] == "sig:1"
+        assert kwargs["params"]["from"].startswith("2026-09-01")
+        assert kwargs["params"]["to"].startswith("2026-10-01")
+        assert "compositeStressIndex" in kwargs["params"]["attrs"]
+        pts = resp.json()["points"]
+        assert [p["date"][:10] for p in pts] == ["2026-09-01", "2026-09-02"]
+        assert pts[1]["composite"] == 0.31 and pts[1]["severity"] == "LOW"
+
+    def test_days_without_from(self, client):
+        with patch("httpx.AsyncClient") as mock_http:
+            mock_resp = MagicMock()
+            mock_resp.raise_for_status = MagicMock()
+            mock_resp.json = MagicMock(return_value={"data": []})
+            get = AsyncMock(return_value=mock_resp)
+            mock_http.return_value.__aenter__.return_value.get = get
+            client.get("/api/crop-health/assessments/history?parcelId=parcel-a&days=7")
+        assert "from" in get.call_args.kwargs["params"]
+        assert "to" not in get.call_args.kwargs["params"]
+
+    def test_to_is_inclusive_and_bad_date_rejected(self, client):
+        with patch("httpx.AsyncClient") as mock_http:
+            mock_resp = MagicMock()
+            mock_resp.raise_for_status = MagicMock()
+            mock_resp.json = MagicMock(return_value={"data": []})
+            get = AsyncMock(return_value=mock_resp)
+            mock_http.return_value.__aenter__.return_value.get = get
+            ok = client.get("/api/crop-health/assessments/history?parcelId=p&from=2026-09-01&to=2026-10-01")
+            bad = client.get("/api/crop-health/assessments/history?parcelId=p&from=not-a-date")
+        assert ok.status_code == 200
+        assert get.call_args.kwargs["params"]["from"] == "2026-09-01T00:00:00Z"
+        assert get.call_args.kwargs["params"]["to"] == "2026-10-01T23:59:59.999999Z"
+        assert bad.status_code == 422
+
+    def test_does_not_forward_absent_headers(self, client):
+        with patch("httpx.AsyncClient") as mock_http:
+            mock_resp = MagicMock()
+            mock_resp.raise_for_status = MagicMock()
+            mock_resp.json = MagicMock(return_value={"data": []})
+            get = AsyncMock(return_value=mock_resp)
+            mock_http.return_value.__aenter__.return_value.get = get
+            client.get("/api/crop-health/assessments/history?parcelId=parcel-a")
+        headers = get.call_args.kwargs["headers"]
+        assert "Authorization" not in headers
+        assert "X-Auth-Signature" not in headers
+
+    def test_reader_error_logs_status_and_returns_empty(self, client, caplog):
+        import httpx
+
+        with patch("httpx.AsyncClient") as mock_http:
+            req = httpx.Request("GET", "http://reader/x")
+            err = httpx.HTTPStatusError(
+                "401", request=req, response=httpx.Response(401, request=req)
+            )
+            mock_resp = MagicMock()
+            mock_resp.raise_for_status = MagicMock(side_effect=err)
+            get = AsyncMock(return_value=mock_resp)
+            mock_http.return_value.__aenter__.return_value.get = get
+            with caplog.at_level("ERROR", logger="app.api.assessments"):
+                resp = client.get("/api/crop-health/assessments/history?parcelId=parcel-a")
+        assert resp.status_code == 200
+        assert resp.json() == {"points": []}
+        assert any(
+            r.levelname == "ERROR" and "HTTP 401" in r.getMessage() for r in caplog.records
+        )
+
+    def test_correlation_forwards_auth(self, client):
+        with patch("app.api.assessments.OrionClient") as mock_cls, \
+                patch("httpx.AsyncClient") as mock_http:
+            inst = AsyncMock()
+            inst.query_entities = AsyncMock(return_value=[])
+            inst.close = AsyncMock()
+            mock_cls.return_value = inst
+            mock_resp = MagicMock()
+            mock_resp.raise_for_status = MagicMock()
+            mock_resp.json = MagicMock(return_value={"data": []})
+            get = AsyncMock(return_value=mock_resp)
+            mock_http.return_value.__aenter__.return_value.get = get
+            resp = client.get(
+                "/api/crop-health/assessments/correlation?parcelId=parcel-a",
+                headers={"Authorization": "Bearer tok", "X-Auth-Signature": "sig:1"},
+            )
+        assert resp.status_code == 200
+        headers = get.call_args.kwargs["headers"]
+        assert headers["Authorization"] == "Bearer tok"
+        assert headers["X-Tenant-ID"] == "test-tenant"
+        assert headers["X-Auth-Signature"] == "sig:1"
+
 
 def test_mapper_reads_soil_suitability_roundtrip():
     from datetime import datetime, timezone

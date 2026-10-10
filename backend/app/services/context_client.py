@@ -426,9 +426,19 @@ async def _fetch_platform_crop_cycles(parcel_urn: str, tenant_id: str) -> dict |
         async with httpx.AsyncClient(timeout=8.0) as client:
             resp = await client.get(url, params={"tenant_id": tenant_id},
                                     headers={"X-Internal-Service-Secret": settings.internal_service_secret})
-        return resp.json() if resp.status_code == 200 else None
     except httpx.HTTPError as e:
-        logger.warning("crop-cycles unavailable for %s: %s", parcel_urn, e)
+        logger.warning("crop-cycles unavailable for %s tenant=%s: %s; falling back to local resolution",
+                       parcel_urn, tenant_id, e)
+        return None
+    if resp.status_code != 200:
+        logger.warning("crop-cycles endpoint status=%s for %s tenant=%s; falling back to local resolution",
+                       resp.status_code, parcel_urn, tenant_id)
+        return None
+    try:
+        return resp.json()
+    except ValueError as e:
+        logger.warning("crop-cycles response not JSON for %s tenant=%s: %s; falling back to local resolution",
+                       parcel_urn, tenant_id, e)
         return None
 
 

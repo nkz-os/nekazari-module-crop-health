@@ -56,3 +56,42 @@ async def test_fallback_reads_only_boundary_operations_and_pages(monkeypatch):
     op_calls = [c for c in calls if c["type"] == "AgriParcelOperation"]
     assert len(ops) == 1000 and [c["offset"] for c in op_calls] == [0, 500, 1000]
     assert 'operationType=="sowing","harvesting","tillage"' in op_calls[0]["q"]
+
+
+class _Resp:
+    def __init__(self, status, body):
+        self.status_code, self._body = status, body
+
+    def json(self):
+        if isinstance(self._body, Exception):
+            raise self._body
+        return self._body
+
+
+def _client_returning(resp):
+    class C:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def get(self, *a, **k):
+            return resp
+    return C
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("resp,expect", [
+    (_Resp(503, {"error": "context broker unavailable"}), "status=503"),
+    (_Resp(200, ValueError("Expecting value")), "not JSON"),
+])
+async def test_platform_cycles_fallback_is_logged(monkeypatch, caplog, resp, expect):
+    monkeypatch.setattr(cc.httpx, "AsyncClient", _client_returning(resp))
+    with caplog.at_level("WARNING"):
+        assert await cc._fetch_platform_crop_cycles("urn:ngsi-ld:AgriParcel:p1", "tenant-one") is None
+    msgs = [r.getMessage() for r in caplog.records if "crop-cycles" in r.getMessage()]
+    assert msgs and expect in msgs[0] and "urn:ngsi-ld:AgriParcel:p1" in msgs[0]

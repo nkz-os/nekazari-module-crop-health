@@ -14,12 +14,12 @@ triggers the inference pipeline in a background task.
 
 from __future__ import annotations
 
-import hmac
 import logging
 import os
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, BackgroundTasks, Header, HTTPException, Request, Response
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, Response
+from nkz_platform_sdk.notify_auth import accept_master_from_env, verify_notification
 
 from app.schemas import MetricType
 from app.services import pipeline
@@ -36,20 +36,25 @@ _TRACKED_ATTRIBUTES = {
 }
 
 
-def _reject_unauthenticated_notify(x_internal_secret: str | None) -> HTTPException | None:
-    """401 unless the notification carries the internal secret (flag-gated).
+def _reject_unauthenticated_notify(headers) -> HTTPException | None:
+    """401 unless the notification authenticates (flag-gated).
 
     Two-phase rollout: NOTIFY_REQUIRE_INTERNAL_SECRET stays off until subscription
     creators have converged to carry receiverInfo, then flips on with no code deploy.
+    Accepts the token bound to this tenant and host (nkz_platform_sdk.notify_auth)
+    and, until NKZ_NOTIFY_ACCEPT_MASTER is false, the master secret itself.
     """
     require = os.getenv("NOTIFY_REQUIRE_INTERNAL_SECRET", "").lower() in (
         "1", "true", "yes", "on"
     )
     if not require:
         return None
-    secret = os.getenv("INTERNAL_SERVICE_SECRET", "")
-    if not secret or not hmac.compare_digest(x_internal_secret or "", secret):
-        return HTTPException(status_code=401, detail="missing or invalid internal secret")
+    if not verify_notification(
+        headers,
+        secret=os.getenv("INTERNAL_SERVICE_SECRET", ""),
+        accept_master=accept_master_from_env(),
+    ):
+        return HTTPException(status_code=401, detail="missing or invalid notification credentials")
     return None
 
 
@@ -57,7 +62,6 @@ def _reject_unauthenticated_notify(x_internal_secret: str | None) -> HTTPExcepti
 async def receive_sensor_data(
     request: Request,
     background_tasks: BackgroundTasks,
-    x_internal_secret: str | None = Header(None, alias="X-Internal-Service-Secret"),
 ) -> Response:
     """Receive FIWARE Orion-LD subscription notifications.
 
@@ -77,7 +81,7 @@ async def receive_sensor_data(
         ]
     }
     """
-    reject = _reject_unauthenticated_notify(x_internal_secret)
+    reject = _reject_unauthenticated_notify(request.headers)
     if reject:
         raise reject
     try:

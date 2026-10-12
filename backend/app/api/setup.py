@@ -11,6 +11,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from nkz_platform_sdk.activation import ModuleActivation
+from nkz_platform_sdk.notify_auth import derived_tokens_from_env
 from nkz_platform_sdk.subscriptions import SubscriptionRegistrar
 
 from app.config import get_settings
@@ -80,10 +81,11 @@ async def setup_parcel(request: Request, body: SetupParcelRequest):
         subscriptions=[{"type": "DeviceMeasurement", "throttling": 30}],
         module_name="crop-health",
         context_url=settings.orion_ld_context,
-        notification_headers=(
-            {"X-Internal-Service-Secret": INTERNAL_SECRET}
-            if INTERNAL_SECRET else None
-        ),
+        # The registrar owns the receiver auth header: the master secret (legacy) or,
+        # with NKZ_NOTIFY_DERIVED_TOKENS on, a token bound to the tenant and this
+        # receiver so the broker never stores the master.
+        internal_secret=INTERNAL_SECRET or None,
+        derived_tokens=bool(INTERNAL_SECRET) and derived_tokens_from_env(),
     )
     sub_result = await registrar.ensure_all([body.tenant_id])
     logger.info(

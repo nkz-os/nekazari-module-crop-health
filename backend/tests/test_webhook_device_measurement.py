@@ -158,3 +158,27 @@ def test_flag_gated_secret_check(monkeypatch):
         url, json=empty,
         headers={"Fiware-Service": "acme", "X-Internal-Service-Secret": "test-secret"},
     ).status_code == 204
+
+
+def test_derived_token_is_accepted_once_master_is_refused(monkeypatch):
+    """The token bound to this tenant and host passes after the master is contracted;
+    the master and a token of another tenant do not."""
+    from fastapi.testclient import TestClient
+    from nkz_platform_sdk.notify_auth import TOKEN_HEADER, notification_token
+
+    from app.main import app
+
+    client = TestClient(app)
+    url = "/api/crop-health/webhooks/fiware-sensors"
+    empty = {"data": []}
+    monkeypatch.setenv("NOTIFY_REQUIRE_INTERNAL_SECRET", "true")
+    monkeypatch.setenv("NKZ_NOTIFY_ACCEPT_MASTER", "false")
+    # Starlette's TestClient sends Host: testserver; the token binds to that host.
+    token = notification_token("test-secret", "acme", "testserver")
+
+    assert client.post(url, json=empty, headers={"Fiware-Service": "acme", TOKEN_HEADER: token}).status_code == 204
+    assert client.post(url, json=empty, headers={"Fiware-Service": "other", TOKEN_HEADER: token}).status_code == 401
+    assert client.post(
+        url, json=empty,
+        headers={"Fiware-Service": "acme", "X-Internal-Service-Secret": "test-secret"},
+    ).status_code == 401

@@ -28,4 +28,29 @@ async def test_activate_ensures_subscription_for_tenant():
     sub_defs = SR.call_args.kwargs["subscriptions"]
     assert any(s["type"] == "DeviceMeasurement" for s in sub_defs)
     assert "/webhooks/fiware-sensors" in SR.call_args.kwargs["notification_url"]
-    assert SR.call_args.kwargs["notification_headers"] == {"X-Internal-Service-Secret": "s3cr3t"}
+    # The registrar owns the receiver auth header: master secret by default …
+    assert SR.call_args.kwargs["internal_secret"] == "s3cr3t"
+    assert SR.call_args.kwargs["derived_tokens"] is False
+    assert "notification_headers" not in SR.call_args.kwargs
+
+
+@pytest.mark.asyncio
+async def test_activate_emits_derived_tokens_when_flag_on(monkeypatch):
+    """… and a per-tenant, per-receiver token once NKZ_NOTIFY_DERIVED_TOKENS is on."""
+    from app.api import setup
+
+    monkeypatch.setenv("NKZ_NOTIFY_DERIVED_TOKENS", "true")
+    with patch.object(setup, "INTERNAL_SECRET", "s3cr3t"), \
+         patch("app.api.setup.ModuleActivation") as MA, \
+         patch("app.api.setup.SubscriptionRegistrar") as SR:
+        MA.return_value.ensure_entities = AsyncMock(
+            return_value={"created": 0, "skipped": 2, "errors": [], "entity_ids": []})
+        MA.return_value.close = AsyncMock()
+        SR.return_value.ensure_all = AsyncMock(return_value={"created": 0, "skipped": 1, "errors": []})
+
+        body = setup.SetupParcelRequest(parcel_id="Parcela-4", tenant_id="t-1", action="activate")
+        req = type("R", (), {"headers": {"X-Internal-Service-Secret": "s3cr3t"}, "client": None})()
+        await setup.setup_parcel(req, body)  # type: ignore[arg-type]
+
+    assert SR.call_args.kwargs["internal_secret"] == "s3cr3t"
+    assert SR.call_args.kwargs["derived_tokens"] is True

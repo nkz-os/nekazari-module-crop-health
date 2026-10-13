@@ -47,3 +47,13 @@ def test_no_core_endpoint_left():
 
     src = inspect.getsource(cc)
     assert "/crop-cycles" not in src and "_fetch_platform_crop_cycles" not in src
+
+
+@pytest.mark.asyncio
+async def test_unexpected_error_is_no_season_start(monkeypatch):
+    """The assessment must not fail because the season start could not be resolved."""
+    async def boom(*a, **k):
+        raise RuntimeError("unexpected")
+
+    monkeypatch.setattr(cc, "fetch_crop_timeline", boom)
+    assert await cc.resolve_season_start("p1", "t") is None

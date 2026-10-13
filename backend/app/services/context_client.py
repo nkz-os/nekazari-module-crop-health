@@ -431,9 +431,13 @@ async def resolve_season_start(parcel_id: str, tenant_id: str) -> str | None:
     """
     settings = get_settings()
     urn = parcel_id if parcel_id.startswith("urn:") else f"urn:ngsi-ld:AgriParcel:{parcel_id}"
-    timeline = await fetch_crop_timeline(
-        tenant_id, urn, base_url=settings.orion_ld_url, context_url=settings.orion_ld_context,
-    )
+    try:
+        timeline = await fetch_crop_timeline(
+            tenant_id, urn, base_url=settings.orion_ld_url, context_url=settings.orion_ld_context,
+        )
+    except Exception as e:  # noqa: BLE001 — an assessment never fails on its season start
+        logger.warning("season start unavailable for %s: %s", urn, e)
+        return None
     if not timeline or not timeline.get("current"):
         return None
     return (timeline.get("accumulation") or {}).get("start")

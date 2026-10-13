@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { API_ORIGIN } from '../api/apiOrigin';
 import { useTranslation } from '@nekazari/sdk';
 import { Sparkline } from './shared/Sparkline';
 import { SeverityBadge, SEVERITY_STYLES } from './shared/SeverityBadge';
@@ -474,7 +475,7 @@ const CropHealthDetailTabs: React.FC<CropHealthDetailTabsProps> = ({
       <p className="text-xs text-nkz-text-muted">
         {t('contextPanel.updated')} {assessment.assessedAt ? new Date(assessment.assessedAt).toLocaleString() : '—'}
         {' · '}
-        <a href={`/api/crop-health/assessments/export?parcelId=${parcelId}&days=30`} className="text-nkz-accent-base underline" download>
+        <a href={`${API_ORIGIN}/api/crop-health/assessments/export?parcelId=${parcelId}&days=30`} className="text-nkz-accent-base underline" download>
           📥 {t('contextPanel.exportCsv')}
         </a>
       </p>

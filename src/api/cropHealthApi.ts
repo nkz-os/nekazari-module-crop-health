@@ -1,4 +1,6 @@
-const API_BASE = '/api/crop-health';
+import { API_ORIGIN } from './apiOrigin';
+
+const API_BASE = `${API_ORIGIN}/api/crop-health`;
 
 // Cross-module BioOrchestrator reference data lives under /api/graph, which is
 // only routed on the platform API host (Traefik routes it direct to the

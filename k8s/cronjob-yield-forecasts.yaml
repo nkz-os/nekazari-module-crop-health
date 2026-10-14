@@ -1,0 +1,62 @@
+# =============================================================================
+# Crop Health Engine — In-season Yield Forecasts CronJob
+# =============================================================================
+# Drives POST /internal/run-yield-forecasts in-cluster (NOT via the
+# public gateway), one parcel per page, per tenant until next_cursor is null.
+# Tenant enumeration is env-driven for the cimiento (SCHEDULED_TENANTS);
+# wiring to a tenant registry is a follow-up.
+# =============================================================================
+
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: crop-health-yield-forecasts
+  namespace: nekazari
+  labels:
+    app: crop-health-backend
+    component: cronjob
+    module: crop-health
+spec:
+  schedule: "0 5 * * *"          # daily 05:00 UTC, after the assessments
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 7200
+      template:
+        metadata:
+          labels:
+            app: crop-health-backend
+            component: cronjob
+            module: crop-health
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: yield-forecasts
+              # SHA-pin at deploy time — never :latest (see CLAUDE.md K8s rules).
+              image: ghcr.io/nkz-os/nekazari-module-crop-health@sha256:b6d9205ac47e022c4ffc008fed82b93b49aeefd1d6981c17cee55992179084ee  # main 1b9ac8b
+              command: ["python", "-m", "scripts.cron_yield_forecasts"]
+              # NOTE: the backend Dockerfile sets WORKDIR /app and copies
+              # app/ -> /app/app/ and scripts/ -> /app/scripts/ (no nested
+              # /app/backend in the image), so workingDir is /app.
+              workingDir: /app
+              env:
+                - name: SELF_URL
+                  value: "http://crop-health-api-service:8000"
+                - name: SCHEDULED_TENANTS
+                  value: "YOUR_TENANT_ID"     # comma-separated tenant ids
+                - name: INTERNAL_SERVICE_SECRET
+                  valueFrom:
+                    secretKeyRef:
+                      name: internal-service-secret
+                      key: INTERNAL_SERVICE_SECRET
+              securityContext:
+                runAsNonRoot: true
+                runAsUser: 999
+                readOnlyRootFilesystem: true
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop:
+                    - ALL

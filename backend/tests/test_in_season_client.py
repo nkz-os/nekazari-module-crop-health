@@ -90,3 +90,15 @@ async def test_minor_contract_accepted():
 @pytest.fixture
 def anyio_backend():
     return "asyncio"
+
+
+@pytest.mark.anyio
+async def test_retry_flag_sent_on_first_call_only():
+    with respx.mock as m:
+        route = m.get(URL).mock(side_effect=[
+            httpx.Response(200, json=_ans("running")),
+            httpx.Response(200, json=_ans("done")),
+        ])
+        await fetch_in_season(URN, "tenant-a", poll_interval=0, timeout=5, retry=True)
+    assert "retry=true" in str(route.calls[0].request.url)
+    assert "retry" not in str(route.calls[1].request.url)

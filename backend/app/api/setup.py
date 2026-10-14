@@ -201,8 +201,9 @@ async def _list_all_parcels(tenant_id: str, cursor: str | None, batch_size: int)
     batch_size = min(max(int(batch_size), 1), 20)
     client = OrionClient(tenant_id, base_url=settings.orion_ld_url, context_url=settings.orion_ld_context)
     try:
+        # No attrs: in NGSI-LD it also filters out entities lacking them.
         rows = await client.query_entities(type="AgriParcel", limit=batch_size, offset=offset,
-                                           options="keyValues", attrs="name")
+                                           options="keyValues")
     finally:
         await client.close()
     ids = [r["id"] for r in rows]

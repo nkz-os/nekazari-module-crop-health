@@ -22,6 +22,8 @@ export interface SeasonInfo {
 export interface YieldForecastRecord {
   status: 'not_computed' | 'done' | 'season_ended' | 'unavailable' | 'failed';
   estimates?: C4Estimate[];
+  /** Providers that gave no figure, and why (C4). */
+  unavailable?: { provider_id?: string; reason: string; code?: string | null }[];
   season?: SeasonInfo | null;
   reason?: string;
   code?: string | null;

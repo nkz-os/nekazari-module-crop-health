@@ -51,8 +51,23 @@ async def test_lock_is_exclusive_until_unlocked():
 @pytest.mark.anyio
 async def test_degraded_mode():
     st = RedisState()
+    from app.services.redis_state import StoreError
     assert st.available is False
-    assert await st.get_json("k") is None
+    with pytest.raises(StoreError):
+        await st.get_json("k")
     assert await st.set_json("k", {}, 1) is False
     assert await st.try_lock("l", 1) is None
     assert await st.is_locked("l") is False
+
+
+class BrokenRedis(FakeRedis):
+    async def get(self, k):
+        raise ConnectionError("down")
+
+
+@pytest.mark.anyio
+async def test_get_json_read_error_is_not_absent():
+    from app.services.redis_state import StoreError
+    st = RedisState(client=BrokenRedis())
+    with pytest.raises(StoreError):
+        await st.get_json("k")

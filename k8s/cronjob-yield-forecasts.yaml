@@ -36,7 +36,7 @@ spec:
           containers:
             - name: yield-forecasts
               # SHA-pin at deploy time — never :latest (see CLAUDE.md K8s rules).
-              image: ghcr.io/nkz-os/nekazari-module-crop-health@sha256:b6d9205ac47e022c4ffc008fed82b93b49aeefd1d6981c17cee55992179084ee  # main 1b9ac8b
+              image: ghcr.io/nkz-os/nekazari-module-crop-health@sha256:YOUR_IMAGE_DIGEST
               command: ["python", "-m", "scripts.cron_yield_forecasts"]
               # NOTE: the backend Dockerfile sets WORKDIR /app and copies
               # app/ -> /app/app/ and scripts/ -> /app/scripts/ (no nested

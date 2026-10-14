@@ -46,3 +46,8 @@ export function refreshSettled(before: YieldForecastRecord, after: YieldForecast
   if (!after.refreshing) return true;
   return after.computed_at !== before.computed_at || after.attempted_at !== before.attempted_at;
 }
+
+/** The poll window ran out: show the stored record, no longer as being recomputed. */
+export function stopRefreshing(record: YieldForecastRecord): YieldForecastRecord {
+  return { ...record, refreshing: false };
+}

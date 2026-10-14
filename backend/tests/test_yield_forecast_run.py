@@ -122,3 +122,53 @@ async def test_list_all_parcels_has_no_crop_filter(monkeypatch):
     ids, nxt = await setup._list_all_parcels("tenant-a", None, 1)
     assert ids == ["urn:ngsi-ld:AgriParcel:a"] and nxt == "1"
     assert calls["type"] == "AgriParcel" and calls.get("q") is None
+
+
+@pytest.mark.anyio
+async def test_unreadable_previous_never_overwritten():
+    from app.services.redis_state import StoreError
+
+    class ReadFails(FakeState):
+        async def get_json(self, k):
+            raise StoreError("down")
+
+    st = ReadFails()
+    failed = {"state": "failed", "unavailable": [{"reason": "engine_error", "code": "x"}]}
+    with patch.object(yield_forecast, "fetch_in_season", AsyncMock(return_value=failed)):
+        out = await yield_forecast.compute_and_store(st, "tenant-a", "p1")
+    assert out == "store_error" and st.data == {}
+
+
+@pytest.mark.anyio
+async def test_unknown_parcel_404_writes_nothing():
+    st = FakeState()
+    nf = {"state": "failed", "unavailable": [{"reason": "request_failed", "code": "404"}]}
+    with patch.object(yield_forecast, "fetch_in_season", AsyncMock(return_value=nf)):
+        out = await yield_forecast.compute_and_store(st, "tenant-a", "p1")
+    assert out == "kept" and st.data == {}
+
+
+@pytest.mark.anyio
+async def test_retry_is_passed_through():
+    st = FakeState()
+    fetch = AsyncMock(return_value=DONE)
+    with patch.object(yield_forecast, "fetch_in_season", fetch):
+        await yield_forecast.compute_and_store(st, "tenant-a", "p1", retry=True)
+    assert fetch.await_args.kwargs.get("retry") is True
+
+
+@pytest.mark.anyio
+async def test_list_all_parcels_requests_no_attrs(monkeypatch):
+    from app.api import setup
+    calls = {}
+
+    class FakeOrion:
+        def __init__(self, *a, **k): ...
+        async def query_entities(self, **kw):
+            calls.update(kw)
+            return []
+        async def close(self): ...
+
+    monkeypatch.setattr("nkz_platform_sdk.orion.OrionClient", FakeOrion)
+    await setup._list_all_parcels("tenant-a", None, 1)
+    assert "attrs" not in calls

@@ -28,14 +28,15 @@ def _failed(code: str) -> dict:
 
 
 async def fetch_in_season(parcel_urn: str, tenant_id: str, *, poll_interval: float = 5.0,
-                          timeout: float = 240.0) -> dict:
+                          timeout: float = 240.0, retry: bool = False) -> dict:
+    """retry=True asks bioorch to rerun a job that already failed today (user refresh)."""
     settings = get_settings()
     url = (f"{settings.bioorchestrator_url}/api/graph/planning/parcels/"
            f"{quote(parcel_urn, safe='')}/estimates/in-season")
     headers = {"X-Internal-Service-Secret": settings.internal_service_secret,
                "X-Tenant-ID": tenant_id, "X-User-ID": "crop-health-worker"}
     deadline = time.monotonic() + timeout
-    params: dict[str, str] = {}
+    params: dict[str, str] = {"retry": "true"} if retry else {}
     async with httpx.AsyncClient(timeout=30.0) as client:
         while True:
             try:

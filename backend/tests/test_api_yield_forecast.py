@@ -65,7 +65,7 @@ def test_refresh_runs_and_releases(monkeypatch):
     r = c.post(f"/api/crop-health/parcels/{BARE}/yield-forecast/refresh", headers=H)
     assert r.status_code == 202
     run.assert_awaited_once()
-    assert run.await_args.kwargs == {"hold_lock": False}
+    assert run.await_args.kwargs == {"hold_lock": False, "retry": True}
     assert run.await_args.args[1:] == ("tenant-a", URN)
     assert not st.locks
 
@@ -73,3 +73,34 @@ def test_refresh_runs_and_releases(monkeypatch):
 def test_routes_need_identity(monkeypatch):
     c = _client(monkeypatch, FakeState())
     assert c.get(f"/api/crop-health/parcels/{URN}/yield-forecast").status_code == 401
+
+
+def test_refresh_asks_bioorch_to_retry(monkeypatch):
+    st = FakeState()
+    run = AsyncMock(return_value="written")
+    monkeypatch.setattr("app.api.yield_forecast.compute_and_store", run)
+    c = _client(monkeypatch, st)
+    c.post(f"/api/crop-health/parcels/{URN}/yield-forecast/refresh", headers=H)
+    assert run.await_args.kwargs == {"hold_lock": False, "retry": True}
+
+
+def test_invalid_parcel_id_rejected(monkeypatch):
+    run = AsyncMock(return_value="written")
+    monkeypatch.setattr("app.api.yield_forecast.compute_and_store", run)
+    c = _client(monkeypatch, FakeState())
+    bad = "x" * 300
+    assert c.post(f"/api/crop-health/parcels/{bad}/yield-forecast/refresh", headers=H).status_code == 422
+    assert c.get(f"/api/crop-health/parcels/a%20b/yield-forecast", headers=H).status_code == 422
+    assert run.await_count == 0
+
+
+def test_get_store_error_is_unavailable(monkeypatch):
+    from app.services.redis_state import StoreError
+
+    class ReadFails(FakeState):
+        async def get_json(self, k):
+            raise StoreError("down")
+
+    c = _client(monkeypatch, ReadFails())
+    r = c.get(f"/api/crop-health/parcels/{URN}/yield-forecast", headers=H)
+    assert r.status_code == 200 and r.json()["reason"] == "store_unavailable"

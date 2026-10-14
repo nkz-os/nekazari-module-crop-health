@@ -54,4 +54,8 @@ describe('YieldForecastView', () => {
   it('refreshing keeps content and says so', () => {
     expect(html(r({ refreshing: true, estimates: [] }))).toContain('yieldForecast.refreshing');
   });
+  it('done without a visible figure still says why', () => {
+    const h = html(r({ estimates: [], unavailable: [{ provider_id: 'aquacrop', reason: 'expected_missing' }] }));
+    expect(h).toContain('yieldForecast.reason.expected_missing');
+  });
 });

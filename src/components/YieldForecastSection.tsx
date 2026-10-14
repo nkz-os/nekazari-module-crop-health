@@ -2,12 +2,12 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from '@nekazari/sdk';
 import { MetricSection, Badge } from './detail/MetricPrimitives';
 import { getYieldForecast, navigateTo, refreshYieldForecast, saveParcelRegime } from '../api/cropHealthApi';
-import { detailLink, refreshSettled, rowsFor, toParcelUrn } from './yieldForecastModel';
+import { detailLink, refreshSettled, rowsFor, stopRefreshing, toParcelUrn } from './yieldForecastModel';
 import type { YieldForecastRecord } from '../types/yieldForecast';
 
 const BTN = 'text-xs text-nkz-accent-base underline bg-transparent border-none cursor-pointer';
 const POLL_MS = 5000;
-const POLL_MAX_MS = 240000;
+const POLL_MAX_MS = 300000; // the backend refresh lock lives 300 s
 
 interface ViewProps {
   parcelId: string;
@@ -73,6 +73,11 @@ export function YieldForecastView({ parcelId, record, loading, onRefresh, onRegi
                 </Badge>
               </div>
             ))}
+            {(record.unavailable ?? []).map((u) => (
+              <p key={`${u.provider_id ?? ''}-${u.reason}`} className="text-xs text-nkz-text-muted">
+                {label('reason', u.reason, { reason: u.reason, code: u.code ?? '' })}
+              </p>
+            ))}
             {season && (
               <p className="text-xs text-nkz-text-muted">
                 {t('yieldForecast.season', { crop: season.crop, date: date(season.sowing.date),
@@ -120,9 +125,11 @@ export default function YieldForecastSection({ parcelId }: { parcelId: string })
     if (timer.current) clearInterval(timer.current);
     timer.current = setInterval(async () => {
       const now = await getYieldForecast(parcelId);
-      if ((now && refreshSettled(before, now)) || Date.now() - started > POLL_MAX_MS) {
+      const settled = Boolean(now && refreshSettled(before, now));
+      if (settled || Date.now() - started > POLL_MAX_MS) {
         if (timer.current) clearInterval(timer.current);
-        if (now) setRecord(now);
+        if (now) setRecord(settled ? now : stopRefreshing(now));
+        else setRecord(stopRefreshing(before));
       }
     }, POLL_MS);
   }, [parcelId, record]);

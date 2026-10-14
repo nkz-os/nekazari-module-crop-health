@@ -10,6 +10,7 @@ import logging
 from datetime import datetime, timezone
 
 from app.services.in_season_client import fetch_in_season
+from app.services.redis_state import StoreError
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +66,14 @@ def next_record(previous: dict | None, answer: dict, now: datetime) -> dict | No
     return None
 
 
-async def compute_and_store(state, tenant: str, parcel_id: str, *, hold_lock: bool = True) -> str:
+
+def _is_unknown_parcel(answer: dict) -> bool:
+    return answer.get("state") == "failed" and any(
+        u.get("code") == "404" for u in answer.get("unavailable") or [])
+
+
+async def compute_and_store(state, tenant: str, parcel_id: str, *, hold_lock: bool = True,
+                            retry: bool = False) -> str:
     """Fetch one parcel's forecast and apply the store rules.
 
     hold_lock=True takes the parcel lock (the nightly worker, which skips a
@@ -78,8 +86,16 @@ async def compute_and_store(state, tenant: str, parcel_id: str, *, hold_lock: bo
         if got is False:
             return "skipped_locked"
     try:
-        answer = await fetch_in_season(urn, tenant)
-        previous = await state.get_json(record_key(tenant, urn))
+        answer = await fetch_in_season(urn, tenant, retry=retry)
+        try:
+            previous = await state.get_json(record_key(tenant, urn))
+        except StoreError:
+            logger.error("yield_forecast previous unreadable tenant=%s parcel=%s: not written", tenant, urn)
+            return "store_error"
+        if previous is None and _is_unknown_parcel(answer):
+            # A made-up or deleted parcel: no record, so ids cannot fill the shared store.
+            logger.info("yield_forecast unknown parcel tenant=%s parcel=%s", tenant, urn)
+            return "kept"
         record = next_record(previous, answer, datetime.now(timezone.utc))
         if record is None:
             return "kept"

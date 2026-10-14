@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { detailLink, refreshSettled, rowsFor, toParcelUrn } from './yieldForecastModel';
+import { detailLink, refreshSettled, rowsFor, stopRefreshing, toParcelUrn } from './yieldForecastModel';
 import type { YieldForecastRecord } from '../types/yieldForecast';
 
 const rec = (estimates: any[]): YieldForecastRecord => ({ status: 'done', estimates, refreshing: false });
@@ -43,5 +43,8 @@ describe('toParcelUrn / refreshSettled', () => {
     expect(refreshSettled(a, { ...a })).toBe(false);
     expect(refreshSettled(a, { ...a, attempted_at: '2' })).toBe(true);
     expect(refreshSettled({ status: 'not_computed', refreshing: true }, { status: 'unavailable', reason: 'not_sown', refreshing: false })).toBe(true);
+  });
+  it('a refresh that outlived the poll window stops showing as refreshing', () => {
+    expect(stopRefreshing({ status: 'done', refreshing: true })).toEqual({ status: 'done', refreshing: false });
   });
 });

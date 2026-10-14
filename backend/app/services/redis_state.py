@@ -23,6 +23,10 @@ from app.schemas import TimeseriesPoint
 logger = logging.getLogger(__name__)
 
 
+class StoreError(Exception):
+    """Redis could not be read: never confuse it with an absent key."""
+
+
 class RedisState:
     """Async Redis client for temporal sensor data storage."""
 
@@ -207,15 +211,19 @@ class RedisState:
         return self._client is not None
 
     async def get_json(self, key: str) -> dict | None:
-        """JSON value under the module prefix; None when absent or Redis is down."""
+        """JSON value under the module prefix; None only when the key is absent.
+
+        Raises StoreError when Redis or the stored JSON cannot be read, so a
+        caller never takes a failed read for "nothing stored" and overwrites it.
+        """
         if self._client is None:
-            return None
+            raise StoreError("redis not connected")
         try:
             raw = await self._client.get(f"{self._prefix}{key}")
             return json.loads(raw) if raw else None
         except Exception as exc:
-            logger.warning("redis_state.get_json: failed for %s — returning None: %s", key, exc)
-            return None
+            logger.warning("redis_state.get_json: failed for %s: %s", key, exc)
+            raise StoreError(str(exc)) from exc
 
     async def set_json(self, key: str, value: dict, ttl_s: int) -> bool:
         if self._client is None:

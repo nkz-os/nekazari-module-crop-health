@@ -167,7 +167,7 @@ async def phenology_status(parcel_id: str, request: Request):
     Fail-safe: returns ``{"status": "pending"}`` when there is no assessment
     yet (never 500s).
     """
-    tenant_id = getattr(request.state, "tenant_id", "") or request.headers.get("X-Tenant-ID", "")
+    tenant_id = request.state.tenant_id
     latest = await _read_latest_assessment(parcel_id, tenant_id)
     if latest is None:
         return {"status": "pending", "parcelId": parcel_id}
@@ -185,7 +185,7 @@ async def phenology_status_sync(parcel_id: str, request: Request):
     never calls this. Fail-safe: returns ``{"status": "no_crop"}`` when the
     parcel has no assigned crop (never 500s).
     """
-    tenant_id = getattr(request.state, "tenant_id", "") or request.headers.get("X-Tenant-ID", "")
+    tenant_id = request.state.tenant_id
     assessment = await compute_assessment(parcel_id, tenant_id)
     if assessment is None:
         return {"status": "no_crop", "parcelId": parcel_id}

@@ -11,7 +11,7 @@ def client():
          patch("app.services.redis_state.RedisState.health_check", AsyncMock(return_value={"redis": "connected"})):
         from app.main import app
         c = TestClient(app)
-        # AuthMiddleware trusts gateway-injected identity headers
+        # Gateway identity headers (signature check is off in tests; see test_gateway_auth.py)
         c.headers.update({"X-Tenant-ID": "test-tenant", "X-User-ID": "test-user"})
         return c
 

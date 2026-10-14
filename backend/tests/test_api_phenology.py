@@ -10,7 +10,7 @@ def client():
          patch("app.services.redis_state.RedisState.health_check", AsyncMock(return_value={"redis": "connected"})):
         from app.main import app
         c = TestClient(app)
-        # AuthMiddleware trusts gateway-injected identity headers
+        # Gateway identity headers (signature check is off in tests; see test_gateway_auth.py)
         c.headers.update({"X-Tenant-ID": "test-tenant", "X-User-ID": "test-user"})
         return c
 
@@ -45,7 +45,7 @@ def test_get_is_read_only_no_orion_writes(client, monkeypatch):
 
     r = client.get(
         "/api/crop-health/parcels/urn:ngsi-ld:AgriParcel:t:p1/phenology-status",
-        headers={"X-Tenant-ID": "t", "X-User-ID": "test-user"},
+        headers={"X-Tenant-ID": "tenant-t", "X-User-ID": "test-user"},
     )
     assert r.status_code == 200
     body = r.json()
@@ -63,7 +63,7 @@ def test_get_pending_when_no_assessment(client, monkeypatch):
     monkeypatch.setattr(phenology, "_read_latest_assessment", _none)
     r = client.get(
         "/api/crop-health/parcels/urn:ngsi-ld:AgriParcel:t:p1/phenology-status",
-        headers={"X-Tenant-ID": "t", "X-User-ID": "test-user"},
+        headers={"X-Tenant-ID": "tenant-t", "X-User-ID": "test-user"},
     )
     assert r.status_code == 200
     assert r.json()["status"] == "pending"
@@ -96,12 +96,12 @@ def test_sync_calls_compute_assessment_and_returns_status(client, monkeypatch):
 
     r = client.post(
         "/api/crop-health/parcels/urn:ngsi-ld:AgriParcel:t:p1/phenology-status/sync",
-        headers={"X-Tenant-ID": "t", "X-User-ID": "test-user"},
+        headers={"X-Tenant-ID": "tenant-t", "X-User-ID": "test-user"},
     )
     assert r.status_code == 200
     body = r.json()
     assert body["currentStage"] == "vegetative"
-    assert called["tenant_id"] == "t"
+    assert called["tenant_id"] == "tenant-t"
 
 
 def test_sync_returns_no_crop_when_assessment_is_none(client, monkeypatch):
@@ -114,7 +114,7 @@ def test_sync_returns_no_crop_when_assessment_is_none(client, monkeypatch):
 
     r = client.post(
         "/api/crop-health/parcels/urn:ngsi-ld:AgriParcel:t:p1/phenology-status/sync",
-        headers={"X-Tenant-ID": "t", "X-User-ID": "test-user"},
+        headers={"X-Tenant-ID": "tenant-t", "X-User-ID": "test-user"},
     )
     assert r.status_code == 200
     assert r.json()["status"] == "no_crop"

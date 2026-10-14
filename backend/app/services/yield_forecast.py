@@ -6,7 +6,12 @@ keeps the last one; any other reason is the current truth and replaces it.
 
 from __future__ import annotations
 
-from datetime import datetime
+import logging
+from datetime import datetime, timezone
+
+from app.services.in_season_client import fetch_in_season
+
+logger = logging.getLogger(__name__)
 
 RECORD_TTL_S = 400 * 86400  # covers the 366-day season_ended window
 LOCK_TTL_S = 300
@@ -58,3 +63,31 @@ def next_record(previous: dict | None, answer: dict, now: datetime) -> dict | No
         return {"status": "failed", "reason": reason, "code": code, "estimates": [], "season": None,
                 "attempted_at": at, "last_error": None}
     return None
+
+
+async def compute_and_store(state, tenant: str, parcel_id: str, *, hold_lock: bool = True) -> str:
+    """Fetch one parcel's forecast and apply the store rules.
+
+    hold_lock=True takes the parcel lock (the nightly worker, which skips a
+    parcel someone is refreshing); False when the caller already holds it.
+    """
+    urn = parcel_urn(parcel_id)
+    lk = lock_key(tenant, urn)
+    if hold_lock:
+        got = await state.try_lock(lk, LOCK_TTL_S)
+        if got is False:
+            return "skipped_locked"
+    try:
+        answer = await fetch_in_season(urn, tenant)
+        previous = await state.get_json(record_key(tenant, urn))
+        record = next_record(previous, answer, datetime.now(timezone.utc))
+        if record is None:
+            return "kept"
+        if not await state.set_json(record_key(tenant, urn), record, RECORD_TTL_S):
+            logger.error("yield_forecast store failed tenant=%s parcel=%s", tenant, urn)
+            return "store_error"
+        logger.info("yield_forecast stored tenant=%s parcel=%s status=%s", tenant, urn, record["status"])
+        return "written"
+    finally:
+        if hold_lock:
+            await state.unlock(lk)

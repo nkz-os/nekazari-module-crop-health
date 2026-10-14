@@ -1,164 +1,155 @@
-"""Integration test: pipeline._fetch_gdd → timeseries-reader contract."""
+"""Integration test: pipeline._fetch_gdd → weather-api parcel daily series contract."""
 
+from datetime import date
+
+import httpx
 import pytest
+from nkz_platform_sdk.crypto import verify_hmac_signature
 
 from app.config import get_settings
 from app.services import pipeline
 
-
-@pytest.mark.asyncio
-async def test_fetch_gdd_returns_none_when_no_url(monkeypatch):
-    """weather_api_url not configured → None."""
-    settings = get_settings()
-    monkeypatch.setattr(settings, "weather_api_url", "")
-    result = await pipeline._fetch_gdd("tenant", "2026-03-01", "parcel:123", base_temp=10.0)
-    assert result is None
+SECRET = "test-hmac-secret"
+TODAY = date(2026, 10, 14)
 
 
-@pytest.mark.asyncio
-async def test_fetch_gdd_passes_correct_params(monkeypatch):
-    """Verify _fetch_gdd builds the right URL and params."""
-    captured = {}
+class _Resp:
+    def __init__(self, status_code=200, payload=None):
+        self.status_code = status_code
+        self._payload = payload or {}
 
-    class _Resp:
-        status_code = 200
-        def json(self):
-            return {"gdd_total": 450.0, "mean_daily_gdd": 5.0, "days_count": 90}
+    def json(self):
+        return self._payload
 
+
+def _client(captured, resp=None, exc=None):
     class _MockClient:
         def __init__(self, *a, **k):
-            pass
+            captured["timeout"] = k.get("timeout")
+
         async def __aenter__(self):
             return self
+
         async def __aexit__(self, *a, **k):
             return False
+
         async def get(self, url, *, params, headers):
             captured["url"] = url
             captured["params"] = params
             captured["headers"] = headers
-            return _Resp()
+            if exc is not None:
+                raise exc
+            return resp
 
+    return _MockClient
+
+
+def _daily(gdd, days_counted):
+    return {"totals": {"gdd": gdd, "days_counted": {"gdd": days_counted}}, "missing_days": []}
+
+
+@pytest.fixture
+def env(monkeypatch):
     settings = get_settings()
-    monkeypatch.setattr(settings, "weather_api_url", "http://ts:5000")
-    monkeypatch.setattr("httpx.AsyncClient", lambda *a, **k: _MockClient())
+    monkeypatch.setattr(settings, "weather_daily_url", "http://wx:8000")
+    monkeypatch.setattr(pipeline, "_hmac_secret", lambda: SECRET)
+    monkeypatch.setattr(pipeline, "_utc_today", lambda: TODAY)
+    return settings
+
+
+@pytest.mark.asyncio
+async def test_fetch_gdd_reads_signed_daily_totals(env, monkeypatch):
+    captured = {}
+    # 2026-10-01 .. 2026-10-13 (yesterday) = 13 closed days
+    monkeypatch.setattr(httpx, "AsyncClient", _client(captured, _Resp(200, _daily(450.0, 13))))
 
     result = await pipeline._fetch_gdd(
-        "tenant-x", "2026-03-01", "urn:ngsi-ld:AgriParcel:test:p1",
+        "tenant-x", "2026-10-01", "urn:ngsi-ld:AgriParcel:p1",
         base_temp=8.0, upper_cutoff=28.0,
     )
-    assert result is not None
-    assert result["gdd_total"] == 450.0
-    # Verify all expected params are present
-    assert captured["params"].get("parcel_id") == "urn:ngsi-ld:AgriParcel:test:p1"
-    assert captured["params"].get("base_temp") == "8.0"
-    assert captured["params"].get("upper_cutoff") == "28.0"
-    assert captured["params"].get("season_start") == "2026-03-01"
-    assert captured["headers"].get("X-Tenant-ID") == "tenant-x"
+
+    assert result == {"gdd_total": 450.0, "days_count": 13}
+    assert captured["url"] == "http://wx:8000/api/weather/parcel/p1/daily"
+    assert captured["params"] == {
+        "start": "2026-10-01", "end": "2026-10-13", "fill": "open_meteo",
+        "base_temp": "8.0", "upper_cutoff": "28.0",
+    }
+    headers = captured["headers"]
+    assert headers["X-Tenant-ID"] == "tenant-x"
+    assert verify_hmac_signature(SECRET, headers["X-Auth-Signature"], "", "tenant-x")
 
 
 @pytest.mark.asyncio
-async def test_fetch_gdd_without_upper_cutoff(monkeypatch):
-    """When upper_cutoff is None, it should NOT be sent as a param."""
+async def test_fetch_gdd_default_cutoff_and_base(env, monkeypatch):
+    """No crop cutoff → 30 °C, the default the season GDD has always used."""
     captured = {}
+    monkeypatch.setattr(httpx, "AsyncClient", _client(captured, _Resp(200, _daily(100.0, 13))))
 
-    class _Resp:
-        status_code = 200
-        def json(self):
-            return {"gdd_total": 300.0}
+    await pipeline._fetch_gdd("t", "2026-10-01", "p1")
 
-    class _MockClient:
-        def __init__(self, *a, **k):
-            pass
-        async def __aenter__(self):
-            return self
-        async def __aexit__(self, *a, **k):
-            return False
-        async def get(self, url, *, params, headers):
-            captured["params"] = params
-            return _Resp()
-
-    settings = get_settings()
-    monkeypatch.setattr(settings, "weather_api_url", "http://ts:5000")
-    monkeypatch.setattr("httpx.AsyncClient", lambda *a, **k: _MockClient())
-
-    result = await pipeline._fetch_gdd("t", "2026-03-01", "p1", base_temp=10.0)
-    assert result is not None
-    # upper_cutoff should NOT be in params when None
-    assert "upper_cutoff" not in captured["params"]
     assert captured["params"]["base_temp"] == "10.0"
-    assert captured["params"]["parcel_id"] == "p1"
+    assert captured["params"]["upper_cutoff"] == "30.0"
 
 
 @pytest.mark.asyncio
-async def test_fetch_gdd_returns_none_on_404(monkeypatch):
-    """HTTP 404 → None (graceful degradation)."""
-    class _Resp:
-        status_code = 404
-
-    class _MockClient:
-        def __init__(self, *a, **k):
-            pass
-        async def __aenter__(self):
-            return self
-        async def __aexit__(self, *a, **k):
-            return False
-        async def get(self, *a, **k):
-            return _Resp()
-
-    settings = get_settings()
-    monkeypatch.setattr(settings, "weather_api_url", "http://ts:5000")
-    monkeypatch.setattr("httpx.AsyncClient", lambda *a, **k: _MockClient())
-
-    result = await pipeline._fetch_gdd("t", "2026-03-01", "p1")
-    assert result is None
-
-
-@pytest.mark.asyncio
-async def test_fetch_gdd_returns_none_on_timeout(monkeypatch):
-    """HTTP timeout → None (graceful degradation)."""
-    class _MockClient:
-        def __init__(self, *a, **k):
-            pass
-        async def __aenter__(self):
-            return self
-        async def __aexit__(self, *a, **k):
-            return False
-        async def get(self, *a, **k):
-            raise __import__("httpx").TimeoutException("timeout")
-
-    settings = get_settings()
-    monkeypatch.setattr(settings, "weather_api_url", "http://ts:5000")
-    monkeypatch.setattr("httpx.AsyncClient", lambda *a, **k: _MockClient())
-
-    result = await pipeline._fetch_gdd("t", "2026-03-01", "p1")
-    assert result is None
-
-
-@pytest.mark.asyncio
-async def test_fetch_gdd_with_default_base_temp(monkeypatch):
-    """When base_temp not passed, default is 10.0."""
+async def test_fetch_gdd_none_when_series_does_not_cover_season(env, monkeypatch):
+    """A season total from a partial series would understate it: no total."""
     captured = {}
+    monkeypatch.setattr(httpx, "AsyncClient", _client(captured, _Resp(200, _daily(300.0, 11))))
 
-    class _Resp:
-        status_code = 200
-        def json(self):
-            return {"gdd_total": 100.0}
+    assert await pipeline._fetch_gdd("t", "2026-10-01", "p1") is None
 
-    class _MockClient:
-        def __init__(self, *a, **k):
-            pass
-        async def __aenter__(self):
-            return self
-        async def __aexit__(self, *a, **k):
-            return False
-        async def get(self, url, *, params, headers):
-            captured["params"] = params
-            return _Resp()
 
-    settings = get_settings()
-    monkeypatch.setattr(settings, "weather_api_url", "http://ts:5000")
-    monkeypatch.setattr("httpx.AsyncClient", lambda *a, **k: _MockClient())
+@pytest.mark.asyncio
+async def test_fetch_gdd_zero_before_first_closed_day(env, monkeypatch):
+    """Sown today: nothing accumulated yet, and nothing to ask for."""
+    captured = {}
+    monkeypatch.setattr(httpx, "AsyncClient", _client(captured, _Resp(500)))
 
-    result = await pipeline._fetch_gdd("t", "2026-03-01", "p1")
-    assert result is not None
-    assert captured["params"]["base_temp"] == "10.0"
+    assert await pipeline._fetch_gdd("t", "2026-10-14", "p1") == {"gdd_total": 0.0, "days_count": 0}
+    assert "url" not in captured
+
+
+@pytest.mark.asyncio
+async def test_fetch_gdd_none_when_season_longer_than_daily_range(env, monkeypatch):
+    captured = {}
+    monkeypatch.setattr(httpx, "AsyncClient", _client(captured, _Resp(200, _daily(1.0, 1))))
+
+    assert await pipeline._fetch_gdd("t", "2025-01-01", "p1") is None
+    assert "url" not in captured
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [401, 404, 503])
+async def test_fetch_gdd_none_on_http_error(env, monkeypatch, status):
+    monkeypatch.setattr(httpx, "AsyncClient", _client({}, _Resp(status)))
+
+    assert await pipeline._fetch_gdd("t", "2026-10-01", "p1") is None
+
+
+@pytest.mark.asyncio
+async def test_fetch_gdd_none_on_timeout(env, monkeypatch):
+    monkeypatch.setattr(httpx, "AsyncClient", _client({}, exc=httpx.TimeoutException("timeout")))
+
+    assert await pipeline._fetch_gdd("t", "2026-10-01", "p1") is None
+
+
+@pytest.mark.asyncio
+async def test_fetch_gdd_none_without_url(env, monkeypatch):
+    captured = {}
+    monkeypatch.setattr(env, "weather_daily_url", "")
+    monkeypatch.setattr(httpx, "AsyncClient", _client(captured, _Resp(200, _daily(1.0, 13))))
+
+    assert await pipeline._fetch_gdd("t", "2026-10-01", "p1") is None
+    assert "url" not in captured
+
+
+@pytest.mark.asyncio
+async def test_fetch_gdd_none_without_signing_secret(env, monkeypatch):
+    """weather-api rejects unsigned calls: do not send one."""
+    captured = {}
+    monkeypatch.setattr(pipeline, "_hmac_secret", lambda: "")
+    monkeypatch.setattr(httpx, "AsyncClient", _client(captured, _Resp(200, _daily(1.0, 13))))
+
+    assert await pipeline._fetch_gdd("t", "2026-10-01", "p1") is None
+    assert "url" not in captured

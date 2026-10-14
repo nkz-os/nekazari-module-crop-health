@@ -16,8 +16,13 @@ water_stress_model.py. The risk-worker uses batch meteorological data
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
+import httpx
+from nkz_platform_sdk import auth as sdk_auth
+from nkz_platform_sdk.crypto import generate_hmac_signature
+
+from app.config import get_settings
 from app.engines.mds_model import calculate_mds_from_readings
 from app.engines.phenology_progress import derive_stage_from_gdd
 from app.engines.water_stress import cwsi_with_weather
@@ -30,9 +35,10 @@ from app.schemas import (
     ThermalStressResult,
     VHIClimatologyWindow,
     VigorResult as VigorResultSchema,
+    WeatherSnapshot,
 )
 from app.services import context_client
-from app.services.context_client import get_phenology_params, get_weather_snapshot
+from app.services.context_client import get_phenology_params
 from app.services.fiware_publisher import publish_assessment
 from app.services.meteo_context import resolve_meteo_context
 from app.services.redis_state import RedisState
@@ -258,20 +264,12 @@ async def trigger(
 
 
 
-    from app.services.context_client import _resolve_parcel_coords
-    coords = await _resolve_parcel_coords(effective_parcel, tenant_id)
-    if coords:
-        latitude, longitude = coords
-        logger.info("Resolved parcel %s coordinates: (%.4f, %.4f)", effective_parcel, latitude, longitude)
-    else:
-        latitude, longitude = 0.0, 0.0
-        logger.warning("Cannot resolve coordinates for parcel %s — weather from (0,0)", effective_parcel)
-
-    weather = await get_weather_snapshot(
-        latitude=latitude,
-        longitude=longitude,
-        tenant_id=tenant_id,
+    meteo = await resolve_meteo_context(
+        effective_parcel, tenant_id,
+        weather_map_fn=_weather_map_meteo,
+        regional_fn=_regional_meteo,
     )
+    weather = _snapshot_from_meteo(meteo)
 
     now = datetime.now(timezone.utc)
 
@@ -1155,6 +1153,18 @@ async def _weather_map_meteo(parcel_id: str, tenant_id: str) -> dict:
     return out
 
 
+def _snapshot_from_meteo(meteo) -> WeatherSnapshot | None:
+    """Weather for the engines from the resolved parcel meteo; None without air temperature."""
+    if meteo.air_temp_c is None:
+        return None
+    return WeatherSnapshot(
+        temp_air=meteo.air_temp_c,
+        humidity_pct=meteo.rh_pct if meteo.rh_pct is not None else 50.0,
+        precip_mm=0.0,
+        eto_mm=meteo.et0_mm if meteo.et0_mm is not None else 0.0,
+    )
+
+
 async def _regional_meteo(parcel_id: str, tenant_id: str) -> dict:
     """Regional fallback meteo from Orion WeatherObserved (fail-safe {}).
 
@@ -1316,22 +1326,7 @@ async def _assess_zone(
         regional_fn=_regional_meteo,
     )
 
-    weather = None
-    if meteo.air_temp_c is not None:
-        from app.schemas import WeatherSnapshot
-        weather = WeatherSnapshot(
-            temp_air=meteo.air_temp_c,
-            humidity_pct=meteo.rh_pct if meteo.rh_pct is not None else 50.0,
-            precip_mm=0.0,
-            eto_mm=meteo.et0_mm if meteo.et0_mm is not None else 0.0,
-        )
-    else:
-        coords = await context_client._resolve_parcel_coords(parcel_short, tenant_id)
-        if coords:
-            latitude, longitude = coords
-            weather = await get_weather_snapshot(
-                latitude=latitude, longitude=longitude, tenant_id=tenant_id,
-            )
+    weather = _snapshot_from_meteo(meteo)
 
     assessment = CropHealthAssessment(
         parcel_id=parcel_short,
@@ -1727,6 +1722,25 @@ async def _publish_redis_event(stream: str, event: dict) -> None:
         logger.warning("_publish_redis_event: failed to publish to stream %s — dropped: %s", stream, exc)
 
 
+# weather-api's parcel daily series: one request covers at most this many days.
+_DAILY_MAX_DAYS = 400
+# A season total from a series missing more than this share of days would
+# understate it; same coverage rule as the platform's other season totals.
+_SEASON_MIN_COVERAGE = 0.9
+# Tmax cap when the crop declares none (the season GDD has always used 30 °C).
+_DEFAULT_UPPER_CUTOFF = 30.0
+# weather-api fills missing days from Open-Meteo with a 25 s budget.
+_DAILY_TIMEOUT_S = 40.0
+
+
+def _utc_today() -> date:
+    return datetime.now(timezone.utc).date()
+
+
+def _hmac_secret() -> str:
+    return sdk_auth.HMAC_SECRET
+
+
 async def _fetch_gdd(
     tenant_id: str,
     season_start: str,
@@ -1734,44 +1748,68 @@ async def _fetch_gdd(
     base_temp: float = 10.0,
     upper_cutoff: float | None = None,
 ) -> dict | None:
-    """Fetch accumulated GDD from the weather API (timeseries-reader).
+    """Season GDD from weather-api's parcel daily series, or None.
 
-    Args:
-        tenant_id: Tenant identifier.
-        season_start: ISO date of season start.
-        parcel_id: Parcel URN (resolved to lat/lon by the endpoint).
-        base_temp: Base temperature for GDD computation (per crop).
-        upper_cutoff: Cap Tmax before averaging (per crop; default 30°C on endpoint side).
+    Closed days from ``season_start`` to yesterday; weather-api fills the days
+    the parcel's own series lacks from Open-Meteo and sums the GDD with the
+    crop's base and Tmax cap. The call is signed like the gateway's
+    (weather-api requires it). None when the series does not cover the season.
+
+    Returns ``{"gdd_total": float, "days_count": int}``.
     """
+    settings = get_settings()
+    secret = _hmac_secret()
+    if not settings.weather_daily_url or not secret:
+        logger.warning("_fetch_gdd: weather-api url or signing secret unset — no season GDD")
+        return None
     try:
-        settings = __import__("app.config", fromlist=["get_settings"]).get_settings()
-        if not settings.weather_api_url:
-            return None
-        params: dict[str, str] = {
-            "season_start": season_start,
-            "base_temp": str(base_temp),
-            "parcel_id": parcel_id,
-        }
-        if upper_cutoff is not None:
-            params["upper_cutoff"] = str(upper_cutoff)
-        async with __import__("httpx").AsyncClient(timeout=10.0) as client:
+        start = date.fromisoformat(str(season_start)[:10])
+    except ValueError:
+        logger.warning("_fetch_gdd: bad season_start %r for parcel %s", season_start, parcel_id)
+        return None
+    end = _utc_today() - timedelta(days=1)
+    if start > end:
+        return {"gdd_total": 0.0, "days_count": 0}
+    n_days = (end - start).days + 1
+    if n_days > _DAILY_MAX_DAYS:
+        logger.warning("_fetch_gdd: season of %d days from %s exceeds the daily range — no season GDD",
+                       n_days, start)
+        return None
+
+    params = {
+        "start": start.isoformat(),
+        "end": end.isoformat(),
+        "fill": "open_meteo",
+        "base_temp": str(base_temp),
+        "upper_cutoff": str(upper_cutoff if upper_cutoff is not None else _DEFAULT_UPPER_CUTOFF),
+    }
+    headers = {
+        "X-Tenant-ID": tenant_id,
+        "X-Auth-Signature": generate_hmac_signature(secret, "", tenant_id),
+    }
+    short = parcel_id.split(":")[-1]
+    try:
+        async with httpx.AsyncClient(timeout=_DAILY_TIMEOUT_S) as client:
             resp = await client.get(
-                f"{settings.weather_api_url}/api/weather/gdd",
+                f"{settings.weather_daily_url}/api/weather/parcel/{short}/daily",
                 params=params,
-                headers={"X-Tenant-ID": tenant_id},
+                headers=headers,
             )
-            if resp.status_code == 200:
-                return resp.json()
-            logger.warning(
-                "_fetch_gdd: HTTP %d for tenant %s season_start=%s parcel=%s",
-                resp.status_code, tenant_id, season_start, parcel_id,
-            )
-    except Exception as exc:
-        logger.warning(
-            "_fetch_gdd: failed for tenant %s season_start=%s — returning None: %s",
-            tenant_id, season_start, exc,
-        )
-    return None
+        if resp.status_code != 200:
+            logger.warning("_fetch_gdd: HTTP %d for tenant %s parcel=%s", resp.status_code, tenant_id, parcel_id)
+            return None
+        totals = (resp.json() or {}).get("totals") or {}
+    except Exception as exc:  # noqa: BLE001 — an assessment never fails on its GDD
+        logger.warning("_fetch_gdd: failed for tenant %s parcel=%s — no season GDD: %s", tenant_id, parcel_id, exc)
+        return None
+
+    gdd = totals.get("gdd")
+    counted = (totals.get("days_counted") or {}).get("gdd") or 0
+    if gdd is None or counted < _SEASON_MIN_COVERAGE * n_days:
+        logger.warning("_fetch_gdd: series covers %d of %d season days for parcel=%s — no season GDD",
+                       counted, n_days, parcel_id)
+        return None
+    return {"gdd_total": float(gdd), "days_count": int(counted)}
 
 
 def _extract_eoproduct_scalar(entity: dict, attr: str) -> float | None:

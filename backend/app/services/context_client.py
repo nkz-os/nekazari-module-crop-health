@@ -21,6 +21,7 @@ import httpx
 from cachetools import TTLCache
 
 from app.config import get_settings
+from nkz_platform_sdk.crop_timeline import fetch_crop_timeline
 from nkz_platform_sdk.orion import OrionClient
 from app.schemas import (
     PhenologyAlternative,
@@ -419,86 +420,27 @@ async def get_agri_crop(
 
 
 # ── Season Start Resolution ─────────────────────────────────────────────────
-async def _fetch_platform_crop_cycles(parcel_urn: str, tenant_id: str) -> dict | None:
-    settings = get_settings()
-    url = f"{settings.entity_manager_url.rstrip('/')}/api/internal/parcels/{parcel_urn}/crop-cycles"
-    try:
-        async with httpx.AsyncClient(timeout=8.0) as client:
-            resp = await client.get(url, params={"tenant_id": tenant_id},
-                                    headers={"X-Internal-Service-Secret": settings.internal_service_secret})
-    except httpx.HTTPError as e:
-        logger.warning("crop-cycles unavailable for %s tenant=%s: %s; falling back to local resolution",
-                       parcel_urn, tenant_id, e)
-        return None
-    if resp.status_code != 200:
-        logger.warning("crop-cycles endpoint status=%s for %s tenant=%s; falling back to local resolution",
-                       resp.status_code, parcel_urn, tenant_id)
-        return None
-    try:
-        return resp.json()
-    except ValueError as e:
-        logger.warning("crop-cycles response not JSON for %s tenant=%s: %s; falling back to local resolution",
-                       parcel_urn, tenant_id, e)
-        return None
-
-
-_CYCLE_PAGE = 500
-
-
-async def _query_all(client, entity_type: str, q: str) -> list:
-    out, offset = [], 0
-    while True:
-        page = await client.query_entities(
-            type=entity_type, q=q, limit=_CYCLE_PAGE, offset=offset, options="keyValues",
-        ) or []
-        out.extend(page)
-        if len(page) < _CYCLE_PAGE:
-            return out
-        offset += _CYCLE_PAGE
-
-
-async def _read_crops_and_operations(parcel_urn: str, tenant_id: str) -> tuple[list, list]:
-    settings = get_settings()
-    client = OrionClient(tenant_id, base_url=settings.orion_ld_url, context_url=settings.orion_ld_context)
-    try:
-        q = f'hasAgriParcel=="{parcel_urn}"'
-        crops = await _query_all(client, "AgriCrop", q)
-        # Only operations that can set a cycle boundary, so years of sprays and
-        # irrigations never push the sowings out of the page.
-        ops = await _query_all(
-            client, "AgriParcelOperation", f'{q};operationType=="sowing","harvesting","tillage"',
-        )
-        return crops, ops
-    finally:
-        await client.close()
-
-
 async def resolve_season_start(parcel_id: str, tenant_id: str) -> str | None:
     """Degree-day accumulation start of the parcel's crop cycle in progress.
 
-    entity-manager owns the rule; if it is unreachable the same SDK resolver runs
-    here over the broker. None when no crop is growing (not sown yet, nothing
-    assigned, or the broker unreachable): a crop that is not in the ground has
-    accumulated nothing, and a calendar default would model it from January.
+    The platform rule (SDK ``crop_cycles``) resolved over the broker by the SDK
+    (``fetch_crop_timeline``) — no core service in between. None when no crop
+    is growing (not sown yet, nothing assigned, or the broker unreachable): a
+    crop that is not in the ground has accumulated nothing, and a calendar
+    default would model it from January.
     """
-    from datetime import datetime, timezone
-
-    from nkz_platform_sdk.crop_cycles import resolve_crop_cycles
-
-    today = datetime.now(timezone.utc).date()
+    settings = get_settings()
     urn = parcel_id if parcel_id.startswith("urn:") else f"urn:ngsi-ld:AgriParcel:{parcel_id}"
-    cycles = await _fetch_platform_crop_cycles(urn, tenant_id)
-    if cycles is not None:
-        if not cycles.get("current"):
-            return None
-        return (cycles.get("accumulation") or {}).get("start")
     try:
-        crops, ops = await _read_crops_and_operations(urn, tenant_id)
-        timeline = resolve_crop_cycles(urn, crops, ops, today)
-        return timeline.accumulation_start.isoformat() if timeline.current else None
-    except Exception as e:  # noqa: BLE001
-        logger.warning("season start: broker unavailable for %s (%s) — none", urn, e)
+        timeline = await fetch_crop_timeline(
+            tenant_id, urn, base_url=settings.orion_ld_url, context_url=settings.orion_ld_context,
+        )
+    except Exception as e:  # noqa: BLE001 — an assessment never fails on its season start
+        logger.warning("season start unavailable for %s: %s", urn, e)
         return None
+    if not timeline or not timeline.get("current"):
+        return None
+    return (timeline.get("accumulation") or {}).get("start")
 
 
 def clear_phenology_cache() -> None:

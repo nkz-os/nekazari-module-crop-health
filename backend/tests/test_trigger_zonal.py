@@ -45,8 +45,11 @@ def _patch_trigger(monkeypatch, *, zones, device_coords):
     async def _coords(*a, **k):
         return (43.0, -2.0)
 
-    async def _weather(*a, **k):
-        return types.SimpleNamespace(temp_air=25.0)
+    async def _wm_meteo(*a, **k):
+        return {"air_temp_c": 21.0, "et0_mm": 4.0}
+
+    async def _regional_meteo(*a, **k):
+        return {"rh_pct": 55.0}
 
     async def _soil(*a, **k):
         return types.SimpleNamespace(has_data=False)
@@ -68,7 +71,8 @@ def _patch_trigger(monkeypatch, *, zones, device_coords):
     monkeypatch.setattr(pipeline.context_client, "_resolve_parcel_geometry", _geom, raising=False)
     monkeypatch.setattr(pipeline, "_fetch_gdd", _gdd, raising=False)
     monkeypatch.setattr(pipeline, "get_phenology_params", _params, raising=False)
-    monkeypatch.setattr(pipeline, "get_weather_snapshot", _weather, raising=False)
+    monkeypatch.setattr(pipeline, "_weather_map_meteo", _wm_meteo)
+    monkeypatch.setattr(pipeline, "_regional_meteo", _regional_meteo)
     monkeypatch.setattr(pipeline, "resolve_zones", _zones, raising=False)
     monkeypatch.setattr(pipeline, "_resolve_device_coords", _devcoords, raising=False)
 
@@ -81,6 +85,7 @@ def _patch_trigger(monkeypatch, *, zones, device_coords):
             "metric_type": kw.get("metric_type"),
             "sensor": sensor,
             "publish": kw.get("publish"),
+            "weather": kw.get("weather"),
         })
         assessment.overall_severity = Severity.HIGH if sensor else Severity.LOW
         return assessment
@@ -139,3 +144,22 @@ async def test_zonal_attributes_sensor_to_device_zone(monkeypatch):
     # rollup = worst zone (z0 sensor → HIGH)
     assert out.overall_severity == Severity.HIGH
     assert out.zone_id is None
+
+
+@pytest.mark.asyncio
+async def test_weather_comes_from_the_parcel_meteo_context(monkeypatch):
+    """Air temperature and humidity for the CWSI: weather-map, then the parcel's
+    latest observation (the platform's meteo precedence), as in the scheduled path."""
+    calls, _ = _patch_trigger(monkeypatch, zones=[Zone("parcel", _Z0)], device_coords=(5, 5))
+    await pipeline.trigger(
+        entity_id="urn:ngsi-ld:DeviceMeasurement:d1",
+        metric_type=MetricType.LEAF_TEMPERATURE.value,
+        redis_state=_Redis(),
+        parcel_id="p1",
+        tenant_id="t",
+    )
+    weather = calls[0]["weather"]
+    assert weather is not None
+    assert weather.temp_air == 21.0
+    assert weather.humidity_pct == 55.0
+    assert weather.eto_mm == 4.0

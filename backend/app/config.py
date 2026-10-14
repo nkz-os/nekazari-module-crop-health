@@ -40,6 +40,7 @@ class Settings(BaseSettings):
     orion_ld_context: str = "http://api-gateway-service:5000/ngsi-ld-context.json"
     bioorchestrator_url: str = "http://bioorchestrator-api-service:8420"
     weather_api_url: str = "http://timeseries-reader-service:5000"
+    weather_daily_url: str = "http://weather-api-service:8000"  # weather-api: parcel daily series (closed days, Open-Meteo gap fill) for the season GDD
     weather_map_url: str = "http://weather-map-backend:8080"  # parcel-level weather stats (sensorless meteo); metrics under data["metrics"][name]["mean"]
     weather_db_url: str = ""  # deprecated — use weather_api_url instead
     soil_module_url: str = "http://soil-module-service:8000"

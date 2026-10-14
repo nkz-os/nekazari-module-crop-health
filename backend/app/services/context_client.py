@@ -28,7 +28,6 @@ from app.schemas import (
     PhenologyParams,
     PhenologyProvenance,
     StageTable,
-    WeatherSnapshot,
 )
 
 logger = logging.getLogger(__name__)
@@ -274,53 +273,6 @@ async def get_nutrient_recommendation(
                 return resp.json()
     except Exception as exc:
         logger.warning("get_nutrient_recommendation failed for %s/%s: %s", species, stage, exc)
-    return None
-
-
-async def get_weather_snapshot(
-    latitude: float,
-    longitude: float,
-    tenant_id: str,
-) -> WeatherSnapshot | None:
-    """Get current weather data from the platform Weather API.
-
-    Queries the timeseries-reader /api/weather/current endpoint.
-    Returns None if the Weather API is unconfigured/unreachable (no direct-DB
-    fallback — that violated the zero-direct-timeseries-read policy).
-    """
-    settings = get_settings()
-
-    # Priority 1: Platform Weather API
-    if settings.weather_api_url:
-        try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                resp = await client.get(
-                    f"{settings.weather_api_url}/api/weather/current",
-                    params={"lat": latitude, "lon": longitude},
-                    headers={"X-Tenant-ID": tenant_id},
-                )
-                if resp.status_code == 200:
-                    data = resp.json()
-                    return WeatherSnapshot(
-                        temp_air=float(data.get("temp_avg", 0)),
-                        humidity_pct=float(data.get("humidity_avg", 0)),
-                        precip_mm=float(data.get("precip_mm", 0)),
-                        eto_mm=float(data.get("eto_mm", 0)),
-                        radiation_wm2=float(data["solar_rad_w_m2"]) if data.get("solar_rad_w_m2") else None,
-                    )
-                elif resp.status_code == 404:
-                    logger.info("No weather data for tenant %s at (%.2f, %.2f)", tenant_id, latitude, longitude)
-                    return None
-                else:
-                    logger.warning("Weather API returned %d — falling back", resp.status_code)
-        except (httpx.ConnectError, httpx.TimeoutException) as e:
-            logger.warning("Weather API unreachable: %s — falling back", e)
-        except Exception as e:
-            logger.error("Weather API error: %s", e)
-
-    # No direct-DB fallback: timeseries reads MUST go through the platform
-    # Weather API (timeseries-reader). Direct asyncpg to weather_observations
-    # violated the platform's zero-direct-timeseries-read policy and is removed.
     return None
 
 

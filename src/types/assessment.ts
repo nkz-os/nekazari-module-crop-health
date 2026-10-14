@@ -68,8 +68,6 @@ export interface AssessmentData {
   };
   yieldUtilizationPct?: number;
   yieldGapConfidence?: string;
-  predictedYieldKgHa?: number;
-  baselineYieldKgHa?: number;
   thermalCondition?: string;
   thermalSeverity?: string;
   heatStressHours?: number;

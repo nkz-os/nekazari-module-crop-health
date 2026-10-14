@@ -11,7 +11,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "build:module": "vite build"
+    "build:module": "vite build",
+    "test": "vitest run"
   },
   "dependencies": {
     "@nekazari/design-tokens": "^0.1.0-alpha.0",
@@ -29,6 +30,7 @@
     "i18next": "^23.11.0",
     "react-i18next": "^14.1.0",
     "typescript": "^5.4.0",
-    "vite": "^5.4.0"
+    "vite": "^5.4.0",
+    "vitest": "^2.1.9"
   }
 }

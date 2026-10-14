@@ -17,6 +17,7 @@ from nkz_platform_sdk.subscriptions import SubscriptionRegistrar
 
 from app.config import get_settings
 from app.services.pipeline import compute_assessment
+from app.services.yield_forecast import compute_and_store
 
 logger = logging.getLogger(__name__)
 
@@ -174,3 +175,61 @@ async def run_scheduled_assessments(request: Request, body: ScheduledRunRequest)
         "errors": errors,
         "next_cursor": next_cursor,
     }
+
+
+
+
+class YieldForecastRunRequest(BaseModel):
+    tenant_id: str
+    cursor: str | None = None
+    batch_size: int = 1
+
+
+async def _list_all_parcels(tenant_id: str, cursor: str | None, batch_size: int):
+    """One page of every AgriParcel (cadastral and hand-drawn alike).
+
+    No crop filter: bioorch resolves the crop from the crop cycle and answers
+    unavailable at once for an unsown parcel (spec §4.3).
+    """
+    from nkz_platform_sdk.orion import OrionClient
+
+    settings = get_settings()
+    try:
+        offset = max(int(cursor), 0) if cursor else 0
+    except (TypeError, ValueError):
+        offset = 0
+    batch_size = min(max(int(batch_size), 1), 20)
+    client = OrionClient(tenant_id, base_url=settings.orion_ld_url, context_url=settings.orion_ld_context)
+    try:
+        # No attrs: in NGSI-LD it also filters out entities lacking them.
+        rows = await client.query_entities(type="AgriParcel", limit=batch_size, offset=offset,
+                                           options="keyValues")
+    finally:
+        await client.close()
+    ids = [r["id"] for r in rows]
+    return ids, (str(offset + batch_size) if len(ids) == batch_size else None)
+
+
+@router.post("/run-yield-forecasts")
+async def run_yield_forecasts(request: Request, body: YieldForecastRunRequest):
+    secret = request.headers.get("X-Internal-Service-Secret", "")
+    if not INTERNAL_SECRET or not hmac.compare_digest(secret.encode(), INTERNAL_SECRET.encode()):
+        logger.warning("Unauthorized internal run-yield-forecasts call from %s", request.client)
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    from app.main import get_redis_state
+
+    state = get_redis_state()
+    ids, next_cursor = await _list_all_parcels(body.tenant_id, body.cursor, body.batch_size)
+    written, errors = 0, []
+    for parcel_id in ids:
+        try:
+            outcome = await compute_and_store(state, body.tenant_id, parcel_id)
+        except Exception as exc:
+            logger.exception("run-yield-forecasts tenant=%s parcel=%s failed", body.tenant_id, parcel_id)
+            errors.append({"parcel_id": parcel_id, "error": type(exc).__name__})
+            continue
+        if outcome == "written":
+            written += 1
+        elif outcome == "store_error":
+            errors.append({"parcel_id": parcel_id, "error": "store_error"})
+    return {"processed": len(ids), "written": written, "errors": errors, "next_cursor": next_cursor}

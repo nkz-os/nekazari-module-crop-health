@@ -4,6 +4,7 @@ import { useTranslation } from '@nekazari/sdk';
 import { Sparkline } from './shared/Sparkline';
 import { SeverityBadge, SEVERITY_STYLES } from './shared/SeverityBadge';
 import { Badge, MetricSection, ProgressBar } from './detail/MetricPrimitives';
+import YieldForecastSection from './YieldForecastSection';
 import type {
   AssessmentData,
   CorrelationPoint,
@@ -44,12 +45,17 @@ const CropHealthDetailTabs: React.FC<CropHealthDetailTabsProps> = ({
   const [activeTab, setActiveTab] = useState<DetailTab>('water');
 
   if (!assessment) {
+    // A parcel without an assessment (e.g. just drawn or imported from the cadastre)
+    // can still have an in-season forecast, or a reason why not.
     return (
-      <div className="bg-nkz-surface-raised border border-nkz-border rounded-lg p-4 text-center">
-        <span className="text-2xl">🌱</span>
-        <p className="text-sm text-nkz-text-muted mt-1">{t('contextPanel.noData')}</p>
-        <p className="text-xs text-nkz-text-muted mt-1">{t('contextPanel.noDataHint')}</p>
-      </div>
+      <>
+        <div className="bg-nkz-surface-raised border border-nkz-border rounded-lg p-4 text-center">
+          <span className="text-2xl">🌱</span>
+          <p className="text-sm text-nkz-text-muted mt-1">{t('contextPanel.noData')}</p>
+          <p className="text-xs text-nkz-text-muted mt-1">{t('contextPanel.noDataHint')}</p>
+        </div>
+        <YieldForecastSection parcelId={parcelId} />
+      </>
     );
   }
 
@@ -338,6 +344,7 @@ const CropHealthDetailTabs: React.FC<CropHealthDetailTabsProps> = ({
 
       {activeTab === 'yield' && (
         <>
+      <YieldForecastSection parcelId={parcelId} />
       {/* Composite Stress */}
       {assessment.compositeStressIndex != null && (
         <MetricSection>
@@ -406,10 +413,9 @@ const CropHealthDetailTabs: React.FC<CropHealthDetailTabsProps> = ({
           {assessment.yieldGapConfidence && (
             <p className="text-xs text-nkz-text-muted mt-1">
               {t('contextPanel.yieldGapConfidence', { confidence: assessment.yieldGapConfidence })}
-              {assessment.baselineYieldKgHa != null && ` · ${t('detail.baselineYield', { value: assessment.baselineYieldKgHa.toFixed(0) })}`}
-              {assessment.predictedYieldKgHa != null && ` · ${t('detail.predictedYield', { value: assessment.predictedYieldKgHa.toFixed(0) })}`}
             </p>
           )}
+          <p className="text-xs text-nkz-text-muted mt-1">{t('contextPanel.yieldGapInstantNote')}</p>
         </MetricSection>
       )}
 

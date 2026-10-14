@@ -1,4 +1,5 @@
 import { API_ORIGIN } from './apiOrigin';
+import type { YieldForecastRecord } from '../types/yieldForecast';
 
 const API_BASE = `${API_ORIGIN}/api/crop-health`;
 
@@ -70,3 +71,33 @@ export function readParcelIdFromLocation(): string | null {
 
 export const CROP_CONTEXT_URL = `${PLATFORM_API_BASE}/api/graph/agriculture/crop-context`;
 export const PHENOLOGY_PARAMS_URL = `${PLATFORM_API_BASE}/api/graph/phenology-params`;
+
+
+export function getYieldForecast(parcelId: string): Promise<YieldForecastRecord | null> {
+  return cropHealthFetch<YieldForecastRecord>(`/parcels/${encodeURIComponent(parcelId)}/yield-forecast`);
+}
+
+export async function refreshYieldForecast(parcelId: string): Promise<boolean> {
+  try {
+    const resp = await fetch(`${API_BASE}/parcels/${encodeURIComponent(parcelId)}/yield-forecast/refresh`,
+      { method: 'POST', credentials: 'include' });
+    return resp.status === 202;
+  } catch (err) {
+    console.warn('[crop-health] refresh network error', err);
+    return false;
+  }
+}
+
+/** The regime the farmer chose, saved on the parcel (entity-manager), as bioorch's planning does. */
+export async function saveParcelRegime(parcelUrn: string, regime: 'rainfed' | 'irrigated'): Promise<boolean> {
+  try {
+    const resp = await fetch(`${API_ORIGIN}/api/entities/parcels/${encodeURIComponent(parcelUrn)}`, {
+      method: 'PATCH', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ attributes: { irrigationRegime: { type: 'Property', value: regime } } }),
+    });
+    return resp.ok;
+  } catch (err) {
+    console.warn('[crop-health] save regime network error', err);
+    return false;
+  }
+}

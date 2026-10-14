@@ -216,8 +216,6 @@ def map_entity_to_assessment(entity: dict[str, Any]) -> dict[str, Any]:
         "compositeStress": composite_stress,
         "yieldUtilizationPct": prop_value(entity, "yieldUtilizationPct"),
         "yieldGapConfidence": prop_value(entity, "yieldGapConfidence"),
-        "predictedYieldKgHa": prop_value(entity, "predictedYieldKgHa"),
-        "baselineYieldKgHa": prop_value(entity, "baselineYieldKgHa"),
         "wueStatus": prop_value(entity, "wueStatus"),
         "wueKgM3": prop_value(entity, "wueKgM3"),
         "wueBiomassKg": prop_value(entity, "wueBiomassKg"),

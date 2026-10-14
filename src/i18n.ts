@@ -1365,6 +1365,8 @@ const pt = {
 
 import { i18n } from '@nekazari/sdk';
 
+export const resources = { en, es, ca, eu, fr, pt };
+
 const NAMESPACE = 'crop-health';
 
 export function registerCropHealthTranslations(): void {

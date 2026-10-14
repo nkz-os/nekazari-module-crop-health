@@ -5,6 +5,7 @@ crop-health for a parcel. Frozen contract:
 POST /api/crop-health/internal/setup-parcel
 """
 
+import hmac
 import logging
 
 from fastapi import APIRouter, HTTPException, Request
@@ -40,7 +41,7 @@ class SetupParcelRequest(BaseModel):
 @router.post("/setup-parcel", status_code=201)
 async def setup_parcel(request: Request, body: SetupParcelRequest):
     secret = request.headers.get("X-Internal-Service-Secret", "")
-    if not INTERNAL_SECRET or secret != INTERNAL_SECRET:
+    if not INTERNAL_SECRET or not hmac.compare_digest(secret.encode(), INTERNAL_SECRET.encode()):
         logger.warning("Unauthorized internal setup-parcel call from %s", request.client)
         raise HTTPException(status_code=401, detail="Unauthorized")
     if body.action not in ("activate", "deactivate"):
@@ -145,7 +146,7 @@ async def _list_active_crop_parcels(tenant_id: str, cursor: str | None, batch_si
 @router.post("/run-scheduled-assessments")
 async def run_scheduled_assessments(request: Request, body: ScheduledRunRequest):
     secret = request.headers.get("X-Internal-Service-Secret", "")
-    if not INTERNAL_SECRET or secret != INTERNAL_SECRET:
+    if not INTERNAL_SECRET or not hmac.compare_digest(secret.encode(), INTERNAL_SECRET.encode()):
         logger.warning(
             "Unauthorized internal run-scheduled-assessments call from %s", request.client
         )

@@ -5,7 +5,7 @@ import respx
 
 from app.main import app
 
-# AuthMiddleware trusts gateway-injected identity headers
+# Gateway identity headers (signature check is off in tests; see test_gateway_auth.py)
 GATEWAY_HEADERS = {"X-Tenant-ID": "test-tenant", "X-User-ID": "test-user"}
 
 

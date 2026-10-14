@@ -10,6 +10,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.auth import ensure_signature_enforced
 from app.config import get_settings
 from app.api import router as api_router
 from app.services.redis_state import RedisState
@@ -46,6 +47,7 @@ async def lifespan(app: FastAPI):
         settings.api_prefix,
         settings.debug,
     )
+    ensure_signature_enforced()
 
     # Connect Redis
     try:
@@ -76,10 +78,6 @@ def create_app() -> FastAPI:
         openapi_url=f"{settings.api_prefix}/openapi.json",
         lifespan=lifespan,
     )
-
-    # Auth — JWT validation + gateway header trust
-    from app.middleware.auth import AuthMiddleware
-    app.add_middleware(AuthMiddleware)
 
     # CORS
     app.add_middleware(

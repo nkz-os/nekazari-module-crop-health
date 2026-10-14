@@ -792,26 +792,14 @@ async def _run_engines(
 
     try:
         from app.engines.yield_gap import evaluate_yield_gap
-        from app.services.context_client import get_variety_yield_baseline
 
         _cwsi = assessment.cwsi.cwsi if assessment.cwsi else None
         if _cwsi is not None:
             stage_name = phenology.stage if phenology else "vegetative"
-            
-            # Fetch baseline yield
-            baseline_yield = None
-            if variety_name:
-                regime = "rainfed"
-                if crop_context and crop_context.management:
-                    mgt = crop_context.management.lower()
-                    if "irrigated" in mgt or "regadío" in mgt or "regadio" in mgt or "riego" in mgt:
-                        regime = "irrigated"
-                baseline_yield = await get_variety_yield_baseline(variety=variety_name, irrigation_regime=regime)
-
+            # Utilization % only: kg/ha come from bioorch's in-season forecast.
             assessment.yield_gap = evaluate_yield_gap(
                 cwsi_by_stage={stage_name: _cwsi},
                 ky_by_stage={stage_name: phenology.ky if phenology and hasattr(phenology, 'ky') else 0.45},
-                baseline_yield_kg_ha=baseline_yield,
             )
     except Exception as e:
         logger.error("Yield gap evaluation failed: %s", e)

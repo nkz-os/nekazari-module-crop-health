@@ -202,6 +202,58 @@ class RedisState:
         except Exception as exc:
             logger.warning("redis_state.set_soil_water: failed for parcel %s — state not persisted: %s", parcel_id, exc)
 
+    @property
+    def available(self) -> bool:
+        return self._client is not None
+
+    async def get_json(self, key: str) -> dict | None:
+        """JSON value under the module prefix; None when absent or Redis is down."""
+        if self._client is None:
+            return None
+        try:
+            raw = await self._client.get(f"{self._prefix}{key}")
+            return json.loads(raw) if raw else None
+        except Exception as exc:
+            logger.warning("redis_state.get_json: failed for %s — returning None: %s", key, exc)
+            return None
+
+    async def set_json(self, key: str, value: dict, ttl_s: int) -> bool:
+        if self._client is None:
+            return False
+        try:
+            await self._client.set(f"{self._prefix}{key}", json.dumps(value), ex=ttl_s)
+            return True
+        except Exception as exc:
+            logger.warning("redis_state.set_json: failed for %s — not stored: %s", key, exc)
+            return False
+
+    async def try_lock(self, key: str, ttl_s: int) -> bool | None:
+        """True if acquired, False if held by someone else, None if Redis is down."""
+        if self._client is None:
+            return None
+        try:
+            return bool(await self._client.set(f"{self._prefix}{key}", "1", ex=ttl_s, nx=True))
+        except Exception as exc:
+            logger.warning("redis_state.try_lock: failed for %s: %s", key, exc)
+            return None
+
+    async def unlock(self, key: str) -> None:
+        if self._client is None:
+            return
+        try:
+            await self._client.delete(f"{self._prefix}{key}")
+        except Exception as exc:
+            logger.warning("redis_state.unlock: failed for %s: %s", key, exc)
+
+    async def is_locked(self, key: str) -> bool:
+        if self._client is None:
+            return False
+        try:
+            return bool(await self._client.exists(f"{self._prefix}{key}"))
+        except Exception as exc:
+            logger.warning("redis_state.is_locked: failed for %s: %s", key, exc)
+            return False
+
     async def get_irrigation_24h(self, entity_id: str) -> float:
         """Total irrigation volume in last 24h from Redis sliding window."""
         if self._client is None:

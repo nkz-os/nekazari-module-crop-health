@@ -50,6 +50,9 @@ Sensores IoT → MQTT (Mosquitto) → IoT Agent → Orion-LD
 ```bash
 # Requeridas
 REDIS_URL=redis://:password@redis-service:6379/0
+HMAC_SECRET=<secreto compartido con el api-gateway>
+REQUIRE_HMAC_SIGNATURE=true      # sin estas dos, el servicio no arranca
+INTERNAL_SERVICE_SECRET=<secreto interno de la plataforma>
 
 # Recomendadas
 WEATHER_DB_URL=postgresql://nekazari:password@postgresql-service:5432/nekazari
@@ -57,8 +60,20 @@ BIOORCHESTRATOR_URL=http://bioorchestrator-api-service:8420
 
 # Opcionales
 ORION_LD_URL=http://orion-ld-service:1026
-KEYCLOAK_URL=https://auth.robotika.cloud/auth
 ```
+
+### Tareas nocturnas (CronJobs)
+
+| Tarea | Horario | Qué hace |
+|-------|---------|----------|
+| `crop-health-scheduled-assessments` | 04:00 UTC | Evalúa cada parcela con un cultivo sembrado |
+| `crop-health-yield-forecasts` | 05:00 UTC | Calcula la cosecha prevista de cada parcela, de una en una; un fallo o un motor ocupado nunca sobrescribe la última previsión guardada |
+
+Las dos leen los tenants de `SCHEDULED_TENANTS` (separados por comas) y llaman al propio backend con `INTERNAL_SERVICE_SECRET`. Las plantillas están en `k8s/`.
+
+### Autenticación
+
+Las rutas de usuario solo aceptan una identidad firmada por el api-gateway (`X-Auth-Signature`). Una llamada interna a esas rutas debe firmarse igual; las rutas `/internal/` usan `X-Internal-Service-Secret`.
 
 ## Configuración de sensores
 

@@ -17,3 +17,11 @@ describe('i18n parity', () => {
     });
   }
 });
+
+describe('zone strings', () => {
+  for (const [lang, res] of Object.entries(resources)) {
+    it(`${lang} has the zone selection hint`, () => {
+      expect(typeof (res as any)['crop-health'].zones.selectHint).toBe('string');
+    });
+  }
+});

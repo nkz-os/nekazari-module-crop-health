@@ -5,6 +5,9 @@ import { cropHealthFetch } from '../api/cropHealthApi';
 import { MAP_LAYER_MODE_KEY, readMapLayerMode, type MapLayerMode } from '../constants';
 import type { AssessmentData, ZoneAssessmentData } from '../types/assessment';
 import {
+  emphasisStyle, polygonRings, zoneCentroid, zoneEmphasis, zoneKey, zoneMapLabel, zoneNumbers, zoneSelection,
+} from '../utils/zones';
+import {
   fetchAssessmentHistory,
   parcelIdFromEntityId,
   toDailyPoints,
@@ -98,30 +101,6 @@ function ringToDegreesArray(ring: number[][]): number[] {
     flat.push(lon, lat);
   }
   return flat;
-}
-
-function polygonRings(geometry: ZoneAssessmentData['geometry']): number[][][] {
-  if (!geometry) return [];
-  if (geometry.type === 'Polygon') {
-    return geometry.coordinates as number[][][];
-  }
-  if (geometry.type === 'MultiPolygon') {
-    return (geometry.coordinates as number[][][][]).map((poly) => poly[0]);
-  }
-  return [];
-}
-
-function zoneCentroid(geometry: ZoneAssessmentData['geometry']): [number, number] | null {
-  const rings = polygonRings(geometry);
-  const ring = rings[0];
-  if (!ring?.length) return null;
-  let lon = 0;
-  let lat = 0;
-  for (const [x, y] of ring) {
-    lon += x;
-    lat += y;
-  }
-  return [lon / ring.length, lat / ring.length];
 }
 
 interface ViewerPolygon {
@@ -258,14 +237,20 @@ const CropHealthLayer: React.FC = () => {
       // Zones have no history: while the cursor is in the past the selected parcel is painted whole instead.
       const historicalParcelId = historicalRef.current?.parcelId;
 
+      // Numbered over every zone of a parcel, as the side panel does, so both show the same numbers.
+      const numbers = zoneNumbers(zones);
+      const selection = zoneSelection.get();
+
       for (const zone of zones) {
         if (!zone.geometry || !zone.parcelId || !zone.zoneId) continue;
         if (zone.parcelId === historicalParcelId) continue;
         if (currentMode !== 'severity' && layerValue(zone, currentMode) == null) continue;
 
         const colors = layerColor(zone, currentMode);
-        const material = Cesium.Color.fromCssColorString(colors.fill)?.withAlpha(colors.alpha);
-        const outline = Cesium.Color.fromCssColorString(colors.fill);
+        const style = emphasisStyle(zoneEmphasis(selection, zone.parcelId, zone.zoneId), colors.alpha);
+        const material = Cesium.Color.fromCssColorString(colors.fill)?.withAlpha(style.fillAlpha);
+        const outline = (style.outlineWhite ? Cesium.Color.WHITE : Cesium.Color.fromCssColorString(colors.fill))
+          ?.withAlpha(style.outlineAlpha);
         const rings = polygonRings(zone.geometry);
 
         for (let i = 0; i < rings.length; i += 1) {
@@ -290,10 +275,10 @@ const CropHealthLayer: React.FC = () => {
             id: `crop-health-zone-label-${zone.parcelId}-${zone.zoneId}`,
             position: Cesium.Cartesian3.fromDegrees(centroid[0], centroid[1]),
             label: {
-              text: layerLabel(zone, currentMode),
-              font: '11px sans-serif',
-              fillColor: Cesium.Color.WHITE,
-              outlineColor: Cesium.Color.BLACK,
+              text: zoneMapLabel(numbers.get(zoneKey(zone.parcelId, zone.zoneId)), layerLabel(zone, currentMode)),
+              font: style.bold ? 'bold 13px sans-serif' : '11px sans-serif',
+              fillColor: Cesium.Color.WHITE.withAlpha(style.labelAlpha),
+              outlineColor: Cesium.Color.BLACK.withAlpha(style.labelAlpha),
               outlineWidth: 2,
               style: Cesium.LabelStyle.FILL_AND_OUTLINE,
               verticalOrigin: Cesium.VerticalOrigin.CENTER,
@@ -361,6 +346,9 @@ const CropHealthLayer: React.FC = () => {
       restoreSnapshots();
     };
   }, [cesiumViewer, mode]);
+
+  // The zone pointed at in the side panel: repaint from the last data, without refetching.
+  useEffect(() => zoneSelection.subscribe(() => repaintRef.current?.()), []);
 
   // History of the selected parcel on the cursor's day. Debounced: dragging the axis moves the cursor
   // once per day crossed, and only the position it settles on is worth a request.

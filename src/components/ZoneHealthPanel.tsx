@@ -1,7 +1,8 @@
-import React from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from '@nekazari/sdk';
 import { SeverityBadge } from './shared/SeverityBadge';
 import type { ZoneAssessmentData } from '../types/assessment';
+import { zoneKey, zoneNumbers, zoneSelection, type ZoneRef } from '../utils/zones';
 
 interface ZoneHealthPanelProps {
   zones: ZoneAssessmentData[];
@@ -32,6 +33,16 @@ function metricLabel(zone: ZoneAssessmentData): string {
 
 const ZoneHealthPanel: React.FC<ZoneHealthPanelProps> = ({ zones, isWholeParcel }) => {
   const { t } = useTranslation('crop-health');
+  // Same numbers as the map labels; rows listed in that order.
+  const numbers = useMemo(() => zoneNumbers(zones), [zones]);
+  const ordered = useMemo(
+    () => [...zones].sort((a, b) => (numbers.get(zoneKey(a.parcelId, a.zoneId)) ?? 0) - (numbers.get(zoneKey(b.parcelId, b.zoneId)) ?? 0)),
+    [zones, numbers],
+  );
+  const [selected, setSelected] = useState<ZoneRef | null>(zoneSelection.get());
+  useEffect(() => zoneSelection.subscribe(setSelected), []);
+  // Leaving the parcel (or the panel) must not leave a zone lit on the map.
+  useEffect(() => () => zoneSelection.pin(null), []);
 
   if (isWholeParcel || zones.length === 0) {
     return null;
@@ -43,18 +54,31 @@ const ZoneHealthPanel: React.FC<ZoneHealthPanelProps> = ({ zones, isWholeParcel 
         <h3 className="text-sm font-semibold text-nkz-text-primary">{t('zones.title')}</h3>
         <span className="text-xs text-nkz-text-muted">{t('zones.count', { count: zones.length })}</span>
       </div>
-      <p className="text-xs text-nkz-text-muted mb-3">{t('zones.hint')}</p>
+      <p className="text-xs text-nkz-text-muted mb-1">{t('zones.hint')}</p>
+      <p className="text-xs text-nkz-text-muted mb-3">{t('zones.selectHint')}</p>
 
       <div className="space-y-2">
-        {zones.map((zone) => (
-          <div
+        {ordered.map((zone) => {
+          const ref = { parcelId: zone.parcelId ?? '', zoneId: zone.zoneId };
+          const isSelected = selected?.parcelId === ref.parcelId && selected?.zoneId === ref.zoneId;
+          return (
+          <button
+            type="button"
             key={zone.zoneId}
-            className="rounded-lg border border-nkz-border p-2.5 bg-nkz-surface flex items-start justify-between gap-3"
+            aria-pressed={isSelected}
+            onMouseEnter={() => zoneSelection.hover(ref)}
+            onMouseLeave={() => zoneSelection.hover(null)}
+            onFocus={() => zoneSelection.hover(ref)}
+            onBlur={() => zoneSelection.hover(null)}
+            onClick={() => zoneSelection.pin(ref)}
+            className={`w-full text-left rounded-lg border p-3 bg-nkz-surface flex items-start justify-between gap-3 cursor-pointer ${
+              isSelected ? 'border-nkz-accent-base' : 'border-nkz-border'
+            }`}
           >
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="text-sm font-semibold text-nkz-text-primary">
-                  {t('zones.zoneLabel', { id: zone.zoneId })}
+                  {t('zones.zoneLabel', { id: numbers.get(zoneKey(zone.parcelId, zone.zoneId)) ?? zone.zoneId })}
                 </span>
                 {zone.sensorNearby && (
                   <span className="text-[10px] uppercase tracking-wide text-nkz-accent-base font-medium">
@@ -75,8 +99,9 @@ const ZoneHealthPanel: React.FC<ZoneHealthPanelProps> = ({ zones, isWholeParcel 
               )}
             </div>
             <SeverityBadge severity={zone.overallSeverity} />
-          </div>
-        ))}
+          </button>
+          );
+        })}
       </div>
     </div>
   );

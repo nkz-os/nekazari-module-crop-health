@@ -1,5 +1,7 @@
 """Per-parcel readings and the daily shade accumulator."""
+import json
 import logging
+import time
 from datetime import datetime, timezone
 
 import pytest
@@ -240,3 +242,24 @@ async def test_resolver_error_does_not_raise(state, monkeypatch):
 
     monkeypatch.setattr(pipeline, "_resolve_parcel_from_device", _boom)
     assert await pipeline.record_parcel_reading(DEVICE, PAR, NOW, 1.0, None, TENANT, state) is None
+
+
+@pytest.mark.anyio
+async def test_future_stamped_reading_not_stored_and_later_valid_one_is(state):
+    now = time.time()
+    await state.set_parcel_reading(PARCEL, "soilMoisture", "d", now + 1e6, 99.0, "P1")
+    assert state._client.hashes == {}
+    await state.set_parcel_reading(PARCEL, "soilMoisture", "d", now - 10, 30.0, "P1")
+    got = await state.get_parcel_readings(PARCEL, "soilMoisture", 3600, now)
+    assert [r.value for r in got] == [30.0]
+
+
+@pytest.mark.anyio
+async def test_poisoned_stored_entry_is_replaced_by_valid_reading(state):
+    now = time.time()
+    key = f"{state._prefix}parcel:{PARCEL}:soilMoisture"
+    state._client.hashes[key] = {"d": json.dumps({"ts": now + 1e6, "v": 99.0, "u": "P1"})}
+    await state.set_parcel_reading(PARCEL, "soilMoisture", "d", now - 10, 30.0, "P1")
+    got = await state.get_parcel_readings(PARCEL, "soilMoisture", 3600, now)
+    assert [r.value for r in got] == [30.0]
+    assert state._client.ttl[key] == 7200

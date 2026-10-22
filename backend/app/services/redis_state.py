@@ -234,15 +234,24 @@ class RedisState:
         if self._client is None:
             return
         key = f"{self._prefix}parcel:{parcel_id}:{metric}"
+        now = time.time()
+        if ts - now > MAX_FUTURE_SKEW_S:
+            logger.warning(
+                "redis_state.set_parcel_reading: future-stamped reading ignored "
+                "(device=%s metric=%s ts=%s)", device_id, metric, ts,
+            )
+            return
         try:
             # An older, out-of-order reading must not replace a newer one.
             prev = await self._client.hget(key, device_id)
             if prev:
                 try:
-                    if float(json.loads(prev)["ts"]) > ts:
+                    prev_ts = float(json.loads(prev)["ts"])
+                    # A stored entry itself from the future is poison: replace it.
+                    if prev_ts > ts and prev_ts - now <= MAX_FUTURE_SKEW_S:
                         return
-                except (json.JSONDecodeError, KeyError, TypeError, ValueError):
-                    pass  # corrupt entry: overwrite it
+                except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+                    logger.debug("Corrupt Redis entry in %s overwritten: %s", key, exc)
             await self._client.hset(
                 key, device_id, json.dumps({"ts": ts, "v": value, "u": unit_code})
             )

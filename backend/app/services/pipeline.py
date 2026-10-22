@@ -174,8 +174,49 @@ def _resolve_root_depth(species: str, gdd: float | None, crop_context: any) -> f
 
 
 _PARCEL_READING_MAX_AGE_S = 3600.0
+# Optional water stress attributes: omitted from the payload when unknown, and the
+# upsert is a merge, so a stale value from an earlier write must be deleted.
+_WATER_STRESS_OPTIONAL_ATTRS = ("waterStressIndex", "waterStressObservedAt", "shadeFraction")
 _AIR_TEMP_RANGE_C = (-50.0, 60.0)
 _RH_RANGE_PCT = (0.0, 100.0)
+
+
+async def _clear_stale_water_stress(entity: dict, tenant_id: str) -> None:
+    """Delete the optional water stress attributes the payload omitted (best-effort).
+
+    Orion merges on upsert, so an omitted attribute would keep its earlier value
+    next to a newer fidelity. 404 (already absent) is success; any other failure
+    is logged and never fails the publish.
+    """
+    missing = [a for a in _WATER_STRESS_OPTIONAL_ATTRS if a not in entity]
+    if not missing or not tenant_id:
+        return
+    try:
+        from nkz_platform_sdk.orion import OrionClient
+
+        settings = get_settings()
+        client = OrionClient(
+            tenant_id,
+            base_url=settings.orion_ld_url,
+            context_url=settings.orion_ld_context,
+        )
+    except Exception as exc:  # noqa: BLE001 -- must not fail the publish
+        logger.warning("pipeline: cannot clear stale water stress on %s: %s", entity.get("id"), exc)
+        return
+    try:
+        for attr in missing:
+            try:
+                await client.delete_entity_attr(entity["id"], attr)
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code != 404:
+                    logger.warning("pipeline: delete %s on %s failed: %s", attr, entity.get("id"), exc)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("pipeline: delete %s on %s failed: %s", attr, entity.get("id"), exc)
+    finally:
+        try:
+            await client.close()
+        except Exception:  # noqa: BLE001
+            pass
 
 
 async def _read_parcel_readings(redis_state, parcel_id: str, metric: str, now_ts: float) -> list:
@@ -385,7 +426,7 @@ async def trigger(
     daily_shade = await _read_daily_shade(redis_state, effective_parcel, now_ts)
     et0_fidelity = meteo.fidelity.get("et0_mm", "unavailable")
 
-    now = datetime.now(timezone.utc)
+    now = datetime.fromtimestamp(now_ts, tz=timezone.utc)
 
     def _mk_assessment(zone: Zone | None) -> CropHealthAssessment:
         a = CropHealthAssessment(
@@ -530,7 +571,9 @@ async def trigger(
             await redis_state.set_soil_water(effective_parcel, assimilated)
         except Exception as exc:
             logger.warning("pipeline: redis set_soil_water failed for parcel %s — state not persisted: %s", effective_parcel, exc)
-    await _publish_assessment(rollup.to_ngsi_ld(), tenant_id)
+    rollup_entity = rollup.to_ngsi_ld()
+    if await _publish_assessment(rollup_entity, tenant_id):
+        await _clear_stale_water_stress(rollup_entity, tenant_id)
     # Preserve the sensor-path derived events + parent aggregation on the rollup.
     await _emit_assessment_side_effects(
         rollup, tenant_id, now, rollup.phenology_stage or "vegetative"
@@ -1071,6 +1114,8 @@ async def _run_engines(
     # write via ``_publish_assessment`` — avoid double-publishing here.
     if publish:
         published = await publish_assessment(assessment, tenant_id)
+        if published and parcel_stress:
+            await _clear_stale_water_stress(assessment.to_ngsi_ld(), tenant_id)
         if published:
             logger.info(
                 "Assessment published: parcel=%s severity=%s action=%s",

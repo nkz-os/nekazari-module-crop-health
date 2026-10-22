@@ -6,6 +6,7 @@ Redis) is faked.
 import types
 from datetime import datetime, timezone
 
+import httpx
 import pytest
 
 from app.engines.under_panel_stress import ks_from_theta
@@ -129,6 +130,29 @@ def _setup(monkeypatch, *, wm=None, regional=None, soil=None, zones=None, eppo="
 
     monkeypatch.setattr(pipeline, "publish_assessment", _publish)
     monkeypatch.setattr(pipeline, "_publish_assessment", _publish_entity)
+
+    deletes = []
+    delete_behaviour = {"status": None, "error": None}
+
+    class FakeOrion:
+        def __init__(self, *a, **k):
+            pass
+
+        async def delete_entity_attr(self, entity_id, attr):
+            deletes.append((entity_id, attr))
+            if delete_behaviour["error"]:
+                raise delete_behaviour["error"]
+            if delete_behaviour["status"]:
+                req = httpx.Request("DELETE", "http://orion.invalid/x")
+                raise httpx.HTTPStatusError(
+                    "err", request=req, response=httpx.Response(delete_behaviour["status"], request=req))
+
+        async def close(self):
+            pass
+
+    monkeypatch.setattr("nkz_platform_sdk.orion.OrionClient", FakeOrion)
+    published["deletes"] = deletes
+    published["delete_behaviour"] = delete_behaviour
 
     seen = {}
     real = pipeline.resolve_meteo_context
@@ -309,3 +333,59 @@ async def test_zonal_rollup_carries_stress_zones_do_not(monkeypatch):
 
 def test_olive_eppo_depletion_fraction():
     assert pipeline._DEPLETION_FRACTION_P["OLVEU"] == 0.65
+
+
+ENTITY_ID = "urn:ngsi-ld:CropHealthAssessment:p-1-20260715"
+
+
+@pytest.mark.asyncio
+async def test_unavailable_after_iot_clears_stale_attributes(monkeypatch):
+    published, _ = _setup(monkeypatch)
+    await _trigger(FakeRedis(readings={"soilMoisture": [soil_reading(15.0)]}, shade={TODAY: 0.5}))
+    assert published["deletes"] == []  # everything present, nothing stale
+    # later same-day trigger: nothing computable
+    published2, _ = _setup(monkeypatch, wm={}, regional={})
+    await _trigger(FakeRedis())
+    ids = {d[0] for d in published2["deletes"]}
+    attrs = {d[1] for d in published2["deletes"]}
+    assert ids == {published2["assessments"][-1].to_ngsi_ld()["id"]}
+    assert attrs == {"waterStressIndex", "waterStressObservedAt", "shadeFraction"}
+
+
+@pytest.mark.asyncio
+async def test_only_omitted_attrs_are_deleted(monkeypatch):
+    published, _ = _setup(monkeypatch)
+    await _trigger(FakeRedis())  # model path: index+observedAt present, shade None
+    assert [d[1] for d in published["deletes"]] == ["shadeFraction"]
+
+
+@pytest.mark.asyncio
+async def test_delete_404_is_success(monkeypatch):
+    published, _ = _setup(monkeypatch, wm={}, regional={})
+    published["delete_behaviour"]["status"] = 404
+    out = await _trigger(FakeRedis())
+    assert out is not None
+    assert len(published["deletes"]) == 3  # does not stop after the first 404
+
+
+@pytest.mark.asyncio
+async def test_delete_error_does_not_fail_trigger(monkeypatch):
+    published, _ = _setup(monkeypatch, wm={}, regional={})
+    published["delete_behaviour"]["error"] = RuntimeError("boom")
+    out = await _trigger(FakeRedis())
+    assert out is not None
+    assert len(published["assessments"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_zonal_rollup_clears_stale_attributes(monkeypatch):
+    published, _ = _setup(monkeypatch, zones=[Zone("z0", _Z0), Zone("z1", _Z1)], wm={}, regional={})
+
+    async def _nocoords(*a, **k):
+        return None
+
+    monkeypatch.setattr(pipeline, "_resolve_device_coords", _nocoords, raising=False)
+    await _trigger(FakeRedis())
+    parcel = [e for e in published["entities"] if e["type"] == "CropHealthAssessment"][0]
+    assert {d[0] for d in published["deletes"]} == {parcel["id"]}
+    assert len(published["deletes"]) == 3

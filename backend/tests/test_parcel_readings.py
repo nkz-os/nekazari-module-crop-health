@@ -38,8 +38,36 @@ class FakeRedis:
         h = self.hashes.setdefault(k, {})
         h[field] = str(float(h.get(field, 0)) + amount)
 
+    async def hget(self, k, field):
+        return self.hashes.get(k, {}).get(field)
+
     async def expire(self, k, seconds):
         self.ttl[k] = seconds
+
+    def pipeline(self, transaction=True):
+        return _FakePipe(self)
+
+
+class _FakePipe:
+    def __init__(self, client):
+        self.client = client
+        self.ops = []
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+    def hincrbyfloat(self, k, field, amount):
+        self.ops.append(self.client.hincrbyfloat(k, field, amount))
+
+    def expire(self, k, seconds):
+        self.ops.append(self.client.expire(k, seconds))
+
+    async def execute(self):
+        for op in self.ops:
+            await op
 
 
 @pytest.fixture
@@ -56,16 +84,24 @@ NOW = datetime(2026, 6, 15, 12, 0, tzinfo=timezone.utc).timestamp()
 
 
 @pytest.mark.anyio
-async def test_parcel_readings_keep_freshest_per_device_and_drop_stale_and_future(state):
-    await state.set_parcel_reading(PARCEL, "soilMoisture", "d-old", NOW - 100, 30.0, "P1")
-    await state.set_parcel_reading(PARCEL, "soilMoisture", "d-old", NOW - 4000, 99.0, "P1")
+async def test_parcel_readings_drop_stale_and_future(state):
+    await state.set_parcel_reading(PARCEL, "soilMoisture", "d-fresh", NOW - 100, 30.0, "P1")
     await state.set_parcel_reading(PARCEL, "soilMoisture", "d-stale", NOW - 4000, 31.0, "P1")
     await state.set_parcel_reading(PARCEL, "soilMoisture", "d-future", NOW + 900, 32.0, None)
-    # last write per device wins; the 4000 s one overwrote d-old, so rewrite fresh
-    await state.set_parcel_reading(PARCEL, "soilMoisture", "d-old", NOW - 100, 30.0, "P1")
     got = await state.get_parcel_readings(PARCEL, "soilMoisture", 3600, NOW)
-    assert got == [ParcelReading("d-old", NOW - 100, 30.0, "P1")]
+    assert got == [ParcelReading("d-fresh", NOW - 100, 30.0, "P1")]
     assert state._client.ttl[f"{state._prefix}parcel:{PARCEL}:soilMoisture"] == 7200
+
+
+@pytest.mark.anyio
+async def test_older_out_of_order_reading_does_not_overwrite_newer(state):
+    await state.set_parcel_reading(PARCEL, "soilMoisture", "d", NOW - 10, 30.0, "P1")
+    await state.set_parcel_reading(PARCEL, "soilMoisture", "d", NOW - 500, 99.0, "P1")
+    got = await state.get_parcel_readings(PARCEL, "soilMoisture", 3600, NOW)
+    assert got == [ParcelReading("d", NOW - 10, 30.0, "P1")]
+    await state.set_parcel_reading(PARCEL, "soilMoisture", "d", NOW - 5, 31.0, "P1")
+    got = await state.get_parcel_readings(PARCEL, "soilMoisture", 3600, NOW)
+    assert got[0].value == 31.0
 
 
 @pytest.mark.anyio
@@ -102,6 +138,7 @@ async def test_record_unlinked_device_returns_none_and_logs_once(state, monkeypa
 
 
 def _patch(monkeypatch, ghi):
+    monkeypatch.setattr(pipeline, "_now_ts", lambda: NOW)
     calls = {"resolve": 0, "meteo": 0}
 
     async def _resolve(device_id, tenant_id):
@@ -163,3 +200,43 @@ async def test_non_par_metric_stores_reading_without_meteo(state, monkeypatch):
     assert calls["meteo"] == 0
     got = await state.get_parcel_readings(PARCEL, "soilMoisture", 3600, NOW)
     assert got[0].unit_code == "P1"
+
+
+PAR = "photosyntheticPhotonFluxDensity"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("ghi", [float("inf"), float("nan")])
+async def test_non_finite_ghi_adds_no_shade_sample(state, monkeypatch, ghi):
+    _patch(monkeypatch, ghi)
+    await pipeline.record_parcel_reading(DEVICE, PAR, NOW, 400.0, None, TENANT, state)
+    assert await state.get_daily_shade(PARCEL, "2026-06-15") is None
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("ts", [NOW + 400, NOW - 3700])
+async def test_delayed_or_future_par_adds_no_shade_sample(state, monkeypatch, ts):
+    _patch(monkeypatch, 800.0)
+    out = await pipeline.record_parcel_reading(DEVICE, PAR, ts, 400.0, None, TENANT, state)
+    assert out == PARCEL
+    day = datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d")
+    assert await state.get_daily_shade(PARCEL, day) is None
+    assert await state.get_daily_shade(PARCEL, "2026-06-15") is None
+
+
+@pytest.mark.anyio
+async def test_absurd_timestamp_returns_none_and_does_not_raise(state, monkeypatch):
+    _patch(monkeypatch, 800.0)
+    # clock and ts both absurd (ms epoch): passes the age check, fails in fromtimestamp
+    monkeypatch.setattr(pipeline, "_now_ts", lambda: 1e15)
+    out = await pipeline.record_parcel_reading(DEVICE, PAR, 1e15, 400.0, None, TENANT, state)
+    assert out is None
+
+
+@pytest.mark.anyio
+async def test_resolver_error_does_not_raise(state, monkeypatch):
+    async def _boom(device_id, tenant_id):
+        raise RuntimeError("broker down")
+
+    monkeypatch.setattr(pipeline, "_resolve_parcel_from_device", _boom)
+    assert await pipeline.record_parcel_reading(DEVICE, PAR, NOW, 1.0, None, TENANT, state) is None

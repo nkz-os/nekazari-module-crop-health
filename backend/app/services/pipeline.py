@@ -16,6 +16,7 @@ water_stress_model.py. The risk-worker uses batch meteorological data
 from __future__ import annotations
 
 import logging
+import math
 from datetime import date, datetime, timedelta, timezone
 
 import httpx
@@ -42,7 +43,7 @@ from app.services import context_client
 from app.services.context_client import get_phenology_params
 from app.services.fiware_publisher import publish_assessment
 from app.services.meteo_context import resolve_meteo_context
-from app.services.redis_state import RedisState, StoreError
+from app.services.redis_state import MAX_FUTURE_SKEW_S, RedisState, StoreError
 from app.services.zonation import (
     resolve_zones,
     is_whole_parcel,
@@ -2001,6 +2002,7 @@ def _resolve_data_fidelity(assessment: CropHealthAssessment) -> str:
 
 _DEVICE_PARCEL_TTL_S = 3600
 _GHI_TTL_S = 300
+_SHADE_MAX_AGE_S = 3600.0
 
 
 async def _cached_parcel_for_device(
@@ -2034,6 +2036,10 @@ async def _cached_ghi(parcel_id: str, tenant_id: str, redis_state: RedisState) -
     return ghi
 
 
+def _now_ts() -> float:
+    return datetime.now(timezone.utc).timestamp()
+
+
 async def record_parcel_reading(
     device_id: str,
     metric: str,
@@ -2045,20 +2051,37 @@ async def record_parcel_reading(
 ) -> str | None:
     """Keep the latest reading per device under its parcel; feed the shade sums.
 
-    Returns the parcel id, or None when the device has no parcel link.
+    Returns the parcel id, or None when the device has no parcel link or the
+    reading cannot be recorded. Never raises: it runs in a background queue
+    ahead of ``trigger``, and an exception here would abort that trigger.
     """
-    parcel_id = await _cached_parcel_for_device(device_id, tenant_id, redis_state)
-    if not parcel_id:
-        logger.warning("record_parcel_reading: device %s has no parcel link — dropped", device_id)
+    try:
+        parcel_id = await _cached_parcel_for_device(device_id, tenant_id, redis_state)
+        if not parcel_id:
+            logger.warning("record_parcel_reading: device %s has no parcel link — dropped", device_id)
+            return None
+        await redis_state.set_parcel_reading(parcel_id, metric, device_id, ts, value, unit_code)
+        if metric == MetricType.PAR.value:
+            await _add_shade_sample(parcel_id, ts, value, tenant_id, redis_state)
+        return parcel_id
+    except Exception as exc:  # noqa: BLE001 — must not abort the queued trigger
+        logger.warning("record_parcel_reading: failed for device %s metric %s: %s", device_id, metric, exc)
         return None
-    await redis_state.set_parcel_reading(parcel_id, metric, device_id, ts, value, unit_code)
-    if metric == MetricType.PAR.value:
-        ghi = await _cached_ghi(parcel_id, tenant_id, redis_state)
-        # No GHI, or sun down: no open-sky reference, so no sample (never assume daylight).
-        if ghi is not None and ghi >= MIN_GHI_WM2:
-            day = datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d")
-            await redis_state.add_shade_sample(parcel_id, day, value, PAR_PER_GHI * ghi)
-    return parcel_id
+
+
+async def _add_shade_sample(
+    parcel_id: str, ts: float, par_under: float, tenant_id: str, redis_state: RedisState
+) -> None:
+    now = _now_ts()
+    # Only readings near "now" pair with the current GHI and belong to today's sums.
+    if ts - now > MAX_FUTURE_SKEW_S or now - ts > _SHADE_MAX_AGE_S:
+        return
+    ghi = await _cached_ghi(parcel_id, tenant_id, redis_state)
+    # No GHI, or sun down: no open-sky reference, so no sample (never assume daylight).
+    if ghi is None or not math.isfinite(ghi) or ghi < MIN_GHI_WM2:
+        return
+    day = datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d")
+    await redis_state.add_shade_sample(parcel_id, day, par_under, PAR_PER_GHI * ghi)
 
 
 async def _resolve_parcel_from_device(device_id: str, tenant_id: str) -> str | None:

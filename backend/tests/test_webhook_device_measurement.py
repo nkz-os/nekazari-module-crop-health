@@ -37,15 +37,20 @@ def fake_redis(monkeypatch):
     return redis
 
 
+order: list[str] = []
+
+
 @pytest.fixture(autouse=True)
 def records(monkeypatch):
     """Parcel readings are recorded for every tracked metric, before the trigger."""
     from app.api import webhooks
 
     calls = []
+    order.clear()
 
     async def _record(**kwargs):
         calls.append(kwargs)
+        order.append("record")
 
     monkeypatch.setattr(webhooks.pipeline, "record_parcel_reading", _record, raising=False)
     return calls
@@ -56,6 +61,7 @@ def triggers(monkeypatch):
     calls = []
 
     async def _trigger(entity_id, metric_type, redis_state, parcel_id, tenant_id):
+        order.append("trigger")
         calls.append(
             {
                 "entity_id": entity_id,
@@ -243,3 +249,13 @@ def test_every_tracked_metric_is_recorded_but_only_engine_metrics_trigger(fake_r
     assert records[0]["device_id"] == DEVICE_URN
     assert records[0]["unit_code"] == "E32"
     assert records[0]["tenant_id"] == "acme"
+
+
+def test_record_runs_before_trigger_for_engine_metric(fake_redis, triggers, records):
+    soil = _measurement(
+        controlledProperty={"type": "Property", "value": "soilMoisture"},
+        numValue={"type": "Property", "value": 35.0, "unitCode": "P1"},
+    )
+    _post({"data": [soil]})
+    assert order == ["record", "trigger"]
+    assert records[0]["unit_code"] == "P1"

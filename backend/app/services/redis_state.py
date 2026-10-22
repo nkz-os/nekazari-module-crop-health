@@ -235,6 +235,14 @@ class RedisState:
             return
         key = f"{self._prefix}parcel:{parcel_id}:{metric}"
         try:
+            # An older, out-of-order reading must not replace a newer one.
+            prev = await self._client.hget(key, device_id)
+            if prev:
+                try:
+                    if float(json.loads(prev)["ts"]) > ts:
+                        return
+                except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+                    pass  # corrupt entry: overwrite it
             await self._client.hset(
                 key, device_id, json.dumps({"ts": ts, "v": value, "u": unit_code})
             )
@@ -281,9 +289,11 @@ class RedisState:
             return
         key = f"{self._prefix}shade:{parcel_id}:{day}"
         try:
-            await self._client.hincrbyfloat(key, "under", par_under)
-            await self._client.hincrbyfloat(key, "open", par_open)
-            await self._client.expire(key, SHADE_TTL_S)
+            async with self._client.pipeline(transaction=True) as pipe:
+                pipe.hincrbyfloat(key, "under", par_under)
+                pipe.hincrbyfloat(key, "open", par_open)
+                pipe.expire(key, SHADE_TTL_S)
+                await pipe.execute()
         except Exception as exc:
             logger.warning("redis_state.add_shade_sample: failed for %s: %s", key, exc)
 

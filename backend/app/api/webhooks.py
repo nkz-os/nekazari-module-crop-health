@@ -32,7 +32,11 @@ router = APIRouter(tags=["webhooks"])
 _TRACKED_ATTRIBUTES = {
     "leafTemperature": MetricType.LEAF_TEMPERATURE,
     "trunkDiameter": MetricType.TRUNK_DIAMETER,
+    "stemDiameter": MetricType.TRUNK_DIAMETER,
     "soilMoisture": MetricType.SOIL_MOISTURE,
+    "airTemperature": MetricType.AIR_TEMPERATURE,
+    "relativeHumidity": MetricType.RELATIVE_HUMIDITY,
+    "photosyntheticPhotonFluxDensity": MetricType.PAR,
 }
 
 
@@ -56,6 +60,10 @@ def _reject_unauthenticated_notify(headers) -> HTTPException | None:
     ):
         return HTTPException(status_code=401, detail="missing or invalid notification credentials")
     return None
+
+_PIPELINE_METRICS = frozenset(
+    {MetricType.LEAF_TEMPERATURE, MetricType.TRUNK_DIAMETER, MetricType.SOIL_MOISTURE}
+)
 
 
 @router.post("/webhooks/fiware-sensors", status_code=204)
@@ -101,7 +109,7 @@ async def receive_sensor_data(
     now_ts = datetime.now(timezone.utc).timestamp()
 
     for entity in data:
-        device_id, metric_name, value, observed_ts = _read_measurement(entity)
+        device_id, metric_name, value, observed_ts, _unit_code = _read_measurement(entity)
         if device_id is None:
             logger.debug(
                 "Skipping %s: missing refDevice, controlledProperty or reading",
@@ -116,10 +124,13 @@ async def receive_sensor_data(
         # Redis sliding window, keyed by device — stable across readings
         await redis_state.store_reading(
             device_id=device_id,
-            metric=metric_name,
+            metric=metric_type.value,
             timestamp=observed_ts if observed_ts is not None else now_ts,
             value=value,
         )
+
+        if metric_type not in _PIPELINE_METRICS:
+            continue
 
         # The parcel is not on the measurement: it hangs off the device's
         # controlledAsset, one hop away, so the pipeline resolves it rather
@@ -142,8 +153,8 @@ async def receive_sensor_data(
 
 def _read_measurement(
     entity: dict,
-) -> tuple[str | None, str | None, float | None, float | None]:
-    """Pull (device_id, metric_name, value, observed_ts) out of a `DeviceMeasurement`.
+) -> tuple[str | None, str | None, float | None, float | None, str | None]:
+    """Pull (device_id, metric_name, value, observed_ts, unit_code) out of a `DeviceMeasurement`.
 
     `DeviceMeasurement` inverts the shape used by entities that carry their
     readings as attributes: the measured property's name is the VALUE of
@@ -153,41 +164,48 @@ def _read_measurement(
     property name — and the instant is ``dateObserved``, a plain Property, not
     per-attribute ``observedAt`` metadata.
 
-    Returns ``(None, None, None, None)`` when the device or the reading is
+    ``unit_code`` is the ``unitCode`` of the ``numValue`` attribute (None when
+    absent or the reading came from ``textValue``).
+
+    Returns all-``None`` when the device or the reading is
     missing, so the caller skips the entity rather than persisting a guessed
     device id.
     """
     ref_device = entity.get("refDevice")
     if not isinstance(ref_device, dict):
-        return None, None, None, None
+        return None, None, None, None, None
     device_id = ref_device.get("object")
     if not isinstance(device_id, str) or not device_id:
-        return None, None, None, None
+        return None, None, None, None, None
 
     controlled_property = entity.get("controlledProperty")
     if not isinstance(controlled_property, dict):
-        return None, None, None, None
+        return None, None, None, None, None
     metric_name = controlled_property.get("value")
     if not isinstance(metric_name, str) or not metric_name:
-        return None, None, None, None
+        return None, None, None, None, None
 
     value = None
+    unit_code = None
     for value_key in ("numValue", "textValue"):
         value_attr = entity.get(value_key)
         if isinstance(value_attr, dict) and value_attr.get("value") is not None:
             value = value_attr["value"]
+            if value_key == "numValue":
+                raw_unit = value_attr.get("unitCode")
+                unit_code = raw_unit if isinstance(raw_unit, str) and raw_unit else None
             break
     if value is None:
-        return None, None, None, None
+        return None, None, None, None, None
     try:
         value = float(value)
     except (TypeError, ValueError):
         logger.warning(
             "Non-numeric %s on %s: %s", metric_name, entity.get("id", "<no id>"), value
         )
-        return None, None, None, None
+        return None, None, None, None, None
 
-    return device_id, metric_name, value, _observed_timestamp(entity)
+    return device_id, metric_name, value, _observed_timestamp(entity), unit_code
 
 
 def _observed_timestamp(entity: dict) -> float | None:

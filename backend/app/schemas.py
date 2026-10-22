@@ -41,6 +41,9 @@ class MetricType(str, enum.Enum):
     SOIL_PH = "soilPh"
     SOIL_EC = "soilEC"
     SOIL_TEMPERATURE = "soilTemp"
+    AIR_TEMPERATURE = "airTemperature"
+    RELATIVE_HUMIDITY = "relativeHumidity"
+    PAR = "photosyntheticPhotonFluxDensity"
 
 
 # ── Sensor Reading ────────────────────────────────────────────────────────────

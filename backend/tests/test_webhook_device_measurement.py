@@ -182,3 +182,36 @@ def test_derived_token_is_accepted_once_master_is_refused(monkeypatch):
         url, json=empty,
         headers={"Fiware-Service": "acme", "X-Internal-Service-Secret": "test-secret"},
     ).status_code == 401
+
+
+def _dm(prop, value, unit="CEL"):
+    num = {"type": "Property", "value": value}
+    if unit is not None:
+        num["unitCode"] = unit
+    return _measurement(
+        controlledProperty={"type": "Property", "value": prop}, numValue=num
+    )
+
+
+def test_stem_diameter_feeds_trunk_window(fake_redis, triggers):
+    """The platform dendrometer name lands in the legacy trunkDiameter window."""
+    resp = _post({"data": [_dm("stemDiameter", 1234.0, unit="4H")]})
+    assert resp.status_code == 204
+    assert [r[1] for r in fake_redis.readings] == ["trunkDiameter"]
+    assert fake_redis.readings[0][3] == 1234.0
+    assert [t["metric_type"] for t in triggers] == ["trunkDiameter"]
+
+
+def test_read_measurement_returns_unit_code():
+    from app.api.webhooks import _read_measurement
+
+    assert _read_measurement(_dm("soilMoisture", 23.5, unit="P1"))[4] == "P1"
+    assert _read_measurement(_dm("soilMoisture", 23.5, unit=None))[4] is None
+
+
+def test_par_air_temperature_humidity_are_tracked():
+    from app.api import webhooks
+
+    for prop in ("photosyntheticPhotonFluxDensity", "airTemperature", "relativeHumidity"):
+        assert prop in webhooks._TRACKED_ATTRIBUTES
+    assert webhooks._TRACKED_ATTRIBUTES["stemDiameter"] == webhooks._TRACKED_ATTRIBUTES["trunkDiameter"]

@@ -32,6 +32,8 @@ const actionLabels: Record<string, string> = {
   IRRIGATE_IMMEDIATE: 'contextPanel.irrigateImmediately',
 };
 
+const KNOWN_FIDELITIES: string[] = ['iot_sensor', 'parcel_weather', 'regional_proxy', 'unavailable'];
+
 const TAB_KEYS: DetailTab[] = ['water', 'plant', 'yield', 'analytics'];
 
 const CropHealthDetailTabs: React.FC<CropHealthDetailTabsProps> = ({
@@ -173,14 +175,6 @@ const CropHealthDetailTabs: React.FC<CropHealthDetailTabsProps> = ({
               )}
             </div>
           )}
-          {assessment.waterStressFidelity && (
-            <p className="text-xs text-nkz-text-muted mt-1">
-              {t('detail.waterStress')}{' '}
-              {assessment.waterStressFidelity === 'unavailable' || assessment.waterStressIndex == null
-                ? t('detail.fidelity.unavailable')
-                : `${assessment.waterStressIndex.toFixed(2)} · ${t(`detail.fidelity.${assessment.waterStressFidelity}`)} · ${formatRelativeTime(assessment.waterStressObservedAt, t)}`}
-            </p>
-          )}
           {(assessment.waterloggingRisk?.riskLevel ?? assessment.waterloggingRiskLevel) &&
             (assessment.waterloggingRisk?.riskLevel ?? assessment.waterloggingRiskLevel) !== 'LOW' && (
             <p className="text-xs mt-1" style={{ color: 'var(--nkz-color-info)' }}>
@@ -190,6 +184,18 @@ const CropHealthDetailTabs: React.FC<CropHealthDetailTabsProps> = ({
               {assessment.waterloggingRisk?.drainageRateMmH != null && ` · drain ${assessment.waterloggingRisk.drainageRateMmH.toFixed(1)} mm/h`}
             </p>
           )}
+        </MetricSection>
+      )}
+
+      {/* Water stress index (under-panel) — independent of Soil data */}
+      {assessment.waterStressFidelity && (
+        <MetricSection>
+          <p className="text-xs text-nkz-text-muted">
+            {t('detail.waterStress')}{' '}
+            {assessment.waterStressIndex == null || !KNOWN_FIDELITIES.includes(assessment.waterStressFidelity) || assessment.waterStressFidelity === 'unavailable'
+              ? t('detail.fidelity.unavailable')
+              : `${assessment.waterStressIndex.toFixed(2)} · ${t(`detail.fidelity.${assessment.waterStressFidelity}`)} · ${formatRelativeTime(assessment.waterStressObservedAt, t)}`}
+          </p>
         </MetricSection>
       )}
         </>

@@ -1,0 +1,221 @@
+"""Tests for GET /api/crop-health/sources endpoint."""
+import pytest
+from httpx import ASGITransport, AsyncClient
+import respx
+
+from app.main import app
+
+# Gateway identity headers (signature check is off in tests; see test_gateway_auth.py)
+GATEWAY_HEADERS = {"X-Tenant-ID": "test-tenant", "X-User-ID": "test-user"}
+
+
+@pytest.fixture
+def anyio_backend():
+    return "asyncio"
+
+
+@pytest.mark.anyio
+async def test_sources_list_returns_empty_for_no_parcels():
+    """When Orion-LD returns no parcels, list is empty."""
+    with respx.mock as mock:
+        # Mock all Orion-LD queries to return empty
+        mock.get().respond(json=[])
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test", headers=GATEWAY_HEADERS) as client:
+            resp = await client.get("/api/crop-health/sources")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert "parcels" in data
+            assert data["parcels"] == []
+
+
+@pytest.mark.anyio
+async def test_sources_list_with_assessment_data():
+    """Parcels with assessments show health indicators."""
+    from datetime import datetime, timezone, timedelta
+    recent = (datetime.now(timezone.utc) - timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    with respx.mock as mock:
+        # Route 1: Assessments query
+        mock.get(url__regex=r".*type=CropHealthAssessment.*").respond(json=[
+            {
+                "id": "urn:ngsi-ld:CropHealthAssessment:cha-1",
+                "hasAgriParcel": {"type": "Relationship", "object": "urn:ngsi-ld:AgriParcel:Parcela-4"},
+                "cwsiValue": 0.42,
+                "overallSeverity": "MEDIUM",
+                "assessedAt": recent,
+                "dataFidelity": "onsite_uncalibrated",
+            }
+        ])
+        # Route 2: Parcels query
+        mock.get(url__regex=r".*type=AgriParcel.*").respond(json=[
+            {"id": "urn:ngsi-ld:AgriParcel:Parcela-4", "name": "Parcela 4"},
+            {"id": "urn:ngsi-ld:AgriParcel:Parcela-15", "name": "Parcela 15"},
+        ])
+        # Route 3: IoT devices query — one Device for Parcela-4, linked by
+        # controlledAsset (the canonical link; readings live in DeviceMeasurement)
+        mock.get(url__regex=r".*type=Device(&|$|%).*").respond(json=[
+            {
+                "id": "urn:ngsi-ld:Device:test-tenant:sensor1",
+                "controlledAsset": "urn:ngsi-ld:AgriParcel:Parcela-4",
+            }
+        ])
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test", headers=GATEWAY_HEADERS) as client:
+            resp = await client.get("/api/crop-health/sources")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert len(data["parcels"]) >= 2
+
+            p4 = next(p for p in data["parcels"] if p["parcelId"] == "Parcela-4")
+            assert p4["hasIot"] is True
+            assert p4["healthIndicator"] in ("green", "blue", "yellow")
+
+            p15 = next(p for p in data["parcels"] if p["parcelId"] == "Parcela-15")
+            assert p15["hasIot"] is False
+
+
+@pytest.mark.anyio
+async def test_sources_detail_returns_source_status():
+    """Detail endpoint returns per-source status for a single parcel."""
+    with respx.mock as mock:
+        mock.get(url__regex=r".*type=CropHealthAssessment.*hasAgriParcel.*").respond(json=[
+            {
+                "id": "urn:ngsi-ld:CropHealthAssessment:Parcela-4-20260607",
+                "hasAgriParcel": {"type": "Relationship", "object": "urn:ngsi-ld:AgriParcel:Parcela-4"},
+                "cwsiValue": 0.42,
+                "overallSeverity": "MEDIUM",
+                "assessedAt": "2026-06-07T10:00:00Z",
+                "dataFidelity": "onsite_uncalibrated",
+                "soilTexture": "franco-arcilloso",
+                "soilPh": 7.2,
+                "soilAWCmm": 90.0,
+                "phenologyStage": "flowering",
+            }
+        ])
+        mock.get(url__regex=r".*type=Device(&|%).*").respond(json=[
+            {
+                "id": "urn:ngsi-ld:Device:test-tenant:sensor1",
+                "controlledAsset": "urn:ngsi-ld:AgriParcel:Parcela-4",
+            }
+        ])
+        mock.get(url__regex=r".*type=DeviceMeasurement.*").respond(json=[
+            {
+                "id": "urn:ngsi-ld:DeviceMeasurement:test-tenant:sensor1:leafTemperature",
+                "refDevice": "urn:ngsi-ld:Device:test-tenant:sensor1",
+                "controlledProperty": "leafTemperature",
+                "numValue": 28.4,
+                "dateObserved": "2026-06-07T10:25:00Z",
+            }
+        ])
+        # Canonical EOProduct (vegetation-health CONTRACT.md): one per
+        # acquisition, NDVI as the named `ndvi` Property (value = mean), no
+        # productType discriminator. SAR (productType=GRD) is a separate family.
+        mock.get(url__regex=r".*type=EOProduct.*productType.*GRD.*").respond(json=[])
+        mock.get(url__regex=r".*type=EOProduct.*").respond(json=[
+            {
+                "id": "urn:ngsi-ld:EOProduct:test-tenant:Parcela-4:2026-06-05",
+                "hasAgriParcel": "urn:ngsi-ld:AgriParcel:Parcela-4",
+                "sensingDate": "2026-06-05",
+                "ndvi": 0.72,
+            }
+        ])
+        mock.get(url__regex=r".*type=AgriCrop.*hasAgriParcel.*").respond(json=[
+            {
+                "id": "urn:ngsi-ld:AgriCrop:Parcela-4-2025-2026",
+                "plantingDate": "2025-10-02",
+                "species": "Triticum aestivum",
+                "eppoCode": "TRZAX",
+                "variety": "Gazul",
+            }
+        ])
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test", headers=GATEWAY_HEADERS) as client:
+            resp = await client.get("/api/crop-health/sources?parcelId=Parcela-4")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["parcelId"] == "Parcela-4"
+            src = data["sources"]
+
+            assert src["soil"]["status"] == "ok"
+            assert src["soil"]["details"]["texture"] == "franco-arcilloso"
+            assert src["iot"]["status"] == "ok"
+            assert len(src["iot"]["sensors"]) >= 1
+            # The metric name is the VALUE of controlledProperty, and the reading
+            # comes from numValue — never from an attribute named after the metric.
+            sensor = src["iot"]["sensors"][0]
+            assert sensor["metric"] == "leafTemperature"
+            assert sensor["lastValue"] == 28.4
+            assert src["satellite"]["ndvi"]["status"] == "ok"
+            assert src["satellite"]["ndvi"]["lastValue"] == 0.72
+            assert src["crop"]["status"] == "ok"
+            assert src["crop"]["plantingDate"] == "2025-10-02"
+
+
+@pytest.mark.anyio
+async def test_sources_detail_no_data_parcel():
+    """Parcel with no data gets unavailable status everywhere."""
+    with respx.mock as mock:
+        mock.get().respond(json=[])
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test", headers=GATEWAY_HEADERS) as client:
+            resp = await client.get("/api/crop-health/sources?parcelId=Parcela-99")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["parcelId"] == "Parcela-99"
+            for key in ("soil", "iot", "weather", "crop", "bioorchestrator"):
+                assert data["sources"][key]["status"] == "unavailable"
+
+
+@pytest.mark.anyio
+async def test_tenant_qualified_parcel_urns_still_match():
+    """The parcel key must survive a tenant segment.
+
+    Parcels exist in both shapes across the platform: `AgriParcel:{id}` and
+    `AgriParcel:{tenant}:{id}`. Normalising the device link with
+    `split(":")[-1]` drops the tenant and stops matching the parcel map built
+    from the prefix — the parcel silently loses its IoT flag.
+    """
+    with respx.mock as mock:
+        mock.get(url__regex=r".*type=CropHealthAssessment.*").respond(json=[])
+        mock.get(url__regex=r".*type=AgriParcel.*").respond(json=[
+            {"id": "urn:ngsi-ld:AgriParcel:test-tenant:Parcela-4", "name": "Parcela 4"},
+        ])
+        mock.get(url__regex=r".*type=Device(&|$|%).*").respond(json=[
+            {
+                "id": "urn:ngsi-ld:Device:test-tenant:sensor1",
+                "controlledAsset": "urn:ngsi-ld:AgriParcel:test-tenant:Parcela-4",
+            }
+        ])
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test", headers=GATEWAY_HEADERS) as client:
+            resp = await client.get("/api/crop-health/sources")
+            assert resp.status_code == 200
+            parcel = resp.json()["parcels"][0]
+            assert parcel["parcelId"] == "test-tenant:Parcela-4"
+            assert parcel["hasIot"] is True
+
+
+@pytest.mark.anyio
+async def test_sources_detail_skips_daily_weather_entity():
+    """The closed-day series entity (dailySummary true) is not the parcel's live weather."""
+    with respx.mock as mock:
+        mock.get(url__regex=r".*type=WeatherObserved.*").respond(json=[
+            {"id": "urn:ngsi-ld:WeatherObserved:test-tenant:parcel-Parcela-77-daily",
+             "dailySummary": True, "tempMin": 3.1, "tempMax": 14.2},
+            {"id": "urn:ngsi-ld:WeatherObserved:test-tenant:parcel-Parcela-77",
+             "temperature": 12.5, "dateObserved": "2026-06-07T10:00:00Z"},
+        ])
+        mock.get().respond(json=[])
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test", headers=GATEWAY_HEADERS) as client:
+            resp = await client.get("/api/crop-health/sources?parcelId=Parcela-77")
+            assert resp.status_code == 200
+            weather = resp.json()["sources"]["weather"]
+            assert weather["status"] == "ok"
+            assert "12.5°C" in weather["summary"]

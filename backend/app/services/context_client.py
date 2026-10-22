@@ -1,0 +1,1243 @@
+"""
+Context Client — External service integration with caching and circuit breaker.
+
+Connects to:
+1. TimescaleDB (weather_observations) — for current weather data
+2. BioOrchestrator (Neo4j via REST) — for phenology parameters (D1, D2, Kc, MDS_ref)
+   Endpoint: GET /api/graph/phenology-params?species=...&stage=...
+
+Design:
+- TTLCache for phenology params (1h) — species data changes very slowly
+- Circuit breaker: if bioorchestrator fails, return hardcoded defaults and log warning
+- Weather data queried directly from TimescaleDB (weather-worker has no REST API)
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import Any
+
+import httpx
+from cachetools import TTLCache
+
+from app.config import get_settings
+from nkz_platform_sdk.crop_timeline import fetch_crop_timeline
+from nkz_platform_sdk.orion import OrionClient
+from app.schemas import (
+    PhenologyAlternative,
+    PhenologyParams,
+    PhenologyProvenance,
+    StageTable,
+)
+
+logger = logging.getLogger(__name__)
+
+
+# ── Phenology cache ──────────────────────────────────────────────────────────
+# Key: (species, stage), Value: PhenologyParams
+_phenology_cache: TTLCache[tuple[str, str], PhenologyParams] = TTLCache(
+    maxsize=128,
+    ttl=get_settings().phenology_cache_ttl,
+)
+
+
+
+# Cache for StageTable results (keyed by species)
+_stages_cache: TTLCache[str, StageTable] = TTLCache(
+    maxsize=64,
+    ttl=get_settings().phenology_cache_ttl,
+)
+
+
+# ── Default phenology parameters (fallback) ──────────────────────────────────
+# Conservative defaults for generic crop when bioorchestrator unavailable.
+_DEFAULT_PARAMS = PhenologyParams(
+    d1=2.0,       # NWSB baseline: typical for Mediterranean fruit trees
+    d2=8.0,       # Max stress baseline
+    kc=0.85,      # Mid-season generic crop coefficient (FAO-56)
+    mds_ref=150.0,  # µm — typical olive in vegetative
+    species="generic",
+    stage="vegetative",
+    is_default=True,
+)
+
+
+# Generic FAO-style maize-like fallback (GDD base 10°C). Used when BioOrch
+# has no stage table for the species. Honest, coarse default.
+_DEFAULT_STAGE_TABLE = StageTable(
+    stages={
+        "emergence": (0.0, 90.0),
+        "vegetative": (90.0, 520.0),
+        "flowering": (520.0, 1100.0),
+        "maturity": (1100.0, 1600.0),
+    },
+    base_temp=10.0,
+    upper_cutoff=30.0,
+    gdd_method="simple_avg_capped",
+)
+
+
+async def get_phenology_stages(species: str) -> StageTable:
+    """Full {stage: (gdd_min, gdd_max)} table from BioOrch; default on miss.
+
+    Calls GET /api/graph/phenology-stages?species=... (Task 0). Falls back
+    to _DEFAULT_STAGE_TABLE when bioorchestrator_url is not configured, the
+    service is unreachable/errors, or the response has no stages — never
+    raises (fail-safe).
+    """
+    cached = _stages_cache.get(species)
+    if cached is not None:
+        return cached
+    settings = get_settings()
+    if not settings.bioorchestrator_url:
+        _stages_cache[species] = _DEFAULT_STAGE_TABLE
+        return _DEFAULT_STAGE_TABLE
+    url = f"{settings.bioorchestrator_url}/api/graph/phenology-stages"
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(url, params={"species": species})
+            if resp.status_code == 200:
+                stages = resp.json().get("stages") or []
+                table = {
+                    s["stage"]: (float(s["gddMin"]), float(s["gddMax"]))
+                    for s in stages
+                    if s.get("gddMin") is not None and s.get("gddMax") is not None
+                }
+                if not table:
+                    _stages_cache[species] = _DEFAULT_STAGE_TABLE
+                    return _DEFAULT_STAGE_TABLE
+                base_temp = None
+                for s in stages:
+                    bt = s.get("baseTemp")
+                    if bt is not None:
+                        base_temp = float(bt)
+                        break
+                result = StageTable(
+                    stages=table,
+                    base_temp=base_temp if base_temp is not None else _DEFAULT_STAGE_TABLE.base_temp,
+                    upper_cutoff=_DEFAULT_STAGE_TABLE.upper_cutoff,
+                    gdd_method=_DEFAULT_STAGE_TABLE.gdd_method,
+                )
+                _stages_cache[species] = result
+                return result
+    except Exception as exc:  # noqa: BLE001 — fail-safe to default
+        logger.warning("get_phenology_stages failed for %s — default table: %s", species, exc)
+    _stages_cache[species] = _DEFAULT_STAGE_TABLE
+    return _DEFAULT_STAGE_TABLE
+
+
+async def get_phenology_params(
+    species: str = "generic",
+    stage: str = "vegetative",
+    cultivar: str | None = None,
+    management: str | None = None,
+    gdd: float | None = None,
+) -> PhenologyParams:
+    """Fetch phenology-dependent parameters from BioOrchestrator.
+
+    Returns hardcoded defaults if:
+    - BioOrchestrator is unreachable (circuit breaker)
+    - Requested species/stage is not in the graph
+    - HTTP error or timeout
+
+    Args:
+        species: Crop species name or AGROVOC URI.
+        stage: Phenological stage identifier.
+        cultivar: Optional cultivar for context-aware matching.
+        management: Optional irrigation strategy for context-aware matching.
+
+    Returns:
+        PhenologyParams with provenance when available,
+        is_default=True when using fallback values.
+    """
+    cache_key = (species, stage or "", cultivar or "", management or "", str(gdd or ""))
+    cached = _phenology_cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    settings = get_settings()
+    if not settings.bioorchestrator_url:
+        logger.warning("BIOORCHESTRATOR_URL not configured — using defaults")
+        return _DEFAULT_PARAMS
+
+    url = f"{settings.bioorchestrator_url}/api/graph/phenology-params"
+    params: dict[str, str] = {"species": species}
+    if stage:
+        params["stage"] = stage
+    if cultivar:
+        params["cultivar"] = cultivar
+    if management:
+        params["management"] = management
+    if gdd is not None:
+        params["gdd"] = str(gdd)
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(url, params=params)
+            if resp.status_code == 200:
+                data = resp.json()
+                prov = data.get("provenance", {})
+                alts = [
+                    PhenologyAlternative(
+                        kc=a.get("kc"),
+                        source_short=a.get("sourceShort"),
+                        source_doi=a.get("sourceDoi"),
+                        conditions=a.get("conditions"),
+                    )
+                    for a in (data.get("alternatives") or [])
+                ]
+                params = PhenologyParams(
+                    d1=data.get("d1", _DEFAULT_PARAMS.d1),
+                    d2=data.get("d2", _DEFAULT_PARAMS.d2),
+                    kc=data.get("kc", _DEFAULT_PARAMS.kc),
+                    mds_ref=data.get("mds_ref", _DEFAULT_PARAMS.mds_ref),
+                    species=data.get("species", species),
+                    stage=data.get("stage", stage),
+                    is_default=data.get("is_default", False),
+                    scientific_name=data.get("scientific_name"),
+                    stage_description=data.get("stage_description"),
+                    kc_confidence_interval=data.get("kc_confidence_interval"),
+                    d1_confidence_interval=data.get("d1_confidence_interval"),
+                    d2_confidence_interval=data.get("d2_confidence_interval"),
+                    mds_ref_confidence_interval=data.get("mds_ref_confidence_interval"),
+                    cultivar=data.get("cultivar"),
+                    management=data.get("management"),
+                    climate_zone=data.get("climate_zone"),
+                    match_level=data.get("match_level"),
+                    stage_gdd_min=data.get("stage_gdd_min"),
+                    stage_gdd_max=data.get("stage_gdd_max"),
+                    stage_base_temp=data.get("stage_base_temp"),
+                    provenance=PhenologyProvenance(
+                        doi=prov.get("doi"),
+                        short=prov.get("short"),
+                        author=prov.get("author"),
+                        year=prov.get("year"),
+                        institution=prov.get("institution"),
+                        method=prov.get("method"),
+                        conditions=prov.get("conditions"),
+                    ) if prov else None,
+                    alternatives=alts,
+                )
+                _phenology_cache[cache_key] = params
+                logger.info(
+                    "Phenology params for %s/%s from bioorchestrator (match=%s, source=%s)",
+                    species, stage, data.get("match_level"), prov.get("short"),
+                )
+                return params
+
+            if resp.status_code == 404:
+                logger.info(
+                    "No phenology data for %s/%s (404) — using defaults", species, stage
+                )
+            else:
+                logger.warning(
+                    "BioOrchestrator returned %d for %s/%s — using defaults",
+                    resp.status_code, species, stage,
+                )
+
+    except httpx.TimeoutException:
+        logger.warning("BioOrchestrator timeout for %s/%s — using defaults", species, stage)
+    except httpx.ConnectError:
+        logger.warning("BioOrchestrator unreachable — using defaults")
+    except Exception as exc:
+        logger.error("Unexpected error from bioorchestrator: %s", exc)
+
+    # Cache the default too, to avoid hammering a failing service
+    _phenology_cache[cache_key] = _DEFAULT_PARAMS
+    return _DEFAULT_PARAMS
+
+
+async def get_nutrient_recommendation(
+    species: str,
+    stage: str,
+    soil_n: float = 0,
+    soil_p: float = 0,
+    soil_k: float = 0,
+) -> dict | None:
+    """NPK recommendation from BioOrch nutrient-profile + soil levels.
+
+    Follows the same pattern as get_phenology_stages / get_phenology_params.
+    Returns None (no crash) when BioOrch is unreachable or has no data.
+    """
+    settings = get_settings()
+    if not settings.bioorchestrator_url:
+        return None
+    url = f"{settings.bioorchestrator_url}/api/graph/recommendations/fertilizer"
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(url, params={
+                "species": species, "stage": stage,
+                "soil_n": soil_n, "soil_p": soil_p, "soil_k": soil_k,
+            })
+            if resp.status_code == 200:
+                return resp.json()
+    except Exception as exc:
+        logger.warning("get_nutrient_recommendation failed for %s/%s: %s", species, stage, exc)
+    return None
+
+
+# Key: parcel_id, Value: AgriCrop dict
+_agri_crop_cache: TTLCache[str, dict | None] = TTLCache(
+    maxsize=256,
+    ttl=300,  # 5 min
+)
+
+
+async def get_agri_crop(
+    parcel_id: str,
+    tenant_id: str = "",
+) -> dict | None:
+    """Fetch AgriCrop entity for a parcel from Orion-LD.
+
+    Returns:
+        Dict with AgriCrop fields (plantingDate, harvestDate, variety, etc.)
+        or None if no AgriCrop exists for this parcel.
+    """
+    if parcel_id in _agri_crop_cache:
+        return _agri_crop_cache[parcel_id]
+
+    settings = get_settings()
+    if not settings.orion_ld_url:
+        return None
+
+    client = OrionClient(tenant_id, base_url=settings.orion_ld_url, context_url=settings.orion_ld_context)
+    try:
+        entities = await client.query_entities(
+            type="AgriCrop",
+            q=f'hasAgriParcel==\"urn:ngsi-ld:AgriParcel:{parcel_id}\"|refAgriParcel==\"urn:ngsi-ld:AgriParcel:{parcel_id}\"',
+            limit=10,
+            options="keyValues",
+        )
+        if entities and isinstance(entities, list):
+            # Skip activation scaffolding placeholders (provenance == "placeholder")
+            # — they are subscription shims, not a real crop assignment.
+            real = next((e for e in entities if e.get("provenance") != "placeholder"), None)
+            if real:
+                _agri_crop_cache[parcel_id] = real
+                return real
+    except Exception as exc:
+        logger.warning("Failed to fetch AgriCrop for parcel %s: %s", parcel_id, exc)
+    finally:
+        await client.close()
+
+    _agri_crop_cache[parcel_id] = None
+    return None
+
+
+# ── Season Start Resolution ─────────────────────────────────────────────────
+async def resolve_season_start(parcel_id: str, tenant_id: str) -> str | None:
+    """Degree-day accumulation start of the parcel's crop cycle in progress.
+
+    The platform rule (SDK ``crop_cycles``) resolved over the broker by the SDK
+    (``fetch_crop_timeline``) — no core service in between. None when no crop
+    is growing (not sown yet, nothing assigned, or the broker unreachable): a
+    crop that is not in the ground has accumulated nothing, and a calendar
+    default would model it from January.
+    """
+    settings = get_settings()
+    urn = parcel_id if parcel_id.startswith("urn:") else f"urn:ngsi-ld:AgriParcel:{parcel_id}"
+    try:
+        timeline = await fetch_crop_timeline(
+            tenant_id, urn, base_url=settings.orion_ld_url, context_url=settings.orion_ld_context,
+        )
+    except Exception as e:  # noqa: BLE001 — an assessment never fails on its season start
+        logger.warning("season start unavailable for %s: %s", urn, e)
+        return None
+    if not timeline or not timeline.get("current"):
+        return None
+    return (timeline.get("accumulation") or {}).get("start")
+
+
+def clear_phenology_cache() -> None:
+    """Clear the phenology cache (useful for testing)."""
+    _phenology_cache.clear()
+
+
+# ── Soil Properties Client ──────────────────────────────────────────────────
+
+_soil_cache: TTLCache[str, dict] = TTLCache(maxsize=128, ttl=3600)
+_coord_cache: TTLCache[str, tuple[float, float]] = TTLCache(maxsize=256, ttl=86400)
+
+_DEFAULT_SOIL_DICT = {
+    "sand_pct": 40, "clay_pct": 20, "silt_pct": 40,
+    "organic_carbon_pct": 1.0, "field_capacity": 0.27,
+    "wilting_point": 0.12, "ksat_mm_h": 13.0,
+    "scs_hydrologic_group": "B", "usda_texture_class": "loam",
+    "source": "default_modeled", "has_data": False,
+}
+
+
+def _soil_num(value: Any, default: float) -> float:
+    if value is None:
+        return default
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _summary_data_source(data: dict[str, Any], horizon: dict[str, Any]) -> str:
+    raw = data.get("dataSource")
+    if isinstance(raw, dict):
+        val = raw.get("value")
+        if val:
+            return str(val)
+    elif isinstance(raw, str) and raw.strip():
+        return raw.strip()
+    src = horizon.get("source")
+    if src:
+        return str(src)
+    return "soilgrids"
+
+
+async def _resolve_parcel_coords(parcel_id: str, tenant_id: str) -> tuple[float, float] | None:
+    """Resolve parcel centroid coordinates from Orion-LD AgriParcel."""
+    cache_key = f"{tenant_id}:{parcel_id}"
+    cached = _coord_cache.get(cache_key)
+    if cached:
+        return cached
+
+    settings = get_settings()
+    orion_client = OrionClient(tenant_id, base_url=settings.orion_ld_url, context_url=settings.orion_ld_context)
+    try:
+        data = await orion_client.get_entity(
+            f"urn:ngsi-ld:AgriParcel:{parcel_id}",
+            options="keyValues",
+        )
+        loc = data.get("location")
+        if isinstance(loc, dict) and loc.get("type") == "Point":
+            coords = loc["coordinates"]
+            result = (coords[1], coords[0])  # lat, lon
+            _coord_cache[cache_key] = result
+            return result
+        elif isinstance(loc, dict) and loc.get("type") == "Polygon":
+            ring = loc.get("coordinates", [[[]]])[0]
+            if ring:
+                lats = [p[1] for p in ring]
+                lons = [p[0] for p in ring]
+                result = (sum(lats) / len(lats), sum(lons) / len(lons))
+                _coord_cache[cache_key] = result
+                return result
+    except Exception as exc:
+        logger.warning("_resolve_parcel_coords: failed for parcel %s: %s", parcel_id, exc)
+    finally:
+        await orion_client.close()
+    return None
+
+
+async def _resolve_parcel_geometry(parcel_id: str, tenant_id: str) -> dict | None:
+    """Resolve a parcel's raw GeoJSON geometry (Polygon/Point) from Orion-LD.
+
+    Used as the whole-parcel fallback zone geometry for zonal synthesis.
+    Returns ``None`` on any failure (caller degrades to parcel-level mode).
+    """
+    settings = get_settings()
+    orion_client = OrionClient(tenant_id, base_url=settings.orion_ld_url, context_url=settings.orion_ld_context)
+    try:
+        data = await orion_client.get_entity(
+            f"urn:ngsi-ld:AgriParcel:{parcel_id}",
+            options="keyValues",
+        )
+        loc = data.get("location")
+        if isinstance(loc, dict):
+            if loc.get("type") == "GeoProperty":
+                loc = loc.get("value")
+            if isinstance(loc, dict) and loc.get("type") in ("Polygon", "MultiPolygon", "Point"):
+                return loc
+    except Exception as exc:
+        logger.warning("_resolve_parcel_geometry: failed for parcel %s: %s", parcel_id, exc)
+    finally:
+        await orion_client.close()
+    return None
+
+
+async def get_soil_properties(parcel_id: str, tenant_id: str = "") -> "SoilProperties":
+    """Fetch soil physical properties for a parcel.
+
+    Resolution chain:
+    1. Try GET /v1/soil/parcel/{id}/summary (pre-ingested AgriSoilExtended)
+    2. Fallback: resolve coords -> GET /v1/soil/point/texture?lat=X&lon=Y
+    3. If all fail: return default loam values
+
+    Results cached with 1h TTL.
+    """
+    from app.schemas import SoilProperties
+
+    cache_key = f"{tenant_id}:{parcel_id}"
+    cached = _soil_cache.get(cache_key)
+    if cached:
+        return SoilProperties(**cached)
+
+    settings = get_settings()
+    soil_url = settings.soil_module_url
+
+    soil_data = None
+
+    # Attempt 1: parcel/summary endpoint
+    try:
+        from app.services.soil_headers import soil_module_headers
+
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            headers = soil_module_headers(tenant_id) if tenant_id else {}
+            resp = await client.get(
+                f"{soil_url}/v1/soil/parcel/{parcel_id}/summary",
+                headers=headers,
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                horizons_raw = data.get("horizons")
+                if isinstance(horizons_raw, dict):
+                    horizons = horizons_raw.get("value", [])
+                elif isinstance(horizons_raw, list):
+                    horizons = horizons_raw
+                else:
+                    horizons = []
+                if horizons:
+                    h = horizons[0]
+                    soil_data = {
+                        "sand_pct": _soil_num(h.get("sand"), 40),
+                        "clay_pct": _soil_num(h.get("clay"), 20),
+                        "silt_pct": _soil_num(h.get("silt"), 40),
+                        "organic_carbon_pct": _soil_num(h.get("organicCarbon"), 1.0),
+                        "field_capacity": _soil_num(h.get("fieldCapacity"), 0.27),
+                        "wilting_point": _soil_num(h.get("wiltingPoint"), 0.12),
+                        "ksat_mm_h": _soil_num(
+                            h.get("ksatSaturated") or h.get("saturatedHydraulicConductivity"),
+                            13.0,
+                        ),
+                        "scs_hydrologic_group": h.get("hydrologicGroup") or "B",
+                        "usda_texture_class": h.get("usdaTextureClass") or "loam",
+                        "ph": h.get("ph"),
+                        "source": _summary_data_source(data, h),
+                        "has_data": True,
+                    }
+    except Exception:
+        pass
+
+    # Attempt 2: point/texture fallback with parcel coords
+    if soil_data is None:
+        coords = await _resolve_parcel_coords(parcel_id, tenant_id)
+        if coords:
+            lat, lon = coords
+            try:
+                from app.services.soil_headers import soil_module_headers
+
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    resp = await client.get(
+                        f"{soil_url}/v1/soil/point/texture",
+                        params={"lat": lat, "lon": lon, "depth": "0-60"},
+                        headers=soil_module_headers(tenant_id) if tenant_id else {},
+                    )
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        tex = data.get("texture", {})
+                        hyd = data.get("hydraulic", {})
+                        soil_data = {
+                            "sand_pct": _soil_num(tex.get("sand"), 40),
+                            "clay_pct": _soil_num(tex.get("clay"), 20),
+                            "silt_pct": _soil_num(tex.get("silt"), 40),
+                            "organic_carbon_pct": _soil_num(tex.get("organicCarbon"), 1.0),
+                            "field_capacity": _soil_num(hyd.get("fieldCapacity"), 0.27),
+                            "wilting_point": _soil_num(hyd.get("wiltingPoint"), 0.12),
+                            "ksat_mm_h": _soil_num(hyd.get("saturatedHydraulicConductivity"), 13.0),
+                            "scs_hydrologic_group": hyd.get("hydrologicGroup") or "B",
+                            "usda_texture_class": tex.get("usdaTextureClass") or "loam",
+                            "source": (data.get("source") or {}).get("provider") or "soilgrids",
+                            "has_data": True,
+                        }
+            except Exception:
+                pass
+
+    # Default fallback
+    if soil_data is None:
+        soil_data = dict(_DEFAULT_SOIL_DICT)
+        logger.warning("No soil data for parcel %s — using default loam", parcel_id)
+    else:
+        logger.info(
+            "Soil data for parcel %s from %s: %s, FC=%.2f WP=%.2f ksat=%.1f",
+            parcel_id, soil_data["source"], soil_data["usda_texture_class"],
+            soil_data["field_capacity"], soil_data["wilting_point"], soil_data["ksat_mm_h"],
+        )
+
+    _soil_cache[cache_key] = soil_data
+    return SoilProperties(**soil_data)
+
+
+# ── F4: Crop Context from BioOrchestrator ────────────────────────────────────
+
+_crop_context_cache: TTLCache[str, "CropContext"] = TTLCache(maxsize=128, ttl=3600)
+
+
+async def get_crop_context(
+    parcel_id: str,
+    tenant_id: str = "",
+    gdd: float | None = None,
+):
+    """Fetch full crop context from BioOrchestrator.
+
+    Calls GET /api/graph/agriculture/crop-context?parcel_id=X.
+    Returns None if BioOrchestrator unreachable (circuit breaker).
+    Uses TTLCache with 1h TTL.
+    """
+    from app.schemas import CropContext
+
+    cache_key = f"{tenant_id}:{parcel_id}:{gdd or 0}"
+    cached = _crop_context_cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    settings = get_settings()
+    if not settings.bioorchestrator_url:
+        logger.warning("BIOORCHESTRATOR_URL not configured — crop context unavailable")
+        return None
+
+    url = f"{settings.bioorchestrator_url}/api/graph/agriculture/crop-context"
+    params: dict = {"parcel_id": parcel_id}
+    if gdd is not None:
+        params["gdd"] = str(gdd)
+
+    headers: dict[str, str] = {}
+    if tenant_id:
+        headers = {"X-Tenant-ID": tenant_id, "X-User-ID": "crop-health-worker"}
+        if settings.internal_service_secret:
+            headers["X-Internal-Service-Secret"] = settings.internal_service_secret
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(url, params=params, headers=headers)
+            if resp.status_code == 200:
+                data = resp.json()
+                ctx = CropContext(**data)
+                _crop_context_cache[cache_key] = ctx
+                logger.info(
+                    "Crop context for parcel %s: species=%s variety=%s match=%s",
+                    parcel_id,
+                    data.get("crop", {}).get("eppo"),
+                    data.get("variety", {}).get("name"),
+                    data.get("match_level"),
+                )
+                return ctx
+            elif resp.status_code == 404:
+                logger.info("No crop context for parcel %s (404 — no crop assigned)", parcel_id)
+                return None
+            else:
+                logger.warning("BioOrchestrator returned %d for crop-context", resp.status_code)
+    except httpx.TimeoutException:
+        logger.warning("BioOrchestrator timeout for crop-context")
+    except httpx.ConnectError:
+        logger.warning("BioOrchestrator unreachable for crop-context")
+    except Exception as exc:
+        logger.error("Unexpected error from bioorchestrator crop-context: %s", exc)
+
+    return None
+
+
+# ── Soil Susceptibility (Phase 2 — Compaction Risk) ───────────────────────────
+
+_soil_susceptibility_cache: TTLCache[str, dict] = TTLCache(maxsize=128, ttl=86400)
+
+
+async def get_soil_susceptibility(parcel_id: str, tenant_id: str) -> dict | None:
+    """Fetch compaction susceptibility from the soil module.
+
+    Calls GET /v1/soil/parcel/{id}/compaction-susceptibility on the
+    soil module API. Result is cached for 24h (soil data is static).
+
+    Returns:
+        {
+            "overall_score": float,
+            "overall_class": str,
+            "worst_horizon_score": float,
+            "worst_horizon_class": str,
+            "by_horizon": [...],
+        }
+        or None if soil module is unreachable or parcel has no soil data.
+    """
+    settings = get_settings()
+    soil_url = settings.soil_module_url
+    if not soil_url:
+        logger.warning("SOIL_MODULE_URL not configured — compaction risk unavailable")
+        return None
+
+    cache_key = f"{tenant_id}:{parcel_id}"
+    cached = _soil_susceptibility_cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    url = f"{soil_url}/v1/soil/parcel/{parcel_id}/compaction-susceptibility"
+
+    try:
+        from app.services.soil_headers import soil_module_headers
+
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(
+                url,
+                headers=soil_module_headers(tenant_id) if tenant_id else {},
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                overall = data.get("overall", {})
+                result = {
+                    "overall_score": overall.get("score"),
+                    "overall_class": overall.get("class"),
+                    "worst_horizon_score": overall.get("worstHorizonScore"),
+                    "worst_horizon_class": overall.get("worstHorizonClass"),
+                    "by_horizon": data.get("byHorizon", []),
+                }
+                _soil_susceptibility_cache[cache_key] = result
+                logger.info(
+                    "Soil susceptibility for parcel %s: score=%s class=%s",
+                    parcel_id, result["overall_score"], result["overall_class"],
+                )
+                return result
+            elif resp.status_code == 404:
+                logger.info("No soil data for parcel %s (404)", parcel_id)
+                return None
+            else:
+                logger.warning("Soil module returned %d for parcel %s", resp.status_code, parcel_id)
+    except httpx.TimeoutException:
+        logger.warning("Soil module timeout for parcel %s", parcel_id)
+    except httpx.ConnectError:
+        logger.warning("Soil module unreachable for parcel %s", parcel_id)
+    except Exception as exc:
+        logger.error("Unexpected error from soil module: %s", exc)
+
+    return None
+
+
+# ── Multi-year Vigor Anomaly (Phase 3 — Compaction Risk) ─────────────────────
+
+# Growing season months for northern hemisphere (April–October inclusive)
+_GROWING_SEASON_MONTHS = {4, 5, 6, 7, 8, 9, 10}
+
+
+def _extract_season_year(assessed_at_str: str) -> int | None:
+    """Extract the growing season year from an ISO-8601 timestamp.
+
+    Timestamps in Apr–Oct belong to the current calendar year's season.
+    Timestamps in Jan–Mar belong to the PREVIOUS calendar year's season
+    (e.g., March 2025 NDVI is part of the 2024 growing season).
+
+    Returns None if the month is outside the growing season (Nov, Dec).
+    """
+    try:
+        from datetime import datetime as dt
+        parsed = dt.fromisoformat(assessed_at_str.replace("Z", "+00:00"))
+        month = parsed.month
+        year = parsed.year
+        if month in _GROWING_SEASON_MONTHS:
+            return year
+        # Jan–Mar: belongs to previous calendar year's growing season
+        if month <= 3:
+            return year - 1
+        return None
+    except (ValueError, TypeError):
+        return None
+
+
+async def get_multiyear_vigor_anomaly(
+    parcel_id: str,
+    tenant_id: str,
+    seasons: int = 3,
+) -> dict | None:
+    """Analyze multiple growing seasons of vigor data for persistent anomalies.
+
+    Queries Orion-LD for CropHealthAssessment entities linked to this parcel,
+    groups by growing season year, computes mean vigor per season, and returns
+    the average anomaly vs. the overall multi-year mean.
+
+    Returns None if:
+    - Fewer than 2 seasons of data available
+    - Orion-LD unreachable
+    - Parcel has no assessments
+
+    Returns:
+        {
+            "avg_anomaly": float,       # -1 to +1, negative = below mean
+            "seasons_analyzed": int,    # number of distinct growing seasons
+            "seasonal_means": {year: float, ...},
+            "overall_mean_vigor": float,
+        }
+    """
+    settings = get_settings()
+
+    client = OrionClient(tenant_id, base_url=settings.orion_ld_url, context_url=settings.orion_ld_context)
+    try:
+        # Query all CropHealthAssessment entities for this parcel
+        entities = await client.query_entities(
+            type="CropHealthAssessment",
+            q=f'hasAgriParcel==\"urn:ngsi-ld:AgriParcel:{parcel_id}\"|refAgriParcel==\"urn:ngsi-ld:AgriParcel:{parcel_id}\"',
+            limit=500,
+            options="keyValues",
+        )
+        if not isinstance(entities, list) or len(entities) < 2:
+            logger.info(
+                "Insufficient CropHealthAssessment entities for parcel %s: %d",
+                parcel_id, len(entities) if isinstance(entities, list) else 0,
+            )
+            return None
+
+        # ── Group by growing season year ──
+        seasonal_vigors: dict[int, list[float]] = {}
+        for e in entities:
+            # Handle both flat keyValues and nested NGSI-LD Property format
+            raw_at = e.get("assessedAt")
+            if isinstance(raw_at, dict):
+                assessed_at = raw_at.get("value")
+            else:
+                assessed_at = raw_at
+
+            raw_vigor = e.get("vigorIndex")
+            if isinstance(raw_vigor, dict):
+                vigor = raw_vigor.get("value")
+            else:
+                vigor = raw_vigor
+
+            if assessed_at is None or vigor is None:
+                continue
+
+            season_year = _extract_season_year(str(assessed_at))
+            if season_year is None:
+                continue
+
+            try:
+                vigor_val = float(vigor)
+                if 0.0 <= vigor_val <= 1.0:
+                    seasonal_vigors.setdefault(season_year, []).append(vigor_val)
+            except (ValueError, TypeError):
+                continue
+
+        # Need at least 2 seasons per Phase 2 engine contract
+        if len(seasonal_vigors) < 2:
+            logger.info(
+                "Only %d growing season(s) found for parcel %s (need ≥2)",
+                len(seasonal_vigors), parcel_id,
+            )
+            return None
+
+        # Only keep the most recent N seasons
+        sorted_years = sorted(seasonal_vigors.keys(), reverse=True)[:seasons]
+        seasonal_vigors = {y: seasonal_vigors[y] for y in sorted_years}
+
+        # ── Compute per-season means ──
+        seasonal_means: dict[int, float] = {}
+        for year, vigors in seasonal_vigors.items():
+            seasonal_means[year] = round(sum(vigors) / len(vigors), 4)
+
+        # ── Overall mean across all seasons ──
+        all_vigors = [v for vigors in seasonal_vigors.values() for v in vigors]
+        overall_mean = round(sum(all_vigors) / len(all_vigors), 4) if all_vigors else 0.5
+
+        # ── Average anomaly: mean of (season_mean - overall_mean) ──
+        anomalies = [seasonal_means[y] - overall_mean for y in sorted_years]
+        avg_anomaly = round(sum(anomalies) / len(anomalies), 4) if anomalies else 0.0
+
+        seasons_count = len(seasonal_vigors)
+
+        logger.info(
+            "Multi-year vigor for parcel %s: %d seasons, mean=%.3f, anomaly=%.3f",
+            parcel_id, seasons_count, overall_mean, avg_anomaly,
+        )
+
+        return {
+            "avg_anomaly": avg_anomaly,
+            "seasons_analyzed": seasons_count,
+            "seasonal_means": seasonal_means,
+            "overall_mean_vigor": overall_mean,
+        }
+
+    except httpx.TimeoutException:
+        logger.warning("Orion-LD timeout for multi-year vigor query (parcel %s)", parcel_id)
+    except httpx.ConnectError:
+        logger.warning("Orion-LD unreachable for multi-year vigor query")
+    except Exception as exc:
+        logger.error("Unexpected error in multi-year vigor analysis: %s", exc)
+    finally:
+        await client.close()
+
+    return None
+
+
+# ── Penetrometer Ground Truth (Phase 4c — Compaction Risk) ──────────────────
+
+
+async def get_penetrometer_data(
+    parcel_id: str,
+    tenant_id: str,
+) -> dict | None:
+    """Check if real penetrometer measurements exist for a parcel.
+
+    Queries Orion-LD for SoilSamplingPoint entities linked to this parcel
+    that have penetrationResistance data. If found, the compaction risk
+    engine can use this as ground truth instead of modeled susceptibility.
+
+    Returns None if no penetrometer data exists.
+
+    Returns:
+        {
+            "available": True,
+            "point_count": int,
+            "mean_mpa": float,
+            "max_mpa": float,
+            "depth_range": str,
+        }
+    """
+    settings = get_settings()
+
+    client = OrionClient(tenant_id, base_url=settings.orion_ld_url, context_url=settings.orion_ld_context)
+    try:
+        entities = await client.query_entities(
+            type="SoilSamplingPoint",
+            q=f'hasAgriParcel==\"urn:ngsi-ld:AgriParcel:{parcel_id}\"|refAgriParcel==\"urn:ngsi-ld:AgriParcel:{parcel_id}\"',
+            limit=50,
+            options="keyValues",
+        )
+        if not isinstance(entities, list):
+            return None
+
+        mpa_values = []
+        for e in entities:
+            pr = e.get("penetrationResistance")
+            if isinstance(pr, dict):
+                pr = pr.get("value")
+            if pr is not None:
+                try:
+                    val = float(pr)
+                    if val > 0:
+                        mpa_values.append(val)
+                except (ValueError, TypeError):
+                    pass
+
+        if len(mpa_values) < 1:
+            return None
+
+        depths = set()
+        for e in entities:
+            df = e.get("depthFrom", {}).get("value") if isinstance(e.get("depthFrom"), dict) else e.get("depthFrom")
+            dt = e.get("depthTo", {}).get("value") if isinstance(e.get("depthTo"), dict) else e.get("depthTo")
+            if df is not None and dt is not None:
+                depths.add(f"{df}-{dt}")
+
+        return {
+            "available": True,
+            "point_count": len(mpa_values),
+            "mean_mpa": round(sum(mpa_values) / len(mpa_values), 2),
+            "max_mpa": round(max(mpa_values), 2),
+            "depth_range": ", ".join(sorted(depths)) if depths else "unknown",
+        }
+
+    except Exception:
+        pass
+    finally:
+        await client.close()
+
+    return None
+
+
+# ── LST Climatology for TCI ───────────────────────────────────────────────
+
+_lst_climatology_cache: TTLCache[str, dict] = TTLCache(maxsize=128, ttl=86400)
+
+
+async def get_lst_climatology(
+    parcel_id: str,
+    tenant_id: str,
+    target_month: int,
+) -> dict:
+    """Fetch LST climatology for a parcel and month from EOProduct.lst history.
+
+    Returns percentiles (p05 = typical min, p95 = typical max) for TCI
+    computation. Uses all EOProduct records carrying an ``lst`` attribute.
+
+    Returns:
+        dict with keys: lst_p05, lst_p95, sample_count, is_reliable, reason
+    """
+    from datetime import datetime as dt
+
+    cache_key = f"{tenant_id}:{parcel_id}:{target_month}"
+    cached = _lst_climatology_cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    settings = get_settings()
+    orion_url = settings.orion_ld_url
+    if not orion_url:
+        return _climatology_unavailable_lst("ORION_LD_URL not configured")
+
+    client = OrionClient(tenant_id, base_url=orion_url, context_url=settings.orion_ld_context)
+    try:
+        entities = await client.query_entities(
+            type="EOProduct",
+            q=f'hasAgriParcel=="urn:ngsi-ld:AgriParcel:{parcel_id}"|refAgriParcel=="urn:ngsi-ld:AgriParcel:{parcel_id}"',
+            limit=500,
+            options="keyValues",
+        )
+        if isinstance(entities, list):
+            entities = [e for e in entities if e.get("lst") is not None]
+        if not isinstance(entities, list) or len(entities) < 3:
+            return _climatology_unavailable_lst(
+                f"Only {len(entities) if isinstance(entities, list) else 0} LST records"
+            )
+
+        # Filter by month +-1
+        month_entities = []
+        for e in entities:
+            sensed = e.get("sensingDate") or e.get("observedAt")
+            if isinstance(sensed, dict):
+                sensed = sensed.get("value")
+            if not sensed:
+                continue
+            try:
+                d = dt.fromisoformat(str(sensed).replace("Z", "+00:00"))
+            except (ValueError, TypeError):
+                continue
+            if abs(d.month - target_month) <= 1 or (
+                target_month == 1 and d.month == 12
+            ) or (target_month == 12 and d.month == 1):
+                month_entities.append((d, e))
+
+        if len(month_entities) < 2:
+            return _climatology_unavailable_lst(
+                f"Only {len(month_entities)} LST records in month {target_month}+-1"
+            )
+
+        lst_vals = _extract_lst_values(month_entities)
+        if not lst_vals or len(lst_vals) < 2:
+            return _climatology_unavailable_lst("No valid LST values in window")
+
+        dates = [d for d, _ in month_entities]
+        result = _build_lst_climatology_result(lst_vals, dates)
+        _lst_climatology_cache[cache_key] = result
+        logger.info(
+            "LST climatology for %s: %d records (month %d)",
+            parcel_id, len(month_entities), target_month,
+        )
+        return result
+
+    except Exception as exc:
+        return _climatology_unavailable_lst(f"Error: {exc}")
+    finally:
+        await client.close()
+
+
+def _extract_lst_values(entities: list) -> list[float]:
+    """Extract LST (°C) values from EOProduct entities."""
+    values = []
+    for _, e in entities:
+        lst = e.get("LST") or e.get("lst")
+        if isinstance(lst, dict):
+            lst = lst.get("value")
+        if lst is not None:
+            try:
+                val = float(lst)
+                if -20.0 <= val <= 70.0:
+                    values.append(val)
+            except (ValueError, TypeError):
+                pass
+    return values
+
+
+def _build_lst_climatology_result(values: list[float], dates: list) -> dict:
+    """Compute LST percentiles for TCI min/max."""
+    sorted_vals = sorted(values)
+    n = len(sorted_vals)
+    p05_idx = max(0, int(n * 0.05))
+    p95_idx = min(n - 1, int(n * 0.95))
+    sorted_dates = sorted(dates)
+    return {
+        "lst_p05": round(sorted_vals[p05_idx], 2),
+        "lst_p95": round(sorted_vals[p95_idx], 2),
+        "sample_count": n,
+        "period_start": sorted_dates[0].strftime("%Y-%m-%d"),
+        "period_end": sorted_dates[-1].strftime("%Y-%m-%d"),
+        "is_reliable": n >= 3,
+        "reason": None,
+    }
+
+
+def _climatology_unavailable_lst(reason: str) -> dict:
+    logger.warning("LST climatology unavailable: %s", reason)
+    return {
+        "lst_p05": None,
+        "lst_p95": None,
+        "sample_count": 0,
+        "period_start": None,
+        "period_end": None,
+        "is_reliable": False,
+        "reason": reason,
+    }
+
+
+# ── NDVI Climatology for VHI ────────────────────────────────────────────────
+
+_ndvi_climatology_cache: TTLCache[str, dict] = TTLCache(maxsize=128, ttl=86400)
+
+
+async def get_ndvi_climatology(
+    parcel_id: str,
+    tenant_id: str,
+    target_month: int,
+    eppo_code: str | None = None,
+) -> dict:
+    """Fetch NDVI climatology for a parcel and month.
+
+    Priority cascade:
+    1. Same parcel + same crop EPPO -> best
+    2. Same parcel, same month (any crop) -> acceptable
+    3. Not enough data -> unreliable
+
+    Returns:
+        dict with keys: ndvi_p05, ndvi_p95, sample_count, filter_criteria,
+        period_start, period_end, is_reliable, reason
+    """
+    from datetime import datetime as dt, timedelta
+
+    cache_key = f"{tenant_id}:{parcel_id}:{target_month}:{eppo_code or ''}"
+    cached = _ndvi_climatology_cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    settings = get_settings()
+    orion_url = settings.orion_ld_url
+    if not orion_url:
+        return _climatology_unavailable("ORION_LD_URL not configured")
+
+    client = OrionClient(tenant_id, base_url=orion_url, context_url=settings.orion_ld_context)
+    try:
+        entities = await client.query_entities(
+            type="EOProduct",
+            q=f'hasAgriParcel=="urn:ngsi-ld:AgriParcel:{parcel_id}"|refAgriParcel=="urn:ngsi-ld:AgriParcel:{parcel_id}"',
+            limit=500,
+            options="keyValues",
+        )
+        # Keep only optical acquisitions that actually carry an ndvi value
+        # (SAR EOProducts share the type but have no `ndvi` attribute).
+        if isinstance(entities, list):
+            entities = [e for e in entities if e.get("ndvi") is not None]
+        if not isinstance(entities, list) or len(entities) < 3:
+            return _climatology_unavailable(
+                f"Only {len(entities) if isinstance(entities, list) else 0} EOProduct NDVI records"
+            )
+
+        # Filter by month +-1 (EOProduct carries the acquisition as sensingDate)
+        month_entities = []
+        for e in entities:
+            assessed = e.get("sensingDate") or e.get("dateObserved") or e.get("observedAt")
+            if isinstance(assessed, dict):
+                assessed = assessed.get("value")
+            if not assessed:
+                continue
+            try:
+                d = dt.fromisoformat(str(assessed).replace("Z", "+00:00"))
+            except (ValueError, TypeError):
+                continue
+            if abs(d.month - target_month) <= 1 or (
+                target_month == 1 and d.month == 12
+            ) or (target_month == 12 and d.month == 1):
+                month_entities.append((d, e))
+
+        if len(month_entities) < 2:
+            return _climatology_unavailable(
+                f"Only {len(month_entities)} records in month {target_month}+-1"
+            )
+
+        # Priority 1: filter by crop EPPO
+        if eppo_code:
+            crop_filtered = [
+                (d, e) for d, e in month_entities
+                if e.get("cropEPPO", "") == eppo_code
+            ]
+            if len(crop_filtered) >= 2:
+                ndvi_vals = _extract_ndvi_values(crop_filtered)
+                if ndvi_vals:
+                    dates = [d for d, _ in crop_filtered]
+                    result = _build_climatology_result(
+                        ndvi_vals, dates,
+                        f"parcel_specific:same_crop_{eppo_code}",
+                    )
+                    _ndvi_climatology_cache[cache_key] = result
+                    logger.info(
+                        "NDVI climatology for %s: %d same-crop records (month %d)",
+                        parcel_id, len(crop_filtered), target_month,
+                    )
+                    return result
+
+        # Priority 2: all records in month range (any crop)
+        ndvi_vals = _extract_ndvi_values(month_entities)
+        if ndvi_vals and len(ndvi_vals) >= 2:
+            dates = [d for d, _ in month_entities]
+            result = _build_climatology_result(
+                ndvi_vals, dates,
+                "parcel_specific:same_month",
+            )
+            _ndvi_climatology_cache[cache_key] = result
+            logger.info(
+                "NDVI climatology for %s: %d same-month records (month %d)",
+                parcel_id, len(month_entities), target_month,
+            )
+            return result
+
+        return _climatology_unavailable(
+            f"No valid NDVI values in {len(month_entities)} records"
+        )
+
+    except httpx.TimeoutException:
+        return _climatology_unavailable("Orion-LD timeout")
+    except httpx.ConnectError:
+        return _climatology_unavailable("Orion-LD unreachable")
+    except Exception as exc:
+        return _climatology_unavailable(f"Unexpected error: {exc}")
+    finally:
+        await client.close()
+
+
+def _extract_ndvi_values(entities: list) -> list[float]:
+    """Extract NDVI values from EOProduct entities (keyValues `ndvi` scalar)."""
+    values = []
+    for _, e in entities:
+        ndvi = e.get("NDVI") or e.get("ndvi")
+        if isinstance(ndvi, dict):
+            ndvi = ndvi.get("value")
+        if ndvi is not None:
+            try:
+                val = float(ndvi)
+                if 0.0 <= val <= 1.0:
+                    values.append(val)
+            except (ValueError, TypeError):
+                pass
+    return values
+
+
+def _build_climatology_result(
+    values: list[float], dates: list, criteria: str
+) -> dict:
+    """Compute NDVI percentiles and build result dict."""
+    sorted_vals = sorted(values)
+    n = len(sorted_vals)
+    p05_idx = max(0, int(n * 0.05))
+    p95_idx = min(n - 1, int(n * 0.95))
+    sorted_dates = sorted(dates)
+    return {
+        "ndvi_p05": round(sorted_vals[p05_idx], 4),
+        "ndvi_p95": round(sorted_vals[p95_idx], 4),
+        "sample_count": n,
+        "filter_criteria": criteria,
+        "period_start": sorted_dates[0].strftime("%Y-%m-%d"),
+        "period_end": sorted_dates[-1].strftime("%Y-%m-%d"),
+        "is_reliable": n >= 3,
+        "reason": None,
+    }
+
+
+def _climatology_unavailable(reason: str) -> dict:
+    logger.warning("NDVI climatology unavailable: %s", reason)
+    return {
+        "ndvi_p05": None,
+        "ndvi_p95": None,
+        "sample_count": 0,
+        "filter_criteria": "none",
+        "period_start": None,
+        "period_end": None,
+        "is_reliable": False,
+        "reason": reason,
+    }

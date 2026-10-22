@@ -1,0 +1,245 @@
+import React, { useEffect, useState, useCallback } from 'react';
+import { useTranslation } from '@nekazari/sdk';
+import { cropHealthFetch } from '../api/cropHealthApi';
+import { formatRelativeTime } from '../utils/relativeTime';
+
+interface SensorInfo {
+  metric: string;
+  lastValue: number;
+  lastTs: string;
+  unit: string;
+}
+
+interface SourceBlock {
+  status: string;
+  freshness: string;
+  lastDataAt: string | null;
+  summary?: string;
+  details?: Record<string, unknown>;
+  sensors?: SensorInfo[];
+  lastValue?: number;
+  reason?: string;
+  species?: string;
+  eppoCode?: string;
+  variety?: string;
+  plantingDate?: string;
+  harvestDate?: string | null;
+  phenologyStage?: string;
+  gddProgressPct?: number | null;
+  source?: string;
+  matchLevel?: string;
+  alerts?: Array<{ type: string; name: string; conditions: string; confidence: string }>;
+}
+
+interface SourcesData {
+  parcelId: string;
+  checkedAt: string;
+  sources: {
+    soil: SourceBlock;
+    iot: SourceBlock;
+    weather: SourceBlock;
+    satellite: { ndvi: SourceBlock; sar: SourceBlock };
+    crop: SourceBlock;
+    bioorchestrator: SourceBlock;
+    risks: SourceBlock;
+  };
+}
+
+interface SourceStatusPanelProps {
+  parcelId: string;
+  parcelName?: string;
+  embedded?: boolean;
+}
+
+const STATUS_DOT: Record<string, string> = {
+  ok: '🟢',
+  degraded: '🟡',
+  unavailable: '🔴',
+  error: '🔴',
+  none: '⚪',
+};
+
+function StatusBadge({ status, label }: { status: string; label: string }) {
+  const cls: Record<string, string> = {
+    ok: 'bg-nkz-success-soft text-nkz-success-strong border border-nkz-success',
+    degraded: 'bg-nkz-warning-soft text-nkz-warning-strong border border-nkz-warning',
+    error: 'bg-nkz-danger-soft text-nkz-danger-strong border border-nkz-danger',
+    unavailable: 'bg-nkz-danger-soft text-nkz-danger-strong border border-nkz-danger',
+    none: 'bg-nkz-surface-sunken text-nkz-text-secondary border border-nkz-border',
+  };
+  return (
+    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium leading-4 ${cls[status] || cls.none}`}>
+      {label}
+    </span>
+  );
+}
+
+function relativeTime(iso: string | null, t: ReturnType<typeof useTranslation>['t']): string {
+  return formatRelativeTime(iso, t);
+}
+
+const SourceStatusPanel: React.FC<SourceStatusPanelProps> = ({ parcelId, parcelName, embedded = false }) => {
+  const { t } = useTranslation('crop-health');
+  const [data, setData] = useState<SourcesData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const fetchData = useCallback(async (showSpinner = false) => {
+    if (showSpinner) setRefreshing(true);
+    try {
+      const json = await cropHealthFetch<SourcesData>(`/sources?parcelId=${encodeURIComponent(parcelId)}`);
+      if (json) {
+        setData(json);
+        setError(null);
+      } else {
+        setError('fetch failed');
+      }
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, [parcelId]);
+
+  useEffect(() => {
+    setLoading(true);
+    fetchData();
+    const interval = setInterval(() => fetchData(), 60000);
+    return () => clearInterval(interval);
+  }, [fetchData]);
+
+  if (loading) {
+    return (
+      <div className={`${embedded ? '' : 'bg-nkz-surface-raised border border-nkz-border rounded-lg p-3 mb-3'} animate-pulse space-y-2`}>
+        {[1, 2, 3, 4, 5, 6].map(i => (
+          <div key={i} className="h-4 bg-nkz-border rounded w-full" />
+        ))}
+      </div>
+    );
+  }
+
+  if (error || !data) {
+    return (
+      <div className={`${embedded ? '' : 'bg-nkz-surface-raised border border-nkz-border rounded-lg p-3 mb-3'} text-center`}>
+        <p className="text-sm text-nkz-text-muted">{t('sources.error')}: {error}</p>
+        <button
+          className="text-xs text-nkz-accent-base underline mt-1 cursor-pointer bg-transparent border-none"
+          onClick={() => { setLoading(true); fetchData(); }}
+        >
+          {t('sources.retry')}
+        </button>
+      </div>
+    );
+  }
+
+  const src = data.sources;
+
+  const countActive =
+    (src.soil.status === 'ok' ? 1 : 0) +
+    (src.iot.status === 'ok' ? 1 : 0) +
+    (src.weather.status === 'ok' ? 1 : 0) +
+    (src.satellite.ndvi.status === 'ok' ? 1 : 0) +
+    (src.satellite.sar.status === 'ok' ? 1 : 0) +
+    (src.crop.status === 'ok' ? 1 : 0) +
+    (src.bioorchestrator.status === 'ok' ? 1 : 0);
+
+  const countDegraded =
+    (src.soil.freshness === 'stale' ? 1 : 0) +
+    (src.iot.freshness === 'stale' ? 1 : 0) +
+    (src.weather.freshness === 'stale' ? 1 : 0);
+
+  const countDown =
+    (src.soil.status === 'error' || (src.soil.status === 'unavailable' && src.soil.freshness === 'none') ? 1 : 0) +
+    (src.iot.status === 'error' ? 1 : 0) +
+    (src.satellite.sar.status === 'error' ? 1 : 0);
+
+  return (
+    <div className={`${embedded ? 'p-2' : 'bg-nkz-surface-raised border border-nkz-border rounded-lg p-3 mb-3 shadow-sm'}`}>
+      {/* Header */}
+      <div className="flex items-start justify-between">
+        <div>
+          <h3 className="text-sm font-semibold text-nkz-text-primary">
+            {t('sources.title', { parcel: parcelName || parcelId })}
+          </h3>
+          <div className="flex flex-wrap gap-1 mt-1">
+            <StatusBadge status="ok" label={`🟢 ${countActive} ${t('sources.activeCount')}`} />
+            {countDegraded > 0 && <StatusBadge status="degraded" label={`🟡 ${countDegraded} ${t('sources.degradedCount')}`} />}
+            {countDown > 0 && <StatusBadge status="error" label={`🔴 ${countDown} ${t('sources.downCount')}`} />}
+          </div>
+        </div>
+        <button
+          onClick={() => fetchData(true)}
+          disabled={refreshing}
+          className="text-lg text-nkz-accent-base hover:opacity-70 disabled:opacity-40 cursor-pointer bg-transparent border-none"
+          title={t('sources.refresh')}
+        >
+          {refreshing ? '⏳' : '🔄'}
+        </button>
+      </div>
+
+      {/* Source rows */}
+      <div className="space-y-1.5 mt-2">
+        <SourceRow icon="🌍" label={t('sources.soil.label')} status={src.soil.status}
+          freshness={src.soil.freshness} lastDataAt={src.soil.lastDataAt}
+          summary={src.soil.summary || t('sources.noData')} t={t} />
+        <SourceRow icon="🌡️" label={t('sources.iot.label', { count: src.iot.sensors?.length || 0 })}
+          status={src.iot.status} freshness={src.iot.freshness} lastDataAt={src.iot.lastDataAt}
+          summary={src.iot.summary || t('sources.noData')} t={t} />
+        <SourceRow icon="☁️" label={t('sources.weather.label')} status={src.weather.status}
+          freshness={src.weather.freshness} lastDataAt={src.weather.lastDataAt}
+          summary={src.weather.summary || t('sources.noData')} t={t} />
+        <SourceRow icon="🛰️" label={t('sources.satellite.ndvi')} status={src.satellite.ndvi.status}
+          freshness={src.satellite.ndvi.freshness} lastDataAt={src.satellite.ndvi.lastDataAt}
+          summary={src.satellite.ndvi.lastValue != null ? `NDVI ${src.satellite.ndvi.lastValue.toFixed(2)}` : t('sources.noData')} t={t} />
+        <SourceRow icon="📡" label={t('sources.satellite.sar')} status={src.satellite.sar.status}
+          freshness={src.satellite.sar.freshness} lastDataAt={src.satellite.sar.lastDataAt}
+          summary={src.satellite.sar.reason ? `— ${src.satellite.sar.reason}` : t('sources.noData')} t={t} />
+        <SourceRow icon="🌾" label={t('sources.crop.label')} status={src.crop.status}
+          freshness={src.crop.freshness} lastDataAt={src.crop.lastDataAt}
+          summary={src.crop.species
+            ? `${src.crop.species} · ${src.crop.variety || '?'}${src.crop.phenologyStage ? ` · ${src.crop.phenologyStage}` : ''}`
+            : t('sources.crop.notSet')} t={t} />
+        <SourceRow icon="📚" label={t('sources.bioorchestrator.label')} status={src.bioorchestrator.status}
+          freshness={src.bioorchestrator.freshness} lastDataAt={src.bioorchestrator.lastDataAt}
+          summary={src.bioorchestrator.summary || t('sources.noData')} t={t} />
+
+        {src.risks.alerts && src.risks.alerts.length > 0 && (
+          <div className="text-xs mt-2 pt-2 border-t border-nkz-border">
+            <span className="text-nkz-text-muted">{t('sources.risks.label')}: </span>
+            {src.risks.alerts.map((a, i) => (
+              <span key={i} className="text-nkz-text-secondary">
+                ⚠️ {a.name} ({a.conditions})
+                {i < src.risks.alerts!.length - 1 ? ' · ' : ''}
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+// ── SourceRow sub-component ──────────────────────────────────────────────
+
+interface SourceRowProps {
+  icon: string;
+  label: string;
+  status: string;
+  freshness: string;
+  lastDataAt: string | null;
+  summary: string;
+}
+
+const SourceRow: React.FC<SourceRowProps & { t: ReturnType<typeof useTranslation>['t'] }> = ({ icon, label, status, lastDataAt, summary, t }) => (
+  <div className="flex items-center gap-2 text-sm">
+    <span className="w-5 text-center flex-shrink-0">{icon}</span>
+    <span className="text-nkz-text-primary w-28 flex-shrink-0 truncate text-xs">{label}</span>
+    <span className="flex-shrink-0 text-xs">{STATUS_DOT[status] || '❓'}</span>
+    <span className="text-nkz-text-muted text-xs flex-shrink-0 w-16">{relativeTime(lastDataAt, t)}</span>
+    <span className="text-nkz-text-secondary text-xs truncate">{summary}</span>
+  </div>
+);
+
+export default SourceStatusPanel;

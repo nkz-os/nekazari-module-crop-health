@@ -1,0 +1,131 @@
+"""crop-health readers must consume the canonical EOProduct contract.
+
+Contract (vegetation-health CONTRACT.md): one EOProduct per (parcel, sensingDate);
+each index is a named lowercased Property (`ndvi`, value = zonal mean). No
+`productType` discriminator and no `ndviMean`/`ndviValue` on optical products.
+"""
+from unittest.mock import AsyncMock, Mock, patch
+
+import pytest
+
+
+def _eoproduct(sensing_date: str, ndvi: float) -> dict:
+    # keyValues representation, as returned with options=keyValues.
+    return {
+        "id": f"urn:ngsi-ld:EOProduct:test-tenant:da36ccd2e5:{sensing_date}",
+        "type": "EOProduct",
+        "hasAgriParcel": "urn:ngsi-ld:AgriParcel:da36ccd2-85d2-4c76-b552-c5c835a987c1",
+        "sensingDate": sensing_date,
+        "ndvi": ndvi,
+    }
+
+
+@pytest.mark.asyncio
+async def test_fetch_parcel_ndvi_reads_latest_eoproduct():
+    from app.services import pipeline
+
+    client = AsyncMock()
+    client.query_entities = AsyncMock(return_value=[
+        _eoproduct("2026-06-10", 0.55),
+        _eoproduct("2026-06-20", 0.72),  # newest by sensingDate
+    ])
+    client.close = AsyncMock()
+
+    with patch("nkz_platform_sdk.orion.OrionClient", return_value=client):
+        val = await pipeline._fetch_parcel_ndvi(
+            "da36ccd2-85d2-4c76-b552-c5c835a987c1", "test-tenant"
+        )
+
+    assert val == 0.72  # newest acquisition's ndvi mean
+    kwargs = client.query_entities.call_args.kwargs
+    assert kwargs.get("type") == "EOProduct"
+    # optical EOProducts carry no productType discriminator
+    assert "productType" not in (kwargs.get("q") or "")
+
+
+def _eoproduct_with_lst(sensing_date: str, lst_c: float) -> dict:
+    return {
+        "id": f"urn:ngsi-ld:EOProduct:test-tenant:da36ccd2e5:{sensing_date}",
+        "type": "EOProduct",
+        "hasAgriParcel": "urn:ngsi-ld:AgriParcel:da36ccd2-85d2-4c76-b552-c5c835a987c1",
+        "sensingDate": sensing_date,
+        "lst": lst_c,
+    }
+
+
+@pytest.mark.asyncio
+async def test_fetch_parcel_lst_reads_latest_eoproduct():
+    from app.services import pipeline
+
+    client = AsyncMock()
+    client.query_entities = AsyncMock(return_value=[
+        _eoproduct_with_lst("2026-06-10", 28.5),
+        _eoproduct_with_lst("2026-06-18", 31.2),
+    ])
+    client.close = AsyncMock()
+
+    with patch("nkz_platform_sdk.orion.OrionClient", return_value=client):
+        val = await pipeline._fetch_parcel_lst(
+            "da36ccd2-85d2-4c76-b552-c5c835a987c1", "test-tenant"
+        )
+
+    assert val == 31.2
+
+
+@pytest.mark.asyncio
+async def test_ndvi_climatology_reads_eoproduct_history():
+    """VHI climatology must read EOProduct history (sensingDate + ndvi), not VegetationIndex."""
+    from app.services import context_client
+
+    # 4 acquisitions in June (month 6) for the parcel
+    ents = [_eoproduct(f"2025-06-0{d}", 0.60 + d * 0.01) for d in range(1, 5)]
+    client = AsyncMock()
+    client.query_entities = AsyncMock(return_value=ents)
+    client.close = AsyncMock()
+
+    with patch("app.services.context_client.OrionClient", return_value=client):
+        result = await context_client.get_ndvi_climatology(
+            "da36ccd2-unique-clim", "test-tenant", target_month=6, eppo_code=None
+        )
+
+    assert client.query_entities.call_args.kwargs.get("type") == "EOProduct"
+    assert result["is_reliable"] is True
+    assert result["sample_count"] >= 2
+
+
+@pytest.mark.asyncio
+async def test_ndvi_cwsi_correlation_reads_eoproduct():
+    """The NDVI/CWSI correlation endpoint must read EOProduct (ndvi + sensingDate)."""
+    from types import SimpleNamespace
+    from app.api import assessments
+
+    orion = AsyncMock()
+    orion.query_entities = AsyncMock(return_value=[
+        {"id": "urn:ngsi-ld:EOProduct:test-tenant:p:2026-06-05", "sensingDate": "2026-06-05", "ndvi": 0.72},
+    ])
+    orion.close = AsyncMock()
+
+    # Mock the timeseries-reader HTTP call (replaces asyncpg.connect)
+    http_response = AsyncMock()
+    http_response.raise_for_status = Mock()
+    http_response.json = Mock(return_value={
+        "data": [{"observed_at": "2026-06-05T00:00:00", "cwsiValue": 0.42}]
+    })
+
+    req = SimpleNamespace(state=SimpleNamespace(tenant_id="test-tenant"), headers={})
+    fake_settings = SimpleNamespace(
+        orion_ld_url="http://orion", orion_ld_context="http://ctx",
+        weather_api_url="http://timeseries-reader:5000",
+    )
+
+    with patch("app.api.assessments.OrionClient", return_value=orion), \
+         patch("app.api.assessments.get_settings", return_value=fake_settings), \
+         patch("httpx.AsyncClient") as mock_client:
+        mock_client.return_value.__aenter__ = AsyncMock(return_value=AsyncMock(
+            get=AsyncMock(return_value=http_response)
+        ))
+        out = await assessments.ndvi_cwsi_correlation(req, parcelId="p", days=30)
+
+    # No productType discriminator in the EOProduct query
+    assert "productType" not in (orion.query_entities.call_args.kwargs.get("q") or "")
+    assert out["pairs"] == [{"date": "2026-06-05", "ndvi": 0.72, "cwsi": 0.42}]

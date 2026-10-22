@@ -1,0 +1,157 @@
+# =============================================================================
+# Crop Health Engine — K8s Backend Deployment
+# =============================================================================
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: crop-health-backend
+  namespace: nekazari
+  labels:
+    app: crop-health-backend
+    component: backend
+    module: crop-health
+    nkz-os.org/profile: addon
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: crop-health-backend
+  template:
+    metadata:
+      labels:
+        app: crop-health-backend
+        component: backend
+        module: crop-health
+    spec:
+      containers:
+        - name: backend
+          image: ghcr.io/nkz-os/nekazari-module-crop-health:190792314fa8b9003613a569601d01e7c5f7e3b7  # reference only — prod pin: gitops-config/overlays/modules/crop-health/
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 8000
+          env:
+            - name: APP_NAME
+              value: "Crop Health Engine"
+            - name: DEBUG
+              value: "false"
+            - name: LOG_LEVEL
+              value: "INFO"
+            - name: API_PREFIX
+              value: "/api/crop-health"
+            # CORS
+            - name: CORS_ORIGINS
+              valueFrom:
+                configMapKeyRef:
+                  name: crop-health-config
+                  key: CORS_ORIGINS
+            # Keycloak
+            - name: KEYCLOAK_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: crop-health-config
+                  key: KEYCLOAK_URL
+            - name: KEYCLOAK_REALM
+              value: "nekazari"
+            - name: JWT_AUDIENCE
+              value: "account"
+            # Redis (shared instance)
+            - name: REDIS_URL
+              value: "redis://redis-service:6379/0"
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: redis-secret
+                  key: password
+            - name: REDIS_KEY_PREFIX
+              value: "crophealth:"
+            - name: SLIDING_WINDOW_HOURS
+              value: "48"
+            # FIWARE
+            - name: ORION_LD_URL
+              value: "http://orion-ld-service:1026"
+            - name: CONTEXT_URL
+              value: "http://api-gateway-service:5000/ngsi-ld-context.json"
+            - name: INTERNAL_SERVICE_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: internal-service-secret
+                  key: INTERNAL_SERVICE_SECRET
+            # External services
+            - name: SOIL_MODULE_URL
+              value: "http://soil-module-service:8000"
+            - name: BIOORCHESTRATOR_URL
+              value: "http://bioorchestrator-api-service:8420"
+            # Weather DB (from shared secret)
+            - name: WEATHER_DB_URL
+              valueFrom:
+                secretKeyRef:
+                  name: postgresql-secret
+                  key: connection-string
+                  optional: true
+            # Service-to-service
+            - name: MODULE_MANAGEMENT_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: module-secrets
+                  key: management-key
+                  optional: true
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "200m"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 15
+            periodSeconds: 30
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            failureThreshold: 30
+            timeoutSeconds: 1
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 999
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: crop-health-api-service
+  namespace: nekazari
+  labels:
+    app: crop-health-backend
+    module: crop-health
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8000
+      targetPort: 8000
+      protocol: TCP
+      name: http
+  selector:
+    app: crop-health-backend
+    component: backend

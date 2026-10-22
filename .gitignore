@@ -1,0 +1,43 @@
+# Dependencies
+node_modules/
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+.eggs/
+package-lock.json
+
+# Environment
+.env
+.env.*
+!env.example
+venv/
+.venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+docker-compose.override.yml
+
+# Test / Coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Security: sensitive files
+*.pem
+*.key
+apikey_*.txt
+*.apikey
+*-secret*
+*_api_key.txt

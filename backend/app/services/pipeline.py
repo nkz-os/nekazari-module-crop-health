@@ -24,6 +24,7 @@ from nkz_platform_sdk.crypto import generate_hmac_signature
 
 from app.config import get_settings
 from app.engines.mds_model import calculate_mds_from_readings
+from app.engines.under_panel_stress import MIN_GHI_WM2, PAR_PER_GHI
 from app.engines.phenology_progress import derive_stage_from_gdd
 from app.engines.water_stress import cwsi_with_weather
 from app.schemas import (
@@ -41,7 +42,7 @@ from app.services import context_client
 from app.services.context_client import get_phenology_params
 from app.services.fiware_publisher import publish_assessment
 from app.services.meteo_context import resolve_meteo_context
-from app.services.redis_state import RedisState
+from app.services.redis_state import RedisState, StoreError
 from app.services.zonation import (
     resolve_zones,
     is_whole_parcel,
@@ -1246,6 +1247,12 @@ async def _regional_meteo(parcel_id: str, tenant_id: str) -> dict:
                 out["precip_mm"] = float(precip)
             except (TypeError, ValueError):
                 pass
+        ghi = wo.get("solarRadiation")
+        if ghi is not None:
+            try:
+                out["solar_radiation_wm2"] = float(ghi)
+            except (TypeError, ValueError):
+                pass
         return out
     except Exception as exc:  # noqa: BLE001 -- fail-safe
         logger.warning("_regional_meteo: failed for %s — %s", parcel_id, exc)
@@ -1990,6 +1997,68 @@ def _resolve_data_fidelity(assessment: CropHealthAssessment) -> str:
         if p in levels:
             return p
     return "mixed"
+
+
+_DEVICE_PARCEL_TTL_S = 3600
+_GHI_TTL_S = 300
+
+
+async def _cached_parcel_for_device(
+    device_id: str, tenant_id: str, redis_state: RedisState
+) -> str | None:
+    key = f"devparcel:{tenant_id}:{device_id}"
+    try:
+        cached = await redis_state.get_json(key)
+    except StoreError:
+        cached = None
+    if cached and cached.get("parcel_id"):
+        return cached["parcel_id"]
+    parcel_id = await _resolve_parcel_from_device(device_id, tenant_id)
+    if parcel_id:
+        await redis_state.set_json(key, {"parcel_id": parcel_id}, _DEVICE_PARCEL_TTL_S)
+    return parcel_id
+
+
+async def _cached_ghi(parcel_id: str, tenant_id: str, redis_state: RedisState) -> float | None:
+    """Parcel GHI (W/m2) from the regional WeatherObserved, cached 300 s."""
+    key = f"ghi:{tenant_id}:{parcel_id}"
+    try:
+        cached = await redis_state.get_json(key)
+    except StoreError:
+        cached = None
+    if cached is not None:
+        return cached.get("ghi")
+    meteo = await _regional_meteo(parcel_id, tenant_id)
+    ghi = meteo.get("solar_radiation_wm2")
+    await redis_state.set_json(key, {"ghi": ghi}, _GHI_TTL_S)
+    return ghi
+
+
+async def record_parcel_reading(
+    device_id: str,
+    metric: str,
+    ts: float,
+    value: float,
+    unit_code: str | None,
+    tenant_id: str,
+    redis_state: RedisState,
+) -> str | None:
+    """Keep the latest reading per device under its parcel; feed the shade sums.
+
+    Returns the parcel id, or None when the device has no parcel link.
+    """
+    parcel_id = await _cached_parcel_for_device(device_id, tenant_id, redis_state)
+    if not parcel_id:
+        logger.warning("record_parcel_reading: device %s has no parcel link — dropped", device_id)
+        return None
+    await redis_state.set_parcel_reading(parcel_id, metric, device_id, ts, value, unit_code)
+    if metric == MetricType.PAR.value:
+        ghi = await _cached_ghi(parcel_id, tenant_id, redis_state)
+        # No GHI, or sun down: no open-sky reference, so no sample (never assume daylight).
+        if ghi is not None and ghi >= MIN_GHI_WM2:
+            day = datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d")
+            await redis_state.add_shade_sample(parcel_id, day, value, PAR_PER_GHI * ghi)
+    return parcel_id
 
 
 async def _resolve_parcel_from_device(device_id: str, tenant_id: str) -> str | None:

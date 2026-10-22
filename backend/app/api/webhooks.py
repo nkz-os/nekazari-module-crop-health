@@ -109,7 +109,7 @@ async def receive_sensor_data(
     now_ts = datetime.now(timezone.utc).timestamp()
 
     for entity in data:
-        device_id, metric_name, value, observed_ts, _unit_code = _read_measurement(entity)
+        device_id, metric_name, value, observed_ts, unit_code = _read_measurement(entity)
         if device_id is None:
             logger.debug(
                 "Skipping %s: missing refDevice, controlledProperty or reading",
@@ -127,6 +127,18 @@ async def receive_sensor_data(
             metric=metric_type.value,
             timestamp=observed_ts if observed_ts is not None else now_ts,
             value=value,
+        )
+
+        # Before trigger: background tasks run in order, so the engine sees it.
+        background_tasks.add_task(
+            pipeline.record_parcel_reading,
+            device_id=device_id,
+            metric=metric_type.value,
+            ts=observed_ts if observed_ts is not None else now_ts,
+            value=value,
+            unit_code=unit_code,
+            tenant_id=tenant_id,
+            redis_state=redis_state,
         )
 
         if metric_type not in _PIPELINE_METRICS:

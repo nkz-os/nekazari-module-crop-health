@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+from dataclasses import dataclass
 
 import redis.asyncio as aioredis
 
@@ -21,6 +22,20 @@ from app.config import get_settings
 from app.schemas import TimeseriesPoint
 
 logger = logging.getLogger(__name__)
+
+
+PARCEL_READING_TTL_S = 7200
+SHADE_TTL_S = 3 * 86400
+# Readings stamped further ahead than this are gateway clock skew, not data.
+MAX_FUTURE_SKEW_S = 300.0
+
+
+@dataclass(frozen=True)
+class ParcelReading:
+    device_id: str
+    ts: float
+    value: float
+    unit_code: str | None
 
 
 class StoreError(Exception):
@@ -205,6 +220,88 @@ class RedisState:
             )
         except Exception as exc:
             logger.warning("redis_state.set_soil_water: failed for parcel %s — state not persisted: %s", parcel_id, exc)
+
+    async def set_parcel_reading(
+        self,
+        parcel_id: str,
+        metric: str,
+        device_id: str,
+        ts: float,
+        value: float,
+        unit_code: str | None,
+    ) -> None:
+        """Latest reading of a metric per device, grouped by parcel (TTL 2 h)."""
+        if self._client is None:
+            return
+        key = f"{self._prefix}parcel:{parcel_id}:{metric}"
+        try:
+            await self._client.hset(
+                key, device_id, json.dumps({"ts": ts, "v": value, "u": unit_code})
+            )
+            await self._client.expire(key, PARCEL_READING_TTL_S)
+        except Exception as exc:
+            logger.warning("redis_state.set_parcel_reading: failed for %s: %s", key, exc)
+
+    async def get_parcel_readings(
+        self,
+        parcel_id: str,
+        metric: str,
+        max_age_s: float,
+        now_ts: float,
+    ) -> list[ParcelReading]:
+        """Readings of the parcel no older than max_age_s and not from the future."""
+        if self._client is None:
+            return []
+        key = f"{self._prefix}parcel:{parcel_id}:{metric}"
+        try:
+            raw = await self._client.hgetall(key)
+        except Exception as exc:
+            logger.warning("redis_state.get_parcel_readings: failed for %s: %s", key, exc)
+            return []
+        out: list[ParcelReading] = []
+        for device_id, member in raw.items():
+            try:
+                data = json.loads(member)
+                ts = float(data["ts"])
+                value = float(data["v"])
+                unit = data.get("u")
+            except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+                logger.warning("Corrupt Redis entry in %s: %s", key, exc)
+                continue
+            if now_ts - ts > max_age_s or ts - now_ts > MAX_FUTURE_SKEW_S:
+                continue
+            out.append(ParcelReading(device_id=device_id, ts=ts, value=value, unit_code=unit))
+        return out
+
+    async def add_shade_sample(
+        self, parcel_id: str, day: str, par_under: float, par_open: float
+    ) -> None:
+        """Add one (under-panel, open-sky) PAR pair to the parcel's daily sums."""
+        if self._client is None:
+            return
+        key = f"{self._prefix}shade:{parcel_id}:{day}"
+        try:
+            await self._client.hincrbyfloat(key, "under", par_under)
+            await self._client.hincrbyfloat(key, "open", par_open)
+            await self._client.expire(key, SHADE_TTL_S)
+        except Exception as exc:
+            logger.warning("redis_state.add_shade_sample: failed for %s: %s", key, exc)
+
+    async def get_daily_shade(self, parcel_id: str, day: str) -> float | None:
+        """1 - sum(under)/sum(open) clamped to [0, 1]; None without open-sky light."""
+        if self._client is None:
+            return None
+        key = f"{self._prefix}shade:{parcel_id}:{day}"
+        try:
+            raw = await self._client.hgetall(key)
+            open_sum = float(raw.get("open", 0) or 0)
+            under_sum = float(raw.get("under", 0) or 0)
+        except Exception as exc:
+            logger.warning("redis_state.get_daily_shade: failed for %s: %s", key, exc)
+            return None
+        if open_sum <= 0:
+            return None
+        return min(1.0, max(0.0, 1.0 - under_sum / open_sum))
 
     @property
     def available(self) -> bool:

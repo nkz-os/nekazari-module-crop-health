@@ -37,6 +37,20 @@ def fake_redis(monkeypatch):
     return redis
 
 
+@pytest.fixture(autouse=True)
+def records(monkeypatch):
+    """Parcel readings are recorded for every tracked metric, before the trigger."""
+    from app.api import webhooks
+
+    calls = []
+
+    async def _record(**kwargs):
+        calls.append(kwargs)
+
+    monkeypatch.setattr(webhooks.pipeline, "record_parcel_reading", _record, raising=False)
+    return calls
+
+
 @pytest.fixture
 def triggers(monkeypatch):
     calls = []
@@ -215,3 +229,17 @@ def test_par_air_temperature_humidity_are_tracked():
     for prop in ("photosyntheticPhotonFluxDensity", "airTemperature", "relativeHumidity"):
         assert prop in webhooks._TRACKED_ATTRIBUTES
     assert webhooks._TRACKED_ATTRIBUTES["stemDiameter"] == webhooks._TRACKED_ATTRIBUTES["trunkDiameter"]
+
+
+def test_every_tracked_metric_is_recorded_but_only_engine_metrics_trigger(fake_redis, triggers, records):
+    par = _measurement(
+        controlledProperty={"type": "Property", "value": "photosyntheticPhotonFluxDensity"},
+        numValue={"type": "Property", "value": 640.0, "unitCode": "E32"},
+    )
+    _post({"data": [par]})
+    assert triggers == []
+    assert len(records) == 1
+    assert records[0]["metric"] == "photosyntheticPhotonFluxDensity"
+    assert records[0]["device_id"] == DEVICE_URN
+    assert records[0]["unit_code"] == "E32"
+    assert records[0]["tenant_id"] == "acme"

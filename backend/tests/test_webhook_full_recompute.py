@@ -30,6 +30,12 @@ def _patch_redis(monkeypatch):
     import app.main as _main
     monkeypatch.setattr(_main, "get_redis_state", lambda: _FakeRedis(), raising=False)
 
+    async def _record(**kwargs):
+        return None
+
+    from app.api import webhooks
+    monkeypatch.setattr(webhooks.pipeline, "record_parcel_reading", _record, raising=False)
+
 
 @pytest.mark.asyncio
 async def test_webhook_calls_full_trigger(monkeypatch):

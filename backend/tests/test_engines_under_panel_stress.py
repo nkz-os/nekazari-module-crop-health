@@ -113,3 +113,38 @@ def test_bad_model_ks_is_none(bad):
 def test_unavailable_without_sensor_or_model():
     r = run([], model_ks=None, shade=0.3)
     assert (r.index, r.fidelity, r.observed_at, r.shade_fraction) == (None, "unavailable", None, 0.3)
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        (0.2, 0.27, 0.12, 1.0),
+        (0.2, 0.27, 0.12, -0.1),
+        (0.2, float("nan"), 0.12, 0.5),
+        (0.2, 0.27, float("inf"), 0.5),
+        (float("nan"), 0.27, 0.12, 0.5),
+        (0.2, 0.27, 0.12, float("nan")),
+    ],
+)
+def test_ks_rejects_invalid_inputs(args):
+    with pytest.raises(ValueError):
+        ks_from_theta(*args)
+
+
+def test_invalid_p_or_nan_soil_falls_back_to_model():
+    r = compute_water_stress([reading(60)], SOIL, 1.0, 0.9, "parcel_weather", NOW, None)
+    assert (r.index, r.fidelity) == (0.1, "parcel_weather")
+    nan_soil = SoilProperties(field_capacity=float("nan"), wilting_point=0.12, has_data=True)
+    r = run([reading(60)], soil=nan_soil, model_ks=0.9)
+    assert (r.index, r.fidelity) == (0.1, "parcel_weather")
+    assert run([reading(60)], soil=nan_soil).fidelity == "unavailable"
+
+
+def test_mean_theta_of_two_readings():
+    r = run([reading(60, 10.0), reading(60, 20.0, dev="d-2")])
+    assert r.index == round(1 - ks_from_theta(0.15, 0.27, 0.12, 0.65), 3)
+
+
+def test_invalid_older_reading_does_not_set_observed_at():
+    r = run([reading(1800, 15.0, unit="C62"), reading(60, 15.0)])
+    assert r.observed_at == NOW - timedelta(seconds=60)

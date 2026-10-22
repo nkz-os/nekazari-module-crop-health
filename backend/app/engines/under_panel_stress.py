@@ -46,6 +46,10 @@ def volumetric_soil_moisture(value: float, unit_code: str | None) -> float | Non
 
 def ks_from_theta(theta: float, fc: float, wp: float, p: float) -> float:
     """FAO-56 water stress coefficient Ks from volumetric moisture."""
+    if not all(math.isfinite(x) for x in (theta, fc, wp, p)):
+        raise ValueError("non-finite input")
+    if not 0.0 <= p < 1.0:
+        raise ValueError("depletion fraction p must be in [0, 1)")
     taw = fc - wp
     if taw <= 0:
         raise ValueError("field capacity must exceed wilting point")
@@ -105,17 +109,27 @@ def compute_water_stress(
         try:
             ks = ks_from_theta(mean_theta, soil.field_capacity, soil.wilting_point, p)
         except ValueError:
-            logger.warning("under_panel_stress: invalid soil fc/wp; using model path")
+            logger.warning("under_panel_stress: invalid soil/p inputs; using model path")
         else:
+            index = round(1.0 - ks, 3)
+            if not math.isfinite(index):
+                logger.warning("under_panel_stress: non-finite index; using model path")
+                return _model_result(model_ks, model_fidelity, now, shade_fraction)
             oldest = min(ts for ts, _ in used)
             observed = datetime.fromtimestamp(min(oldest, now_ts), tz=timezone.utc)
             return WaterStress(
-                round(1.0 - ks, 3),
+                index,
                 FIDELITY_IOT if soil.has_data else FIDELITY_PROXY,
                 observed,
                 shade_fraction,
             )
 
+    return _model_result(model_ks, model_fidelity, now, shade_fraction)
+
+
+def _model_result(
+    model_ks: float | None, model_fidelity: str, now: datetime, shade_fraction: float | None
+) -> WaterStress:
     index = _model_index(model_ks)
     if index is not None:
         return WaterStress(index, model_fidelity, now, shade_fraction)

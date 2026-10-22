@@ -25,7 +25,13 @@ from nkz_platform_sdk.crypto import generate_hmac_signature
 
 from app.config import get_settings
 from app.engines.mds_model import calculate_mds_from_readings
-from app.engines.under_panel_stress import MIN_GHI_WM2, PAR_PER_GHI
+from app.engines.under_panel_stress import (
+    MIN_GHI_WM2,
+    PAR_PER_GHI,
+    compute_water_stress,
+    shade_corrected_etc,
+    valid_theta_readings,
+)
 from app.engines.phenology_progress import derive_stage_from_gdd
 from app.engines.water_stress import cwsi_with_weather
 from app.schemas import (
@@ -35,6 +41,7 @@ from app.schemas import (
     Severity,
     StageTable,
     ThermalStressResult,
+    WaterStress,
     VHIClimatologyWindow,
     VigorResult as VigorResultSchema,
     WeatherSnapshot,
@@ -61,7 +68,8 @@ _DEPLETION_FRACTION_P: dict[str, float] = {
     "TRZAX": 0.55,  # wheat
     "HORVX": 0.55,  # barley
     "ZEAMX": 0.55,  # maize
-    "OLEU": 0.65,   # olive
+    "OLEU": 0.65,   # olive (legacy code)
+    "OLVEU": 0.65,  # olive (EPPO)
     "VITIS": 0.45,  # vine
     "ORYSA": 0.20,  # rice
     "SOLTU": 0.30,  # potato
@@ -165,6 +173,106 @@ def _resolve_root_depth(species: str, gdd: float | None, crop_context: any) -> f
     return 300.0
 
 
+_PARCEL_READING_MAX_AGE_S = 3600.0
+_AIR_TEMP_RANGE_C = (-50.0, 60.0)
+_RH_RANGE_PCT = (0.0, 100.0)
+
+
+async def _read_parcel_readings(redis_state, parcel_id: str, metric: str, now_ts: float) -> list:
+    """Fresh per-parcel readings; any Redis failure degrades to 'no readings'."""
+    if redis_state is None:
+        return []
+    try:
+        return list(
+            await redis_state.get_parcel_readings(
+                parcel_id, metric, _PARCEL_READING_MAX_AGE_S, now_ts
+            )
+        )
+    except Exception as exc:  # noqa: BLE001 -- fail-safe: pipeline must still publish
+        logger.warning("pipeline: parcel readings unavailable for %s/%s: %s", parcel_id, metric, exc)
+        return []
+
+
+async def _read_daily_shade(redis_state, parcel_id: str, now_ts: float) -> float | None:
+    """Daily shade fraction: today (UTC), else yesterday (UTC), else None."""
+    if redis_state is None:
+        return None
+    day = datetime.fromtimestamp(now_ts, tz=timezone.utc).date()
+    for d in (day, day - timedelta(days=1)):
+        try:
+            shade = await redis_state.get_daily_shade(parcel_id, d.strftime("%Y-%m-%d"))
+        except Exception as exc:  # noqa: BLE001 -- fail-safe
+            logger.warning("pipeline: daily shade unavailable for %s: %s", parcel_id, exc)
+            return None
+        if shade is not None:
+            return shade
+    return None
+
+
+def _mean_in_range(readings: list, lo: float, hi: float) -> float | None:
+    vals = [r.value for r in readings if math.isfinite(r.value) and lo <= r.value <= hi]
+    return sum(vals) / len(vals) if vals else None
+
+
+async def _sensor_air_ctx(redis_state, parcel_id: str, now_ts: float) -> dict:
+    """Air temperature / RH from fresh parcel sensors, in the shape resolve_meteo_context expects."""
+    ctx: dict = {}
+    temp = _mean_in_range(
+        await _read_parcel_readings(redis_state, parcel_id, MetricType.AIR_TEMPERATURE.value, now_ts),
+        *_AIR_TEMP_RANGE_C,
+    )
+    if temp is not None:
+        ctx["air_temp_c"] = temp
+    rh = _mean_in_range(
+        await _read_parcel_readings(redis_state, parcel_id, MetricType.RELATIVE_HUMIDITY.value, now_ts),
+        *_RH_RANGE_PCT,
+    )
+    if rh is not None:
+        ctx["rh_pct"] = rh
+    return ctx
+
+
+async def _resolve_water_stress(
+    redis_state,
+    parcel_id: str,
+    soil,
+    depletion_p: float,
+    swb,
+    et0_fidelity: str,
+    now_ts: float,
+    shade_fraction: float | None,
+    root_depth_mm: float,
+) -> tuple[WaterStress, float | None]:
+    """Water stress index plus the sensor-assimilated soil water (mm), if the sensor path applied."""
+    readings = await _read_parcel_readings(redis_state, parcel_id, "soilMoisture", now_ts)
+    now = datetime.fromtimestamp(now_ts, tz=timezone.utc)
+    used = valid_theta_readings(readings, now_ts)
+    try:
+        ws = compute_water_stress(
+            readings,
+            soil,
+            depletion_p,
+            swb.stress_coefficient_ks if swb is not None else None,
+            et0_fidelity,
+            now,
+            shade_fraction,
+        )
+    except Exception as exc:  # noqa: BLE001 -- fail-safe: no index rather than a wrong one
+        logger.warning("pipeline: water stress failed for %s: %s", parcel_id, exc)
+        ws = WaterStress(None, "unavailable", None, shade_fraction)
+
+    assimilated = None
+    if ws.fidelity == "iot_sensor" and used and swb is not None:
+        theta = sum(t for _, t in used) / len(used)
+        assimilated = min(max((theta - soil.wilting_point) * root_depth_mm, 0.0), swb.awc_mm)
+
+    logger.info(
+        "water_stress: parcel=%s index=%s fidelity=%s readings=%d shade=%s",
+        parcel_id, ws.index, ws.fidelity, len(used), shade_fraction,
+    )
+    return ws, assimilated
+
+
 async def trigger(
     entity_id: str,
     metric_type: str,
@@ -266,12 +374,16 @@ async def trigger(
 
 
 
+    now_ts = _now_ts()
     meteo = await resolve_meteo_context(
         effective_parcel, tenant_id,
+        sensor_ctx=await _sensor_air_ctx(redis_state, effective_parcel, now_ts),
         weather_map_fn=_weather_map_meteo,
         regional_fn=_regional_meteo,
     )
     weather = _snapshot_from_meteo(meteo)
+    daily_shade = await _read_daily_shade(redis_state, effective_parcel, now_ts)
+    et0_fidelity = meteo.fidelity.get("et0_mm", "unavailable")
 
     now = datetime.now(timezone.utc)
 
@@ -352,6 +464,9 @@ async def trigger(
             now=now,
             stage_table=stage_table,
             publish=True,
+            daily_shade=daily_shade,
+            et0_fidelity=et0_fidelity,
+            parcel_stress=True,
         )
 
     # Zonal: the device's window-engines run for its zone; others sensorless.
@@ -390,6 +505,8 @@ async def trigger(
                 now=now,
                 stage_table=stage_table,
                 publish=False,
+                daily_shade=daily_shade,
+                et0_fidelity=et0_fidelity,
             )
         except Exception as exc:
             logger.warning("trigger: zone %s failed for %s — skipped: %s", z.zone_id, effective_parcel, exc)
@@ -403,6 +520,16 @@ async def trigger(
 
     rollup = _aggregate_rollup(effective_parcel, zone_results)
     attach_soil_suitability(rollup, crop_context)
+    # Water stress is parcel-level: computed once here, carried by the rollup only.
+    rollup.water_stress, assimilated = await _resolve_water_stress(
+        redis_state, effective_parcel, soil, _resolve_depletion_fraction(crop_context),
+        rollup.soil_water_balance, et0_fidelity, now_ts, daily_shade, root_depth_mm,
+    )
+    if assimilated is not None and redis_state:
+        try:
+            await redis_state.set_soil_water(effective_parcel, assimilated)
+        except Exception as exc:
+            logger.warning("pipeline: redis set_soil_water failed for parcel %s — state not persisted: %s", effective_parcel, exc)
     await _publish_assessment(rollup.to_ngsi_ld(), tenant_id)
     # Preserve the sensor-path derived events + parent aggregation on the rollup.
     await _emit_assessment_side_effects(
@@ -432,6 +559,9 @@ async def _run_engines(
     now: datetime,
     stage_table: StageTable | dict[str, tuple[float, float]] | None = None,
     publish: bool = True,
+    daily_shade: float | None = None,
+    et0_fidelity: str = "unavailable",
+    parcel_stress: bool = False,
 ) -> CropHealthAssessment:
     """Shared engine-fusion core.
 
@@ -495,12 +625,13 @@ async def _run_engines(
         assessment.mds = calculate_mds_from_readings(readings, mds_ref=phenology.mds_ref)
 
     # Soil water balance (replaces simple water balance with AWC tracking)
+    swb = None
+    depletion_p = _resolve_depletion_fraction(crop_context)
     if weather:
-        etc_mm = weather.eto_mm * phenology.kc
+        etc_mm = shade_corrected_etc(
+            weather.eto_mm, phenology.kc, daily_shade, get_settings().shade_et_radiative_fraction
+        )
         from app.engines.soil_water_balance import soil_water_balance
-
-        # FAO-56 depletion fraction p — species-specific, with generic fallback
-        depletion_p = _resolve_depletion_fraction(crop_context)
 
         swb = soil_water_balance(
             sw_yesterday=sw_yesterday,
@@ -537,12 +668,22 @@ async def _run_engines(
             )
             assessment.waterlogging_risk = wlr
 
-        # Persist current soil water to Redis for next assessment
-        if redis_state:
-            try:
-                await redis_state.set_soil_water(effective_parcel, swb.sw_mm)
-            except Exception as exc:
-                logger.warning("pipeline: redis set_soil_water failed for parcel %s — state not persisted: %s", effective_parcel, exc)
+    # Shade-aware water stress index (parcel-level; zones never carry it).
+    assimilated_sw = None
+    if parcel_stress:
+        assessment.water_stress, assimilated_sw = await _resolve_water_stress(
+            redis_state, effective_parcel, soil, depletion_p, swb, et0_fidelity,
+            _now_ts(), daily_shade, root_depth_mm,
+        )
+
+    # Persist current soil water to Redis for next assessment (sensor value when it applied)
+    if swb is not None and redis_state:
+        try:
+            await redis_state.set_soil_water(
+                effective_parcel, assimilated_sw if assimilated_sw is not None else swb.sw_mm
+            )
+        except Exception as exc:
+            logger.warning("pipeline: redis set_soil_water failed for parcel %s — state not persisted: %s", effective_parcel, exc)
 
     # Thermal stress (triggered by leaf temperature or opportunistically with weather)
     if weather:

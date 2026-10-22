@@ -3,10 +3,9 @@ from __future__ import annotations
 
 import logging
 import math
-from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from app.schemas import SoilProperties
+from app.schemas import SoilProperties, WaterStress
 from app.services.redis_state import ParcelReading
 
 logger = logging.getLogger(__name__)
@@ -24,14 +23,6 @@ MAX_THETA = 0.6
 FIDELITY_IOT = "iot_sensor"
 FIDELITY_PROXY = "regional_proxy"
 FIDELITY_UNAVAILABLE = "unavailable"
-
-
-@dataclass(frozen=True)
-class WaterStress:
-    index: float | None
-    fidelity: str
-    observed_at: datetime | None
-    shade_fraction: float | None
 
 
 def volumetric_soil_moisture(value: float, unit_code: str | None) -> float | None:
@@ -85,6 +76,19 @@ def _model_index(model_ks: float | None) -> float | None:
     return round(1.0 - model_ks, 3)
 
 
+def valid_theta_readings(readings: list[ParcelReading], now_ts: float) -> list[tuple[float, float]]:
+    """(ts, theta) of readings fresh enough, not from the future, with a valid P1 value."""
+    used: list[tuple[float, float]] = []
+    for r in readings:
+        age = now_ts - r.ts
+        if age > MAX_READING_AGE_S or age < -MAX_FUTURE_SKEW_S:
+            continue
+        theta = volumetric_soil_moisture(r.value, r.unit_code)
+        if theta is not None:
+            used.append((r.ts, theta))
+    return used
+
+
 def compute_water_stress(
     readings: list[ParcelReading],
     soil: SoilProperties,
@@ -95,14 +99,7 @@ def compute_water_stress(
     shade_fraction: float | None,
 ) -> WaterStress:
     now_ts = now.timestamp()
-    used: list[tuple[float, float]] = []  # (ts, theta)
-    for r in readings:
-        age = now_ts - r.ts
-        if age > MAX_READING_AGE_S or age < -MAX_FUTURE_SKEW_S:
-            continue
-        theta = volumetric_soil_moisture(r.value, r.unit_code)
-        if theta is not None:
-            used.append((r.ts, theta))
+    used = valid_theta_readings(readings, now_ts)
 
     if used:
         mean_theta = sum(t for _, t in used) / len(used)

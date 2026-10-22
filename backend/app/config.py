@@ -54,6 +54,8 @@ class Settings(BaseSettings):
     # ── Service-to-service auth ──────────────────────────────────────────────
     module_management_key: str = ""
     internal_service_secret: str = ""
+    # ASSUMPTION: initial hypothesis, uncalibrated; calibrate with installation data.
+    shade_et_radiative_fraction: float = 0.7  # env SHADE_ET_RADIATIVE_FRACTION
 
     @property
     def jwt_issuer_url(self) -> str:

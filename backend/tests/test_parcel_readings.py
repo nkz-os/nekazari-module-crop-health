@@ -64,6 +64,9 @@ class _FakePipe:
     def hincrbyfloat(self, k, field, amount):
         self.ops.append(self.client.hincrbyfloat(k, field, amount))
 
+    def hset(self, k, field, value):
+        self.ops.append(self.client.hset(k, field, value))
+
     def expire(self, k, seconds):
         self.ops.append(self.client.expire(k, seconds))
 
@@ -139,7 +142,7 @@ async def test_record_unlinked_device_returns_none_and_logs_once(state, monkeypa
     assert len([r for r in caplog.records if r.levelno == logging.WARNING]) == 1
 
 
-def _patch(monkeypatch, ghi):
+def _patch(monkeypatch, ghi, obs_ts=NOW):
     monkeypatch.setattr(pipeline, "_now_ts", lambda: NOW)
     calls = {"resolve": 0, "meteo": 0}
 
@@ -149,7 +152,12 @@ def _patch(monkeypatch, ghi):
 
     async def _meteo(parcel_id, tenant_id):
         calls["meteo"] += 1
-        return {} if ghi is None else {"solar_radiation_wm2": ghi}
+        if ghi is None:
+            return {}
+        out = {"solar_radiation_wm2": ghi}
+        if obs_ts is not None:
+            out["observed_at_ts"] = obs_ts
+        return out
 
     monkeypatch.setattr(pipeline, "_resolve_parcel_from_device", _resolve)
     monkeypatch.setattr(pipeline, "_regional_meteo", _meteo)
@@ -228,7 +236,7 @@ async def test_delayed_or_future_par_adds_no_shade_sample(state, monkeypatch, ts
 
 @pytest.mark.anyio
 async def test_absurd_timestamp_returns_none_and_does_not_raise(state, monkeypatch):
-    _patch(monkeypatch, 800.0)
+    _patch(monkeypatch, 800.0, obs_ts=1e15)
     # clock and ts both absurd (ms epoch): passes the age check, fails in fromtimestamp
     monkeypatch.setattr(pipeline, "_now_ts", lambda: 1e15)
     out = await pipeline.record_parcel_reading(DEVICE, PAR, 1e15, 400.0, None, TENANT, state)
@@ -263,3 +271,72 @@ async def test_poisoned_stored_entry_is_replaced_by_valid_reading(state):
     got = await state.get_parcel_readings(PARCEL, "soilMoisture", 3600, now)
     assert [r.value for r in got] == [30.0]
     assert state._client.ttl[key] == 7200
+
+
+@pytest.mark.anyio
+async def test_stale_ghi_adds_no_shade_sample(state, monkeypatch):
+    _patch(monkeypatch, 800.0, obs_ts=NOW - 2 * 3600)
+    await pipeline.record_parcel_reading(DEVICE, PAR, NOW, 400.0, None, TENANT, state)
+    assert await state.get_daily_shade(PARCEL, "2026-06-15") is None
+
+
+@pytest.mark.anyio
+async def test_ghi_without_observation_time_adds_no_shade_sample(state, monkeypatch):
+    _patch(monkeypatch, 800.0, obs_ts=None)
+    await pipeline.record_parcel_reading(DEVICE, PAR, NOW, 400.0, None, TENANT, state)
+    assert await state.get_daily_shade(PARCEL, "2026-06-15") is None
+
+
+@pytest.mark.anyio
+async def test_fresh_ghi_within_90_min_adds_sample(state, monkeypatch):
+    _patch(monkeypatch, 800.0, obs_ts=NOW - 80 * 60)
+    await pipeline.record_parcel_reading(DEVICE, PAR, NOW, 400.0, None, TENANT, state)
+    assert await state.get_daily_shade(PARCEL, "2026-06-15") is not None
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("par", [-1.0, 3001.0, float("nan"), float("inf")])
+async def test_implausible_par_adds_no_shade_sample(state, monkeypatch, par, caplog):
+    _patch(monkeypatch, 800.0)
+    with caplog.at_level(logging.WARNING):
+        await pipeline.record_parcel_reading(DEVICE, PAR, NOW, par, None, TENANT, state)
+    assert await state.get_daily_shade(PARCEL, "2026-06-15") is None
+    assert any("PAR" in r.getMessage() for r in caplog.records)
+
+
+@pytest.mark.anyio
+async def test_shade_sample_records_latest_par_ts(state, monkeypatch):
+    _patch(monkeypatch, 800.0)
+    await pipeline.record_parcel_reading(DEVICE, PAR, NOW - 60, 400.0, None, TENANT, state)
+    await pipeline.record_parcel_reading(DEVICE, PAR, NOW - 10, 400.0, None, TENANT, state)
+    await pipeline.record_parcel_reading(DEVICE, PAR, NOW - 300, 400.0, None, TENANT, state)
+    assert await state.get_daily_shade_ts(PARCEL, "2026-06-15") == NOW - 10
+    assert await state.get_daily_shade_ts(PARCEL, "2026-06-14") is None
+
+
+@pytest.mark.anyio
+async def test_regional_meteo_returns_observation_time(monkeypatch):
+    payload = [{"solarRadiation": 700, "dateObserved": "2026-06-15T11:30:00Z"}]
+
+    class _Resp:
+        status_code = 200
+
+        def json(self):
+            return payload
+
+    class _Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            pass
+
+        async def get(self, *a, **k):
+            return _Resp()
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: _Client())
+    out = await pipeline._regional_meteo("p-1", TENANT)
+    assert out["solar_radiation_wm2"] == 700.0
+    assert out["observed_at_ts"] == datetime(2026, 6, 15, 11, 30, tzinfo=timezone.utc).timestamp()

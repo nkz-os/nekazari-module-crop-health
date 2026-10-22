@@ -24,9 +24,10 @@ _Z1 = {"type": "Polygon", "coordinates": [[[10, 0], [10, 10], [20, 10], [20, 0],
 
 
 class FakeRedis:
-    def __init__(self, readings=None, shade=None, fail=False):
+    def __init__(self, readings=None, shade=None, fail=False, shade_ts=None):
         self.readings = readings or {}
         self.shade = shade or {}
+        self.shade_ts = shade_ts or {}
         self.fail = fail
         self.soil_water_set = []
 
@@ -55,6 +56,11 @@ class FakeRedis:
             raise RuntimeError("redis down")
         return self.shade.get(day)
 
+    async def get_daily_shade_ts(self, parcel, day):
+        if self.fail:
+            raise RuntimeError("redis down")
+        return self.shade_ts.get(day)
+
 
 def soil_reading(value, age=60, unit="P1", device="d1"):
     return ParcelReading(device_id=device, ts=NOW - age, value=value, unit_code=unit)
@@ -63,7 +69,9 @@ def soil_reading(value, age=60, unit="P1", device="d1"):
 def _setup(monkeypatch, *, wm=None, regional=None, soil=None, zones=None, eppo="OLVEU"):
     wm = {"air_temp_c": 24.0, "rh_pct": 50.0, "et0_mm": 5.0} if wm is None else wm
     regional = {} if regional is None else regional
-    soil = soil or SoilProperties(has_data=True, field_capacity=0.27, wilting_point=0.12)
+    soil = soil or SoilProperties(
+        has_data=True, hydraulics_from_soil=True, field_capacity=0.27, wilting_point=0.12
+    )
     zones = zones or [Zone("parcel", _Z0)]
     crop = types.SimpleNamespace(
         crop=types.SimpleNamespace(eppo=eppo, name="olive"),
@@ -322,7 +330,7 @@ async def test_zonal_rollup_carries_stress_zones_do_not(monkeypatch):
     parcel_ents = [e for e in published["entities"] if e["type"] == "CropHealthAssessment"]
     assert len(zone_ents) == 2 and len(parcel_ents) == 1
     for z in zone_ents:
-        for k in ("waterStressIndex", "waterStressFidelity", "waterStressObservedAt", "shadeFraction"):
+        for k in ("waterStressIndex", "waterStressFidelity", "waterStressObservedAt", "shadeFraction", "shadeObservedAt"):
             assert k not in z
     p = parcel_ents[0]
     assert p["waterStressFidelity"]["value"] == "iot_sensor"
@@ -341,7 +349,8 @@ ENTITY_ID = "urn:ngsi-ld:CropHealthAssessment:p-1-20260715"
 @pytest.mark.asyncio
 async def test_unavailable_after_iot_clears_stale_attributes(monkeypatch):
     published, _ = _setup(monkeypatch)
-    await _trigger(FakeRedis(readings={"soilMoisture": [soil_reading(15.0)]}, shade={TODAY: 0.5}))
+    await _trigger(FakeRedis(
+        readings={"soilMoisture": [soil_reading(15.0)]}, shade={TODAY: 0.5}, shade_ts={TODAY: NOW - 60}))
     assert published["deletes"] == []  # everything present, nothing stale
     # later same-day trigger: nothing computable
     published2, _ = _setup(monkeypatch, wm={}, regional={})
@@ -349,14 +358,14 @@ async def test_unavailable_after_iot_clears_stale_attributes(monkeypatch):
     ids = {d[0] for d in published2["deletes"]}
     attrs = {d[1] for d in published2["deletes"]}
     assert ids == {published2["assessments"][-1].to_ngsi_ld()["id"]}
-    assert attrs == {"waterStressIndex", "waterStressObservedAt", "shadeFraction"}
+    assert attrs == {"waterStressIndex", "waterStressObservedAt", "shadeFraction", "shadeObservedAt"}
 
 
 @pytest.mark.asyncio
 async def test_only_omitted_attrs_are_deleted(monkeypatch):
     published, _ = _setup(monkeypatch)
     await _trigger(FakeRedis())  # model path: index+observedAt present, shade None
-    assert [d[1] for d in published["deletes"]] == ["shadeFraction"]
+    assert [d[1] for d in published["deletes"]] == ["shadeFraction", "shadeObservedAt"]
 
 
 @pytest.mark.asyncio
@@ -365,7 +374,7 @@ async def test_delete_404_is_success(monkeypatch):
     published["delete_behaviour"]["status"] = 404
     out = await _trigger(FakeRedis())
     assert out is not None
-    assert len(published["deletes"]) == 3  # does not stop after the first 404
+    assert len(published["deletes"]) == 4  # does not stop after the first 404
 
 
 @pytest.mark.asyncio
@@ -388,4 +397,48 @@ async def test_zonal_rollup_clears_stale_attributes(monkeypatch):
     await _trigger(FakeRedis())
     parcel = [e for e in published["entities"] if e["type"] == "CropHealthAssessment"][0]
     assert {d[0] for d in published["deletes"]} == {parcel["id"]}
-    assert len(published["deletes"]) == 3
+    assert len(published["deletes"]) == 4
+
+
+@pytest.mark.asyncio
+async def test_defaulted_hydraulics_with_has_data_is_regional_proxy(monkeypatch):
+    soil = SoilProperties(has_data=True, hydraulics_from_soil=False)
+    published, _ = _setup(monkeypatch, soil=soil)
+    await _trigger(FakeRedis(readings={"soilMoisture": [soil_reading(15.0)]}))
+    assert _entity(published)["waterStressFidelity"]["value"] == "regional_proxy"
+
+
+@pytest.mark.asyncio
+async def test_dead_probe_reading_is_not_iot_sensor(monkeypatch):
+    published, _ = _setup(monkeypatch)
+    await _trigger(FakeRedis(readings={"soilMoisture": [soil_reading(0.0)]}))
+    assert _entity(published)["waterStressFidelity"]["value"] == "parcel_weather"
+
+
+@pytest.mark.asyncio
+async def test_sensor_air_temp_without_et0_gives_no_index(monkeypatch):
+    published, _ = _setup(monkeypatch, wm={}, regional={})
+    air = ParcelReading("d2", NOW - 60, 24.0, "CEL")
+    await _trigger(FakeRedis(readings={MetricType.AIR_TEMPERATURE.value: [air]}))
+    e = _entity(published)
+    assert e["waterStressFidelity"]["value"] == "unavailable"
+    assert "waterStressIndex" not in e
+
+
+@pytest.mark.asyncio
+async def test_shade_observed_at_published_with_shade(monkeypatch):
+    published, _ = _setup(monkeypatch)
+    ts = NOW - 120
+    await _trigger(FakeRedis(shade={TODAY: 0.5}, shade_ts={TODAY: ts}))
+    e = _entity(published)
+    v = e["shadeObservedAt"]["value"]
+    assert v["@type"] == "DateTime"
+    assert v["@value"] == datetime.fromtimestamp(ts, tz=timezone.utc).isoformat()
+
+
+@pytest.mark.asyncio
+async def test_shade_observed_at_omitted_and_cleared_without_shade(monkeypatch):
+    published, _ = _setup(monkeypatch)
+    await _trigger(FakeRedis())
+    assert "shadeObservedAt" not in _entity(published)
+    assert "shadeObservedAt" in [d[1] for d in published["deletes"]]

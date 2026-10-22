@@ -16,7 +16,9 @@ from app.schemas import SoilProperties
 from app.services.redis_state import ParcelReading
 
 NOW = datetime(2026, 6, 1, 12, 0, tzinfo=timezone.utc)
-SOIL = SoilProperties(field_capacity=0.27, wilting_point=0.12, has_data=True)
+SOIL = SoilProperties(
+    field_capacity=0.27, wilting_point=0.12, has_data=True, hydraulics_from_soil=True
+)
 DEFAULT_SOIL = SoilProperties()
 
 
@@ -148,3 +150,38 @@ def test_mean_theta_of_two_readings():
 def test_invalid_older_reading_does_not_set_observed_at():
     r = run([reading(1800, 15.0, unit="C62"), reading(60, 15.0)])
     assert r.observed_at == NOW - timedelta(seconds=60)
+
+
+def test_dead_probe_zero_is_rejected_and_uses_model(caplog):
+    with caplog.at_level("WARNING"):
+        r = run([reading(60, value=0.0, dev="dead-1")], model_ks=0.9)
+    assert (r.index, r.fidelity) == (0.1, "parcel_weather")
+    assert len([x for x in caplog.records if "dead-1" in x.getMessage()]) == 1
+
+
+def test_fraction_mislabelled_as_percent_is_rejected():
+    r = run([reading(60, value=0.25)], model_ks=0.9)
+    assert (r.index, r.fidelity) == (0.1, "parcel_weather")
+
+
+def test_dead_probe_dropped_before_mean():
+    good = run([reading(60, value=15.0, dev="a")])
+    mixed = run([reading(60, value=15.0, dev="a"), reading(60, value=0.0, dev="b")])
+    assert mixed.fidelity == "iot_sensor"
+    assert mixed.index == good.index
+
+
+def test_volumetric_floor():
+    assert volumetric_soil_moisture(1.9, "P1") is None
+    assert volumetric_soil_moisture(2.0, "P1") == 0.02
+
+
+def test_defaulted_hydraulics_are_proxy_even_with_has_data():
+    soil = SoilProperties(field_capacity=0.27, wilting_point=0.12, has_data=True)
+    r = run([reading(60)], soil=soil)
+    assert r.fidelity == "regional_proxy"
+
+
+def test_unavailable_model_fidelity_never_publishes_index():
+    r = run([], model_ks=0.5, model_fidelity="unavailable", shade=0.2)
+    assert (r.index, r.fidelity, r.observed_at, r.shade_fraction) == (None, "unavailable", None, 0.2)

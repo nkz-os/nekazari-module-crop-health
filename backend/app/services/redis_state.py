@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import time
 from dataclasses import dataclass
 
@@ -291,16 +292,30 @@ class RedisState:
         return out
 
     async def add_shade_sample(
-        self, parcel_id: str, day: str, par_under: float, par_open: float
+        self, parcel_id: str, day: str, par_under: float, par_open: float,
+        ts: float | None = None,
     ) -> None:
-        """Add one (under-panel, open-sky) PAR pair to the parcel's daily sums."""
+        """Add one (under-panel, open-sky) PAR pair to the parcel's daily sums.
+
+        ``ts`` is the PAR sample time; the latest one seen that day is kept.
+        """
         if self._client is None:
             return
         key = f"{self._prefix}shade:{parcel_id}:{day}"
         try:
+            newest = None
+            if ts is not None and math.isfinite(ts):
+                prev = await self._client.hget(key, "last_ts")
+                try:
+                    prev_ts = float(prev) if prev is not None else None
+                except (TypeError, ValueError):
+                    prev_ts = None
+                newest = ts if prev_ts is None or ts > prev_ts else None
             async with self._client.pipeline(transaction=True) as pipe:
                 pipe.hincrbyfloat(key, "under", par_under)
                 pipe.hincrbyfloat(key, "open", par_open)
+                if newest is not None:
+                    pipe.hset(key, "last_ts", str(newest))
                 pipe.expire(key, SHADE_TTL_S)
                 await pipe.execute()
         except Exception as exc:
@@ -321,6 +336,18 @@ class RedisState:
         if open_sum <= 0:
             return None
         return min(1.0, max(0.0, 1.0 - under_sum / open_sum))
+
+    async def get_daily_shade_ts(self, parcel_id: str, day: str) -> float | None:
+        """Timestamp of the latest PAR sample behind the day's shade; None if unknown."""
+        if self._client is None:
+            return None
+        key = f"{self._prefix}shade:{parcel_id}:{day}"
+        try:
+            raw = await self._client.hget(key, "last_ts")
+            return float(raw) if raw is not None else None
+        except Exception as exc:
+            logger.warning("redis_state.get_daily_shade_ts: failed for %s: %s", key, exc)
+            return None
 
     @property
     def available(self) -> bool:

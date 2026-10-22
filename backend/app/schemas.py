@@ -190,6 +190,9 @@ class SoilProperties(BaseModel):
     ph: float | None = None
     source: str = "default_modeled"
     has_data: bool = False
+    # True only when BOTH field capacity and wilting point were read from the Soil
+    # module as finite numbers (fc > wp); False when any value is a default.
+    hydraulics_from_soil: bool = False
 
 
 @dataclass(frozen=True)
@@ -199,6 +202,8 @@ class WaterStress:
     fidelity: str
     observed_at: datetime | None
     shade_fraction: float | None
+    # Timestamp of the latest PAR sample behind shade_fraction (None when unknown).
+    shade_observed_at: datetime | None = None
 
 
 class SoilWaterBalanceResult(BaseModel):
@@ -644,6 +649,14 @@ class CropHealthAssessment(BaseModel):
                 }
             if ws.shade_fraction is not None:
                 entity["shadeFraction"] = {"type": "Property", "value": round(ws.shade_fraction, 3)}
+                if ws.shade_observed_at is not None:
+                    entity["shadeObservedAt"] = {
+                        "type": "Property",
+                        "value": {
+                            "@type": "DateTime",
+                            "@value": ws.shade_observed_at.astimezone(timezone.utc).isoformat(),
+                        },
+                    }
         return entity
 
     def to_zone_ngsi_ld(self) -> dict[str, Any]:
@@ -655,7 +668,7 @@ class CropHealthAssessment(BaseModel):
         envelope, then overrides id/type and adds the zone relationship.
         """
         entity = self.to_ngsi_ld()
-        for attr in ("waterStressIndex", "waterStressFidelity", "waterStressObservedAt", "shadeFraction"):
+        for attr in ("waterStressIndex", "waterStressFidelity", "waterStressObservedAt", "shadeFraction", "shadeObservedAt"):
             entity.pop(attr, None)
         date_str = self.assessed_at.strftime("%Y%m%d")
         zone = self.zone_id or "parcel"

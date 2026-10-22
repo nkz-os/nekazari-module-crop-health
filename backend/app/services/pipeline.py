@@ -15,6 +15,7 @@ water_stress_model.py. The risk-worker uses batch meteorological data
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 import math
 from datetime import date, datetime, timedelta, timezone
@@ -176,7 +177,9 @@ def _resolve_root_depth(species: str, gdd: float | None, crop_context: any) -> f
 _PARCEL_READING_MAX_AGE_S = 3600.0
 # Optional water stress attributes: omitted from the payload when unknown, and the
 # upsert is a merge, so a stale value from an earlier write must be deleted.
-_WATER_STRESS_OPTIONAL_ATTRS = ("waterStressIndex", "waterStressObservedAt", "shadeFraction")
+_WATER_STRESS_OPTIONAL_ATTRS = (
+    "waterStressIndex", "waterStressObservedAt", "shadeFraction", "shadeObservedAt",
+)
 _AIR_TEMP_RANGE_C = (-50.0, 60.0)
 _RH_RANGE_PCT = (0.0, 100.0)
 
@@ -236,18 +239,34 @@ async def _read_parcel_readings(redis_state, parcel_id: str, metric: str, now_ts
 
 async def _read_daily_shade(redis_state, parcel_id: str, now_ts: float) -> float | None:
     """Daily shade fraction: today (UTC), else yesterday (UTC), else None."""
+    return (await _read_daily_shade_obs(redis_state, parcel_id, now_ts))[0]
+
+
+async def _read_daily_shade_obs(
+    redis_state, parcel_id: str, now_ts: float
+) -> tuple[float | None, datetime | None]:
+    """Daily shade fraction (today, else yesterday, UTC) and its latest PAR sample time."""
     if redis_state is None:
-        return None
+        return None, None
     day = datetime.fromtimestamp(now_ts, tz=timezone.utc).date()
     for d in (day, day - timedelta(days=1)):
+        day_str = d.strftime("%Y-%m-%d")
         try:
-            shade = await redis_state.get_daily_shade(parcel_id, d.strftime("%Y-%m-%d"))
+            shade = await redis_state.get_daily_shade(parcel_id, day_str)
         except Exception as exc:  # noqa: BLE001 -- fail-safe
             logger.warning("pipeline: daily shade unavailable for %s: %s", parcel_id, exc)
-            return None
-        if shade is not None:
-            return shade
-    return None
+            return None, None
+        if shade is None:
+            continue
+        observed = None
+        try:
+            ts = await redis_state.get_daily_shade_ts(parcel_id, day_str)
+            if ts is not None and math.isfinite(ts):
+                observed = datetime.fromtimestamp(ts, tz=timezone.utc)
+        except Exception as exc:  # noqa: BLE001 -- the timestamp is optional
+            logger.warning("pipeline: shade time unavailable for %s: %s", parcel_id, exc)
+        return shade, observed
+    return None, None
 
 
 def _mean_in_range(readings: list, lo: float, hi: float) -> float | None:
@@ -283,6 +302,7 @@ async def _resolve_water_stress(
     now_ts: float,
     shade_fraction: float | None,
     root_depth_mm: float,
+    shade_observed_at: datetime | None = None,
 ) -> tuple[WaterStress, float | None]:
     """Water stress index plus the sensor-assimilated soil water (mm), if the sensor path applied."""
     readings = await _read_parcel_readings(redis_state, parcel_id, "soilMoisture", now_ts)
@@ -301,6 +321,8 @@ async def _resolve_water_stress(
     except Exception as exc:  # noqa: BLE001 -- fail-safe: no index rather than a wrong one
         logger.warning("pipeline: water stress failed for %s: %s", parcel_id, exc)
         ws = WaterStress(None, "unavailable", None, shade_fraction)
+    if ws.shade_fraction is not None and shade_observed_at is not None:
+        ws = dataclasses.replace(ws, shade_observed_at=shade_observed_at)
 
     assimilated = None
     if ws.fidelity == "iot_sensor" and used and swb is not None:
@@ -423,7 +445,9 @@ async def trigger(
         regional_fn=_regional_meteo,
     )
     weather = _snapshot_from_meteo(meteo)
-    daily_shade = await _read_daily_shade(redis_state, effective_parcel, now_ts)
+    daily_shade, shade_observed_at = await _read_daily_shade_obs(
+        redis_state, effective_parcel, now_ts
+    )
     et0_fidelity = meteo.fidelity.get("et0_mm", "unavailable")
 
     now = datetime.fromtimestamp(now_ts, tz=timezone.utc)
@@ -506,6 +530,7 @@ async def trigger(
             stage_table=stage_table,
             publish=True,
             daily_shade=daily_shade,
+            shade_observed_at=shade_observed_at,
             et0_fidelity=et0_fidelity,
             parcel_stress=True,
         )
@@ -547,6 +572,7 @@ async def trigger(
                 stage_table=stage_table,
                 publish=False,
                 daily_shade=daily_shade,
+                shade_observed_at=shade_observed_at,
                 et0_fidelity=et0_fidelity,
             )
         except Exception as exc:
@@ -565,6 +591,7 @@ async def trigger(
     rollup.water_stress, assimilated = await _resolve_water_stress(
         redis_state, effective_parcel, soil, _resolve_depletion_fraction(crop_context),
         rollup.soil_water_balance, et0_fidelity, now_ts, daily_shade, root_depth_mm,
+        shade_observed_at,
     )
     if assimilated is not None and redis_state:
         try:
@@ -603,6 +630,7 @@ async def _run_engines(
     stage_table: StageTable | dict[str, tuple[float, float]] | None = None,
     publish: bool = True,
     daily_shade: float | None = None,
+    shade_observed_at: datetime | None = None,
     et0_fidelity: str = "unavailable",
     parcel_stress: bool = False,
 ) -> CropHealthAssessment:
@@ -716,7 +744,7 @@ async def _run_engines(
     if parcel_stress:
         assessment.water_stress, assimilated_sw = await _resolve_water_stress(
             redis_state, effective_parcel, soil, depletion_p, swb, et0_fidelity,
-            _now_ts(), daily_shade, root_depth_mm,
+            _now_ts(), daily_shade, root_depth_mm, shade_observed_at,
         )
 
     # Persist current soil water to Redis for next assessment (sensor value when it applied)
@@ -1361,6 +1389,21 @@ def _snapshot_from_meteo(meteo) -> WeatherSnapshot | None:
     )
 
 
+def _parse_observed_ts(value) -> float | None:
+    """Epoch seconds from a keyValues ISO-8601 dateObserved (or NGSI DateTime); None if unusable."""
+    if isinstance(value, dict):
+        value = value.get("@value", value.get("value"))
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.timestamp()
+
+
 async def _regional_meteo(parcel_id: str, tenant_id: str) -> dict:
     """Regional fallback meteo from Orion WeatherObserved (fail-safe {}).
 
@@ -1440,6 +1483,9 @@ async def _regional_meteo(parcel_id: str, tenant_id: str) -> dict:
                 out["solar_radiation_wm2"] = float(ghi)
             except (TypeError, ValueError):
                 pass
+        observed = _parse_observed_ts(wo.get("dateObserved"))
+        if observed is not None:
+            out["observed_at_ts"] = observed
         return out
     except Exception as exc:  # noqa: BLE001 -- fail-safe
         logger.warning("_regional_meteo: failed for %s — %s", parcel_id, exc)
@@ -2189,6 +2235,10 @@ def _resolve_data_fidelity(assessment: CropHealthAssessment) -> str:
 _DEVICE_PARCEL_TTL_S = 3600
 _GHI_TTL_S = 300
 _SHADE_MAX_AGE_S = 3600.0
+# GHI only pairs with a PAR reading when the station observation is this close in time.
+_GHI_MAX_SKEW_S = 90 * 60.0
+# Physical ceiling for PAR (umol/m2/s); full sun is ~2000-2200.
+_PAR_MAX = 3000.0
 
 
 async def _cached_parcel_for_device(
@@ -2207,19 +2257,22 @@ async def _cached_parcel_for_device(
     return parcel_id
 
 
-async def _cached_ghi(parcel_id: str, tenant_id: str, redis_state: RedisState) -> float | None:
-    """Parcel GHI (W/m2) from the regional WeatherObserved, cached 300 s."""
+async def _cached_ghi(
+    parcel_id: str, tenant_id: str, redis_state: RedisState
+) -> tuple[float | None, float | None]:
+    """(GHI W/m2, WeatherObserved epoch time) from the regional station, cached 300 s."""
     key = f"ghi:{tenant_id}:{parcel_id}"
     try:
         cached = await redis_state.get_json(key)
     except StoreError:
         cached = None
     if cached is not None:
-        return cached.get("ghi")
+        return cached.get("ghi"), cached.get("observed_at_ts")
     meteo = await _regional_meteo(parcel_id, tenant_id)
     ghi = meteo.get("solar_radiation_wm2")
-    await redis_state.set_json(key, {"ghi": ghi}, _GHI_TTL_S)
-    return ghi
+    observed = meteo.get("observed_at_ts")
+    await redis_state.set_json(key, {"ghi": ghi, "observed_at_ts": observed}, _GHI_TTL_S)
+    return ghi, observed
 
 
 def _now_ts() -> float:
@@ -2258,16 +2311,25 @@ async def record_parcel_reading(
 async def _add_shade_sample(
     parcel_id: str, ts: float, par_under: float, tenant_id: str, redis_state: RedisState
 ) -> None:
+    if not math.isfinite(par_under) or not 0.0 <= par_under <= _PAR_MAX:
+        logger.warning(
+            "shade: implausible PAR %s for parcel %s ignored (valid 0..%d)",
+            par_under, parcel_id, int(_PAR_MAX),
+        )
+        return
     now = _now_ts()
     # Only readings near "now" pair with the current GHI and belong to today's sums.
     if ts - now > MAX_FUTURE_SKEW_S or now - ts > _SHADE_MAX_AGE_S:
         return
-    ghi = await _cached_ghi(parcel_id, tenant_id, redis_state)
+    ghi, ghi_ts = await _cached_ghi(parcel_id, tenant_id, redis_state)
     # No GHI, or sun down: no open-sky reference, so no sample (never assume daylight).
     if ghi is None or not math.isfinite(ghi) or ghi < MIN_GHI_WM2:
         return
+    # The open-sky reference must be contemporary with the PAR reading.
+    if ghi_ts is None or not math.isfinite(ghi_ts) or abs(ts - ghi_ts) > _GHI_MAX_SKEW_S:
+        return
     day = datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d")
-    await redis_state.add_shade_sample(parcel_id, day, par_under, PAR_PER_GHI * ghi)
+    await redis_state.add_shade_sample(parcel_id, day, par_under, PAR_PER_GHI * ghi, ts)
 
 
 async def _resolve_parcel_from_device(device_id: str, tenant_id: str) -> str | None:

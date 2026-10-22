@@ -19,6 +19,9 @@ MIN_GHI_WM2 = 50.0
 MAX_READING_AGE_S = 3600.0
 MAX_FUTURE_SKEW_S = 300.0
 MAX_THETA = 0.6
+# Below ~2 % volumetric a mineral soil is physically implausible: a dead or
+# out-of-soil probe (0.0) or a fraction mislabelled as percent (0.25 -> 0.0025).
+MIN_THETA = 0.02
 
 FIDELITY_IOT = "iot_sensor"
 FIDELITY_PROXY = "regional_proxy"
@@ -30,7 +33,7 @@ def volumetric_soil_moisture(value: float, unit_code: str | None) -> float | Non
     if unit_code != "P1" or not math.isfinite(value):
         return None
     theta = value / 100.0
-    if 0.0 <= theta <= MAX_THETA:
+    if MIN_THETA <= theta <= MAX_THETA:
         return theta
     return None
 
@@ -86,6 +89,11 @@ def valid_theta_readings(readings: list[ParcelReading], now_ts: float) -> list[t
         theta = volumetric_soil_moisture(r.value, r.unit_code)
         if theta is not None:
             used.append((r.ts, theta))
+        elif r.unit_code == "P1" and math.isfinite(r.value):
+            logger.warning(
+                "under_panel_stress: implausible soil moisture %s%% from device %s ignored",
+                r.value, r.device_id,
+            )
     return used
 
 
@@ -116,7 +124,7 @@ def compute_water_stress(
             observed = datetime.fromtimestamp(min(oldest, now_ts), tz=timezone.utc)
             return WaterStress(
                 index,
-                FIDELITY_IOT if soil.has_data else FIDELITY_PROXY,
+                FIDELITY_IOT if soil.hydraulics_from_soil else FIDELITY_PROXY,
                 observed,
                 shade_fraction,
             )
@@ -128,6 +136,7 @@ def _model_result(
     model_ks: float | None, model_fidelity: str, now: datetime, shade_fraction: float | None
 ) -> WaterStress:
     index = _model_index(model_ks)
-    if index is not None:
+    # An index derived without its inputs (e.g. no ET0) must never be published.
+    if index is not None and model_fidelity != FIDELITY_UNAVAILABLE:
         return WaterStress(index, model_fidelity, now, shade_fraction)
     return WaterStress(None, FIDELITY_UNAVAILABLE, None, shade_fraction)

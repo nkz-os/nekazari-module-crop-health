@@ -286,6 +286,13 @@ const en = {
         },
         detail: {
             soilProperties: 'Soil Properties',
+            waterStress: 'Water stress',
+            fidelity: {
+                iot_sensor: 'Sensor',
+                parcel_weather: 'Parcel weather',
+                regional_proxy: 'Regional estimate',
+                unavailable: 'Unavailable',
+            },
             soilReservoir: 'Soil reservoir',
             phenologyDeviation: 'Phenology deviation',
             vhiLabel: 'VHI / ASIS (drought)',
@@ -591,6 +598,13 @@ const es = {
         },
         detail: {
             soilProperties: 'Propiedades del Suelo',
+            waterStress: 'Estrés hídrico',
+            fidelity: {
+                iot_sensor: 'Sensor',
+                parcel_weather: 'Meteo de parcela',
+                regional_proxy: 'Estimación regional',
+                unavailable: 'No disponible',
+            },
             soilReservoir: 'Reserva de agua',
             phenologyDeviation: 'Desviación fenológica',
             vhiLabel: 'VHI / ASIS (sequía)',
@@ -895,6 +909,13 @@ const ca = {
         },
         detail: {
             soilProperties: 'Propietats del Sòl',
+            waterStress: 'Water stress',
+            fidelity: {
+                iot_sensor: 'Sensor',
+                parcel_weather: 'Parcel weather',
+                regional_proxy: 'Regional estimate',
+                unavailable: 'Unavailable',
+            },
             soilReservoir: 'Reserva d\'aigua',
             phenologyDeviation: 'Desviació fenològica',
             vhiLabel: 'VHI / ASIS (sequera)',
@@ -1168,6 +1189,13 @@ const eu = {
         },
         detail: {
             soilProperties: 'Lurzoruaren Propietateak',
+            waterStress: 'Water stress',
+            fidelity: {
+                iot_sensor: 'Sensor',
+                parcel_weather: 'Parcel weather',
+                regional_proxy: 'Regional estimate',
+                unavailable: 'Unavailable',
+            },
             soilReservoir: 'Ur-erreserba',
             phenologyDeviation: 'Fenologia desbideratzea',
             vhiLabel: 'VHI / ASIS (lehorte)',
@@ -1441,6 +1469,13 @@ const fr = {
         },
         detail: {
             soilProperties: 'Propriétés du Sol',
+            waterStress: 'Water stress',
+            fidelity: {
+                iot_sensor: 'Sensor',
+                parcel_weather: 'Parcel weather',
+                regional_proxy: 'Regional estimate',
+                unavailable: 'Unavailable',
+            },
             soilReservoir: 'Réserve d\'eau',
             phenologyDeviation: 'Écart phénologique',
             vhiLabel: 'VHI / ASIS (sécheresse)',
@@ -1714,6 +1749,13 @@ const pt = {
         },
         detail: {
             soilProperties: 'Propriedades do Solo',
+            waterStress: 'Water stress',
+            fidelity: {
+                iot_sensor: 'Sensor',
+                parcel_weather: 'Parcel weather',
+                regional_proxy: 'Regional estimate',
+                unavailable: 'Unavailable',
+            },
             soilReservoir: 'Reserva de água',
             phenologyDeviation: 'Desvio fenológico',
             vhiLabel: 'VHI / ASIS (seca)',

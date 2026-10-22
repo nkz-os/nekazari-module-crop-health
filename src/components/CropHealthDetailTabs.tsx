@@ -5,6 +5,7 @@ import { Sparkline } from './shared/Sparkline';
 import { SeverityBadge, SEVERITY_STYLES } from './shared/SeverityBadge';
 import { Badge, MetricSection, ProgressBar } from './detail/MetricPrimitives';
 import YieldForecastSection from './YieldForecastSection';
+import { formatRelativeTime } from '../utils/relativeTime';
 import type {
   AssessmentData,
   CorrelationPoint,
@@ -171,6 +172,14 @@ const CropHealthDetailTabs: React.FC<CropHealthDetailTabsProps> = ({
                 </p>
               )}
             </div>
+          )}
+          {assessment.waterStressFidelity && (
+            <p className="text-xs text-nkz-text-muted mt-1">
+              {t('detail.waterStress')}{' '}
+              {assessment.waterStressFidelity === 'unavailable' || assessment.waterStressIndex == null
+                ? t('detail.fidelity.unavailable')
+                : `${assessment.waterStressIndex.toFixed(2)} · ${t(`detail.fidelity.${assessment.waterStressFidelity}`)} · ${formatRelativeTime(assessment.waterStressObservedAt, t)}`}
+            </p>
           )}
           {(assessment.waterloggingRisk?.riskLevel ?? assessment.waterloggingRiskLevel) &&
             (assessment.waterloggingRisk?.riskLevel ?? assessment.waterloggingRiskLevel) !== 'LOW' && (

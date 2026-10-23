@@ -122,6 +122,9 @@ export interface AssessmentData {
     source: string;
     hasData: boolean;
   };
+  waterStressIndex?: number | null;
+  waterStressFidelity?: 'iot_sensor' | 'parcel_weather' | 'regional_proxy' | 'unavailable' | null;
+  waterStressObservedAt?: string | null;
   soilWaterMm?: number;
   soilAWCmm?: number;
   soilWaterRatio?: number;

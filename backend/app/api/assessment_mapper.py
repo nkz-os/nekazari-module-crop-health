@@ -13,6 +13,14 @@ def prop_value(entity: dict[str, Any], key: str, default: Any = None) -> Any:
     return val
 
 
+def datetime_value(entity: dict[str, Any], key: str) -> str | None:
+    """ISO string of a DateTime property (keyValues or normalized, wrapped or plain)."""
+    val = prop_value(entity, key)
+    if isinstance(val, dict):
+        val = val.get("@value")
+    return val if isinstance(val, str) and val else None
+
+
 def extract_parcel_id(entity: dict[str, Any]) -> str:
     ref = entity.get("hasAgriParcel") or entity.get("refAgriParcel")
     if isinstance(ref, dict):
@@ -253,6 +261,9 @@ def map_entity_to_assessment(entity: dict[str, Any]) -> dict[str, Any]:
         "soilSensors": soil_sensors,
         "species": prop_value(entity, "cropSpecies"),
         "soilSuitability": soil_suitability,
+        "waterStressIndex": prop_value(entity, "waterStressIndex"),
+        "waterStressFidelity": prop_value(entity, "waterStressFidelity"),
+        "waterStressObservedAt": datetime_value(entity, "waterStressObservedAt"),
     }
 
 

@@ -37,11 +37,31 @@ def fake_redis(monkeypatch):
     return redis
 
 
+order: list[str] = []
+
+
+@pytest.fixture(autouse=True)
+def records(monkeypatch):
+    """Parcel readings are recorded for every tracked metric, before the trigger."""
+    from app.api import webhooks
+
+    calls = []
+    order.clear()
+
+    async def _record(**kwargs):
+        calls.append(kwargs)
+        order.append("record")
+
+    monkeypatch.setattr(webhooks.pipeline, "record_parcel_reading", _record, raising=False)
+    return calls
+
+
 @pytest.fixture
 def triggers(monkeypatch):
     calls = []
 
     async def _trigger(entity_id, metric_type, redis_state, parcel_id, tenant_id):
+        order.append("trigger")
         calls.append(
             {
                 "entity_id": entity_id,
@@ -182,3 +202,60 @@ def test_derived_token_is_accepted_once_master_is_refused(monkeypatch):
         url, json=empty,
         headers={"Fiware-Service": "acme", "X-Internal-Service-Secret": "test-secret"},
     ).status_code == 401
+
+
+def _dm(prop, value, unit="CEL"):
+    num = {"type": "Property", "value": value}
+    if unit is not None:
+        num["unitCode"] = unit
+    return _measurement(
+        controlledProperty={"type": "Property", "value": prop}, numValue=num
+    )
+
+
+def test_stem_diameter_feeds_trunk_window(fake_redis, triggers):
+    """The platform dendrometer name lands in the legacy trunkDiameter window."""
+    resp = _post({"data": [_dm("stemDiameter", 1234.0, unit="4H")]})
+    assert resp.status_code == 204
+    assert [r[1] for r in fake_redis.readings] == ["trunkDiameter"]
+    assert fake_redis.readings[0][3] == 1234.0
+    assert [t["metric_type"] for t in triggers] == ["trunkDiameter"]
+
+
+def test_read_measurement_returns_unit_code():
+    from app.api.webhooks import _read_measurement
+
+    assert _read_measurement(_dm("soilMoisture", 23.5, unit="P1"))[4] == "P1"
+    assert _read_measurement(_dm("soilMoisture", 23.5, unit=None))[4] is None
+
+
+def test_par_air_temperature_humidity_are_tracked():
+    from app.api import webhooks
+
+    for prop in ("photosyntheticPhotonFluxDensity", "airTemperature", "relativeHumidity"):
+        assert prop in webhooks._TRACKED_ATTRIBUTES
+    assert webhooks._TRACKED_ATTRIBUTES["stemDiameter"] == webhooks._TRACKED_ATTRIBUTES["trunkDiameter"]
+
+
+def test_every_tracked_metric_is_recorded_but_only_engine_metrics_trigger(fake_redis, triggers, records):
+    par = _measurement(
+        controlledProperty={"type": "Property", "value": "photosyntheticPhotonFluxDensity"},
+        numValue={"type": "Property", "value": 640.0, "unitCode": "E32"},
+    )
+    _post({"data": [par]})
+    assert triggers == []
+    assert len(records) == 1
+    assert records[0]["metric"] == "photosyntheticPhotonFluxDensity"
+    assert records[0]["device_id"] == DEVICE_URN
+    assert records[0]["unit_code"] == "E32"
+    assert records[0]["tenant_id"] == "acme"
+
+
+def test_record_runs_before_trigger_for_engine_metric(fake_redis, triggers, records):
+    soil = _measurement(
+        controlledProperty={"type": "Property", "value": "soilMoisture"},
+        numValue={"type": "Property", "value": 35.0, "unitCode": "P1"},
+    )
+    _post({"data": [soil]})
+    assert order == ["record", "trigger"]
+    assert records[0]["unit_code"] == "P1"

@@ -5,6 +5,7 @@ import { Sparkline } from './shared/Sparkline';
 import { SeverityBadge, SEVERITY_STYLES } from './shared/SeverityBadge';
 import { Badge, MetricSection, ProgressBar } from './detail/MetricPrimitives';
 import YieldForecastSection from './YieldForecastSection';
+import { formatRelativeTime } from '../utils/relativeTime';
 import type {
   AssessmentData,
   CorrelationPoint,
@@ -30,6 +31,8 @@ const actionLabels: Record<string, string> = {
   IRRIGATE_SCHEDULED: 'contextPanel.scheduleIrrigation',
   IRRIGATE_IMMEDIATE: 'contextPanel.irrigateImmediately',
 };
+
+const KNOWN_FIDELITIES: string[] = ['iot_sensor', 'parcel_weather', 'regional_proxy', 'unavailable'];
 
 const TAB_KEYS: DetailTab[] = ['water', 'plant', 'yield', 'analytics'];
 
@@ -181,6 +184,18 @@ const CropHealthDetailTabs: React.FC<CropHealthDetailTabsProps> = ({
               {assessment.waterloggingRisk?.drainageRateMmH != null && ` · drain ${assessment.waterloggingRisk.drainageRateMmH.toFixed(1)} mm/h`}
             </p>
           )}
+        </MetricSection>
+      )}
+
+      {/* Water stress index (under-panel) — independent of Soil data */}
+      {assessment.waterStressFidelity && (
+        <MetricSection>
+          <p className="text-xs text-nkz-text-muted">
+            {t('detail.waterStress')}{' '}
+            {assessment.waterStressIndex == null || !KNOWN_FIDELITIES.includes(assessment.waterStressFidelity) || assessment.waterStressFidelity === 'unavailable'
+              ? t('detail.fidelity.unavailable')
+              : `${assessment.waterStressIndex.toFixed(2)} · ${t(`detail.fidelity.${assessment.waterStressFidelity}`)} · ${formatRelativeTime(assessment.waterStressObservedAt, t)}`}
+          </p>
         </MetricSection>
       )}
         </>

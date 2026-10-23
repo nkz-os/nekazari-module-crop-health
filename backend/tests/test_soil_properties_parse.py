@@ -127,3 +127,50 @@ async def test_get_soil_properties_point_null_texture(monkeypatch):
     assert soil.sand_pct == 40
     assert soil.usda_texture_class == "clay-loam"
     assert soil.source == "LUCAS-Texture"
+
+
+def _summary_client(monkeypatch, horizon):
+    class _Resp:
+        status_code = 200
+
+        def json(self):
+            return {"horizons": [horizon], "dataSource": "lab_analysis"}
+
+    class _Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            pass
+
+        async def get(self, url, headers=None, params=None):
+            return _Resp()
+
+    monkeypatch.setattr(context_client.httpx, "AsyncClient", lambda **kw: _Client())
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "fc,wp,expected",
+    [
+        (0.3, 0.1, True),
+        (None, 0.1, False),
+        (0.3, None, False),
+        ({"type": "Property", "value": 0.3}, 0.1, False),
+        ("abc", 0.1, False),
+        (float("nan"), 0.1, False),
+        (0.1, 0.3, False),
+    ],
+)
+async def test_hydraulics_from_soil_only_when_both_values_parse(monkeypatch, fc, wp, expected):
+    context_client._soil_cache.clear()
+    _summary_client(monkeypatch, {"sand": 20, "fieldCapacity": fc, "wiltingPoint": wp})
+    soil = await context_client.get_soil_properties("parcel-h", "test-tenant")
+    assert soil.has_data is True
+    assert soil.hydraulics_from_soil is expected
+
+
+def test_default_soil_has_no_hydraulics_from_soil():
+    from app.schemas import SoilProperties
+
+    assert SoilProperties().hydraulics_from_soil is False

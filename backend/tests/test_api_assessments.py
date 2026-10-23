@@ -60,6 +60,36 @@ class TestAssessmentMapper:
         assert result["phenologyDeviation"] == "on_track"
         assert result["gddAccumulated"] == 890
 
+    def test_maps_water_stress_fields(self):
+        entity = {
+            **SAMPLE_ENTITY,
+            "waterStressIndex": 0.42,
+            "waterStressFidelity": "iot_sensor",
+            "waterStressObservedAt": {"@type": "DateTime", "@value": "2026-06-28T10:00:00Z"},
+        }
+        result = map_entity_to_assessment(entity)
+        assert result["waterStressIndex"] == 0.42
+        assert result["waterStressFidelity"] == "iot_sensor"
+        assert result["waterStressObservedAt"] == "2026-06-28T10:00:00Z"
+
+    def test_water_stress_normalized_and_absent(self):
+        entity = {
+            **SAMPLE_ENTITY,
+            "waterStressFidelity": {"type": "Property", "value": "unavailable"},
+            "waterStressObservedAt": {
+                "type": "Property",
+                "value": {"@type": "DateTime", "@value": "2026-06-28T10:00:00Z"},
+            },
+        }
+        result = map_entity_to_assessment(entity)
+        assert result["waterStressIndex"] is None
+        assert result["waterStressFidelity"] == "unavailable"
+        assert result["waterStressObservedAt"] == "2026-06-28T10:00:00Z"
+        old = map_entity_to_assessment(SAMPLE_ENTITY)
+        assert old["waterStressIndex"] is None
+        assert old["waterStressFidelity"] is None
+        assert old["waterStressObservedAt"] is None
+
     def test_dedupe_latest_per_parcel(self):
         older = {**SAMPLE_ENTITY, "assessedAt": "2026-06-27T10:00:00Z"}
         newer = {**SAMPLE_ENTITY, "assessedAt": "2026-06-28T10:00:00Z"}

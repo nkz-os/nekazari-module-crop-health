@@ -15,6 +15,7 @@ Design:
 from __future__ import annotations
 
 import logging
+import math
 from typing import Any
 
 import httpx
@@ -376,6 +377,23 @@ def _soil_num(value: Any, default: float) -> float:
         return default
 
 
+def _finite_num(value: Any) -> float | None:
+    """A finite float from a plain number or numeric string; None for anything else."""
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        out = float(value)
+    except (TypeError, ValueError):
+        return None
+    return out if math.isfinite(out) else None
+
+
+def _hydraulics_from_soil(fc_raw: Any, wp_raw: Any) -> bool:
+    """True only when field capacity and wilting point both came from Soil (fc > wp)."""
+    fc, wp = _finite_num(fc_raw), _finite_num(wp_raw)
+    return fc is not None and wp is not None and fc > wp
+
+
 def _summary_data_source(data: dict[str, Any], horizon: dict[str, Any]) -> str:
     raw = data.get("dataSource")
     if isinstance(raw, dict):
@@ -510,6 +528,9 @@ async def get_soil_properties(parcel_id: str, tenant_id: str = "") -> "SoilPrope
                         "ph": h.get("ph"),
                         "source": _summary_data_source(data, h),
                         "has_data": True,
+                        "hydraulics_from_soil": _hydraulics_from_soil(
+                            h.get("fieldCapacity"), h.get("wiltingPoint")
+                        ),
                     }
     except Exception:
         pass
@@ -544,6 +565,9 @@ async def get_soil_properties(parcel_id: str, tenant_id: str = "") -> "SoilPrope
                             "usda_texture_class": tex.get("usdaTextureClass") or "loam",
                             "source": (data.get("source") or {}).get("provider") or "soilgrids",
                             "has_data": True,
+                            "hydraulics_from_soil": _hydraulics_from_soil(
+                                hyd.get("fieldCapacity"), hyd.get("wiltingPoint")
+                            ),
                         }
             except Exception:
                 pass

@@ -8,7 +8,8 @@ All NGSI-LD entities follow the Smart Data Models conventions.
 from __future__ import annotations
 
 import enum
-from datetime import datetime
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -41,6 +42,9 @@ class MetricType(str, enum.Enum):
     SOIL_PH = "soilPh"
     SOIL_EC = "soilEC"
     SOIL_TEMPERATURE = "soilTemp"
+    AIR_TEMPERATURE = "airTemperature"
+    RELATIVE_HUMIDITY = "relativeHumidity"
+    PAR = "photosyntheticPhotonFluxDensity"
 
 
 # ── Sensor Reading ────────────────────────────────────────────────────────────
@@ -186,6 +190,20 @@ class SoilProperties(BaseModel):
     ph: float | None = None
     source: str = "default_modeled"
     has_data: bool = False
+    # True only when BOTH field capacity and wilting point were read from the Soil
+    # module as finite numbers (fc > wp); False when any value is a default.
+    hydraulics_from_soil: bool = False
+
+
+@dataclass(frozen=True)
+class WaterStress:
+    """Shade-aware water stress index (0 = no stress, 1 = full stress)."""
+    index: float | None
+    fidelity: str
+    observed_at: datetime | None
+    shade_fraction: float | None
+    # Timestamp of the latest PAR sample behind shade_fraction (None when unknown).
+    shade_observed_at: datetime | None = None
 
 
 class SoilWaterBalanceResult(BaseModel):
@@ -422,6 +440,8 @@ class CropHealthAssessment(BaseModel):
     zone_urn: str | None = None
     crop_requirements: CropRequirements | None = None
     soil_suitability: "SoilSuitability | None" = None
+    # Parcel-level only: never serialised on zone entities.
+    water_stress: WaterStress | None = None
 
     def to_ngsi_ld(self) -> dict[str, Any]:
         """Serialise to NGSI-LD entity payload."""
@@ -614,6 +634,29 @@ class CropHealthAssessment(BaseModel):
             detail = {"ph": ss.ph, "texture": ss.texture, "drainage": ss.drainage}
             if any(v is not None for v in detail.values()):
                 entity["soilSuitabilityDetail"] = {"type": "Property", "value": detail}
+        if self.water_stress is not None:
+            ws = self.water_stress
+            entity["waterStressFidelity"] = {"type": "Property", "value": ws.fidelity}
+            if ws.index is not None:
+                entity["waterStressIndex"] = {"type": "Property", "value": ws.index}
+            if ws.observed_at is not None:
+                entity["waterStressObservedAt"] = {
+                    "type": "Property",
+                    "value": {
+                        "@type": "DateTime",
+                        "@value": ws.observed_at.astimezone(timezone.utc).isoformat(),
+                    },
+                }
+            if ws.shade_fraction is not None:
+                entity["shadeFraction"] = {"type": "Property", "value": round(ws.shade_fraction, 3)}
+                if ws.shade_observed_at is not None:
+                    entity["shadeObservedAt"] = {
+                        "type": "Property",
+                        "value": {
+                            "@type": "DateTime",
+                            "@value": ws.shade_observed_at.astimezone(timezone.utc).isoformat(),
+                        },
+                    }
         return entity
 
     def to_zone_ngsi_ld(self) -> dict[str, Any]:
@@ -625,6 +668,8 @@ class CropHealthAssessment(BaseModel):
         envelope, then overrides id/type and adds the zone relationship.
         """
         entity = self.to_ngsi_ld()
+        for attr in ("waterStressIndex", "waterStressFidelity", "waterStressObservedAt", "shadeFraction", "shadeObservedAt"):
+            entity.pop(attr, None)
         date_str = self.assessed_at.strftime("%Y%m%d")
         zone = self.zone_id or "parcel"
         entity["id"] = (

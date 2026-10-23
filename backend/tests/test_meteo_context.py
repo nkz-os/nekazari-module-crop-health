@@ -44,3 +44,13 @@ async def test_dominant_fidelity_picks_best_present():
         "p1", "t1", sensor_ctx={"air_temp_c": 28.0}, weather_map_fn=_wm, regional_fn=_regional,
     )
     assert ctx.dominant_fidelity == "iot_sensor"
+
+
+@pytest.mark.asyncio
+async def test_solar_radiation_resolved_from_regional():
+    async def _reg(parcel, tenant):
+        return {"solar_radiation_wm2": 640.0}
+
+    ctx = await resolve_meteo_context("p1", "t1", regional_fn=_reg)
+    assert ctx.solar_radiation_wm2 == 640.0
+    assert ctx.fidelity["solar_radiation_wm2"] == "regional_proxy"

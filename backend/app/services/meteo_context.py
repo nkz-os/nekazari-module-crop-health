@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
 
-_VARIABLES = ("air_temp_c", "rh_pct", "et0_mm", "leaf_temp_c")
+_VARIABLES = ("air_temp_c", "rh_pct", "et0_mm", "leaf_temp_c", "solar_radiation_wm2")
 _FIDELITY_RANK = {"iot_sensor": 3, "parcel_weather": 2, "regional_proxy": 1, "unavailable": 0}
 
 
@@ -21,6 +21,7 @@ class MeteoContext:
     rh_pct: float | None = None
     et0_mm: float | None = None
     leaf_temp_c: float | None = None
+    solar_radiation_wm2: float | None = None
     fidelity: dict[str, str] = field(default_factory=dict)
     dominant_fidelity: str = "unavailable"
 

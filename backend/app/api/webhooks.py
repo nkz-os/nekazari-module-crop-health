@@ -103,7 +103,10 @@ async def receive_sensor_data(
         logger.debug("Empty data in webhook notification")
         return Response(status_code=204)
 
-    tenant_id = request.headers.get("Fiware-Service", "")
+    # Orion-LD sends NGSILD-Tenant; Fiware-Service is the NGSIv2 name.
+    tenant_id = (
+        request.headers.get("NGSILD-Tenant") or request.headers.get("Fiware-Service") or ""
+    ).strip().lower()
     from app.main import get_redis_state
     redis_state = get_redis_state()
     now_ts = datetime.now(timezone.utc).timestamp()

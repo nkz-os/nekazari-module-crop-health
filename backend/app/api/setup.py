@@ -80,7 +80,7 @@ async def setup_parcel(request: Request, body: SetupParcelRequest):
     registrar = SubscriptionRegistrar(
         orion_url=settings.orion_ld_url,
         notification_url=notification_url,
-        subscriptions=[{"type": "DeviceMeasurement", "throttling": 30}],
+        subscriptions=[{"type": "DeviceMeasurement", "throttling": None}],
         module_name="crop-health",
         context_url=settings.orion_ld_context,
         # The registrar owns the receiver auth header: the master secret (legacy) or,

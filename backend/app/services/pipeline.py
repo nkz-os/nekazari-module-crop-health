@@ -51,6 +51,7 @@ from app.services import context_client
 from app.services.context_client import get_phenology_params
 from app.services.fiware_publisher import publish_assessment
 from app.services.meteo_context import resolve_meteo_context
+from app.services.parcel_link import parcel_link_target
 from app.services.redis_state import MAX_FUTURE_SKEW_S, RedisState, StoreError
 from app.services.zonation import (
     resolve_zones,
@@ -1429,7 +1430,7 @@ async def _regional_meteo(parcel_id: str, tenant_id: str) -> dict:
                 f"{base}/ngsi-ld/v1/entities",
                 params={"type": "WeatherObserved", "q": rel_q,
                         "limit": 5, "options": "keyValues",
-                        "orderBy": "!dateObserved"},
+                        "orderBy": "!dateObserved", "local": "true"},
                 headers=headers,
             )
             entities = resp.json() if resp.status_code == 200 else []
@@ -1439,7 +1440,7 @@ async def _regional_meteo(parcel_id: str, tenant_id: str) -> dict:
                     f"{base}/ngsi-ld/v1/entities",
                     params={"type": "WeatherObserved",
                             "limit": 5, "options": "keyValues",
-                            "orderBy": "!dateObserved"},
+                            "orderBy": "!dateObserved", "local": "true"},
                     headers=headers,
                 )
                 entities = resp.json() if resp.status_code == 200 else []
@@ -1453,7 +1454,11 @@ async def _regional_meteo(parcel_id: str, tenant_id: str) -> dict:
 
         wo = entities[0]
         out: dict = {}
+        # The platform context maps temperature/airTemperature (and
+        # humidity/relativeHumidity) to one IRI; compaction picks either alias.
         temp = wo.get("temperature")
+        if temp is None:
+            temp = wo.get("airTemperature")
         if temp is not None:
             try:
                 out["air_temp_c"] = float(temp)
@@ -1466,6 +1471,8 @@ async def _regional_meteo(parcel_id: str, tenant_id: str) -> dict:
             except (TypeError, ValueError):
                 pass
         rh = wo.get("relativeHumidity")
+        if rh is None:
+            rh = wo.get("humidity")
         if rh is not None:
             try:
                 out["rh_pct"] = float(rh)
@@ -2371,12 +2378,8 @@ async def _resolve_parcel_from_device(device_id: str, tenant_id: str) -> str | N
     if not isinstance(device, dict):
         return None
     for attr in ("controlledAsset", "hasAgriParcel", "refAgriParcel"):
-        link = device.get(attr)
-        if isinstance(link, dict):
-            target = link.get("object")
-        else:
-            target = link
-        if isinstance(target, str) and target:
+        target = parcel_link_target(device.get(attr))
+        if target:
             # Same normalisation the rest of the module uses (sources.py builds
             # its parcel map this way, and _resolve_parcel_coords rebuilds the
             # URN from it): strip the prefix, keep any tenant segment.

@@ -51,7 +51,13 @@ from app.services import context_client
 from app.services.context_client import get_phenology_params
 from app.services.fiware_publisher import publish_assessment
 from app.services.meteo_context import resolve_meteo_context
-from app.services.parcel_link import parcel_link_target
+from app.services.parcel_link import (
+    OPEN_FIELD,
+    PARCEL_PREFIX,
+    UNDER_PANEL,
+    owner_from_link,
+    parcel_link_target,
+)
 from app.services.redis_state import MAX_FUTURE_SKEW_S, RedisState, StoreError
 from app.services.zonation import (
     resolve_zones,
@@ -2248,20 +2254,23 @@ _GHI_MAX_SKEW_S = 90 * 60.0
 _PAR_MAX = 3000.0
 
 
-async def _cached_parcel_for_device(
+async def _cached_device_owner(
     device_id: str, tenant_id: str, redis_state: RedisState
-) -> str | None:
-    key = f"devparcel:{tenant_id}:{device_id}"
+) -> tuple[str, str] | None:
+    """(parcel_id, context) for a device, cached. Unresolvable owner -> None."""
+    key = f"devowner:{tenant_id}:{device_id}"
     try:
         cached = await redis_state.get_json(key)
     except StoreError:
         cached = None
-    if cached and cached.get("parcel_id"):
-        return cached["parcel_id"]
-    parcel_id = await _resolve_parcel_from_device(device_id, tenant_id)
-    if parcel_id:
-        await redis_state.set_json(key, {"parcel_id": parcel_id}, _DEVICE_PARCEL_TTL_S)
-    return parcel_id
+    if cached and cached.get("parcel_id") and cached.get("context") in (UNDER_PANEL, OPEN_FIELD):
+        return cached["parcel_id"], cached["context"]
+    owner = await _resolve_device_owner(device_id, tenant_id)
+    if owner:
+        await redis_state.set_json(
+            key, {"parcel_id": owner[0], "context": owner[1]}, _DEVICE_PARCEL_TTL_S
+        )
+    return owner
 
 
 async def _cached_ghi(
@@ -2302,10 +2311,11 @@ async def record_parcel_reading(
     ahead of ``trigger``, and an exception here would abort that trigger.
     """
     try:
-        parcel_id = await _cached_parcel_for_device(device_id, tenant_id, redis_state)
-        if not parcel_id:
+        owner = await _cached_device_owner(device_id, tenant_id, redis_state)
+        if not owner:
             logger.warning("record_parcel_reading: device %s has no parcel link — dropped", device_id)
             return None
+        parcel_id, _context = owner  # Task 2 stores the context
         await redis_state.set_parcel_reading(parcel_id, metric, device_id, ts, value, unit_code)
         if metric == MetricType.PAR.value:
             await _add_shade_sample(parcel_id, ts, value, tenant_id, redis_state)
@@ -2340,7 +2350,13 @@ async def _add_shade_sample(
 
 
 async def _resolve_parcel_from_device(device_id: str, tenant_id: str) -> str | None:
-    """Resolve a device's parcel through its canonical ``controlledAsset`` link.
+    """Parcel id of a device (see ``_resolve_device_owner``), or None."""
+    owner = await _resolve_device_owner(device_id, tenant_id)
+    return owner[0] if owner else None
+
+
+async def _resolve_device_owner(device_id: str, tenant_id: str) -> tuple[str, str] | None:
+    """Resolve (parcel_id, context) from a device's ``controlledAsset`` link.
 
     There is no id convention to fall back on: a `DeviceMeasurement` id ends in
     the measured property, and a `Device` id ends in the device's own external
@@ -2349,8 +2365,12 @@ async def _resolve_parcel_from_device(device_id: str, tenant_id: str) -> str | N
     broker hop, so take the hop.
 
     ``hasAgriParcel``/``refAgriParcel`` stay as fallbacks for devices provisioned
-    before the cutover. Returns None when the device is unlinked or unreachable —
-    the caller skips rather than guessing.
+    before the cutover and mean ``open_field``. The first ``controlledAsset``
+    entry is the owner: a solar park means ``under_panel`` (parcel read from the
+    entity itself or, if only the park is listed, from the park's
+    ``hasAgriParcel``); a parcel means ``open_field``; anything else is ignored.
+    Returns None when the owner cannot be resolved — the caller skips rather
+    than guessing.
     """
     if not device_id or not tenant_id:
         return None
@@ -2377,11 +2397,49 @@ async def _resolve_parcel_from_device(device_id: str, tenant_id: str) -> str | N
 
     if not isinstance(device, dict):
         return None
-    for attr in ("controlledAsset", "hasAgriParcel", "refAgriParcel"):
+    if device.get("controlledAsset") is not None:
+        owner = owner_from_link(device.get("controlledAsset"))
+        if owner is None:
+            return None
+        context, parcel_urn, park_urn = owner
+        if parcel_urn is None:
+            parcel_urn = await _parcel_of_park(park_urn, tenant_id)
+            if not parcel_urn:
+                logger.warning("Park %s of device %s has no parcel link", park_urn, device_id)
+                return None
+        # Same normalisation the rest of the module uses (sources.py builds
+        # its parcel map this way, and _resolve_parcel_coords rebuilds the
+        # URN from it): strip the prefix, keep any tenant segment.
+        return parcel_urn.replace(PARCEL_PREFIX, ""), context
+    for attr in ("hasAgriParcel", "refAgriParcel"):
         target = parcel_link_target(device.get(attr))
-        if target:
-            # Same normalisation the rest of the module uses (sources.py builds
-            # its parcel map this way, and _resolve_parcel_coords rebuilds the
-            # URN from it): strip the prefix, keep any tenant segment.
-            return target.replace("urn:ngsi-ld:AgriParcel:", "")
+        if target.startswith(PARCEL_PREFIX):
+            return target.replace(PARCEL_PREFIX, ""), OPEN_FIELD
     return None
+
+
+async def _parcel_of_park(park_urn: str, tenant_id: str) -> str | None:
+    """The parcel URN a solar park points at, or None (unreadable or unlinked)."""
+    from app.config import get_settings
+    from nkz_platform_sdk.orion import OrionClient
+
+    settings = get_settings()
+    client = OrionClient(
+        tenant_id,
+        base_url=settings.orion_ld_url,
+        context_url=settings.orion_ld_context,
+    )
+    try:
+        park = await client.get_entity(park_urn)
+    except Exception as exc:  # noqa: BLE001 — an unreachable park is not a parcel
+        logger.warning("Cannot read park %s to resolve its parcel: %s", park_urn, exc)
+        return None
+    finally:
+        try:
+            await client.close()
+        except Exception:  # noqa: BLE001
+            pass
+    if not isinstance(park, dict):
+        return None
+    target = parcel_link_target(park.get("hasAgriParcel") or park.get("refAgriParcel"))
+    return target if target.startswith(PARCEL_PREFIX) else None

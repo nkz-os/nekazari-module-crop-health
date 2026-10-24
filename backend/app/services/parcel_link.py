@@ -26,3 +26,29 @@ def parcel_link_target(link) -> str:
     """The primary URN a link attribute points at, or ""."""
     targets = parcel_link_targets(link)
     return targets[0] if targets else ""
+
+
+UNDER_PANEL = "under_panel"
+OPEN_FIELD = "open_field"
+PARK_PREFIX = "urn:ngsi-ld:AgriSolarPark:"
+PARCEL_PREFIX = "urn:ngsi-ld:AgriParcel:"
+
+
+def owner_from_link(link) -> tuple[str, str | None, str | None] | None:
+    """Classify a device's owner from its ``controlledAsset`` link.
+
+    The owner is the FIRST entry. Returns ``(context, parcel_urn, park_urn)``:
+    a solar park owner is ``under_panel`` (parcel_urn is the first parcel listed
+    after it, if any); a parcel owner is ``open_field``. None when the list is
+    empty or the first entry is neither a park nor a parcel.
+    """
+    targets = parcel_link_targets(link)
+    if not targets:
+        return None
+    first = targets[0]
+    if first.startswith(PARK_PREFIX):
+        parcel = next((t for t in targets[1:] if t.startswith(PARCEL_PREFIX)), None)
+        return (UNDER_PANEL, parcel, first)
+    if first.startswith(PARCEL_PREFIX):
+        return (OPEN_FIELD, first, None)
+    return None

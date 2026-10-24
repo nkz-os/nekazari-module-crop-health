@@ -133,7 +133,7 @@ async def test_record_unlinked_device_returns_none_and_logs_once(state, monkeypa
     async def _none(device_id, tenant_id):
         return None
 
-    monkeypatch.setattr(pipeline, "_resolve_parcel_from_device", _none)
+    monkeypatch.setattr(pipeline, "_resolve_device_owner", _none)
     with caplog.at_level(logging.WARNING):
         out = await pipeline.record_parcel_reading(
             DEVICE, "photosyntheticPhotonFluxDensity", NOW, 400.0, None, TENANT, state
@@ -148,7 +148,7 @@ def _patch(monkeypatch, ghi, obs_ts=NOW):
 
     async def _resolve(device_id, tenant_id):
         calls["resolve"] += 1
-        return PARCEL
+        return PARCEL, "open_field"
 
     async def _meteo(parcel_id, tenant_id):
         calls["meteo"] += 1
@@ -159,7 +159,7 @@ def _patch(monkeypatch, ghi, obs_ts=NOW):
             out["observed_at_ts"] = obs_ts
         return out
 
-    monkeypatch.setattr(pipeline, "_resolve_parcel_from_device", _resolve)
+    monkeypatch.setattr(pipeline, "_resolve_device_owner", _resolve)
     monkeypatch.setattr(pipeline, "_regional_meteo", _meteo)
     return calls
 
@@ -248,7 +248,7 @@ async def test_resolver_error_does_not_raise(state, monkeypatch):
     async def _boom(device_id, tenant_id):
         raise RuntimeError("broker down")
 
-    monkeypatch.setattr(pipeline, "_resolve_parcel_from_device", _boom)
+    monkeypatch.setattr(pipeline, "_resolve_device_owner", _boom)
     assert await pipeline.record_parcel_reading(DEVICE, PAR, NOW, 1.0, None, TENANT, state) is None
 
 

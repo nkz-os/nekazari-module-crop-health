@@ -287,6 +287,8 @@ const en = {
         detail: {
             soilProperties: 'Soil Properties',
             waterStress: 'Water stress',
+            waterStressOpenField: 'Water stress (open field)',
+            waterStressUnderPanel: 'Water stress under panel',
             fidelity: {
                 iot_sensor: 'Sensor',
                 parcel_weather: 'Parcel weather',
@@ -599,6 +601,8 @@ const es = {
         detail: {
             soilProperties: 'Propiedades del Suelo',
             waterStress: 'Estrés hídrico',
+            waterStressOpenField: 'Estrés hídrico (campo abierto)',
+            waterStressUnderPanel: 'Estrés hídrico bajo panel',
             fidelity: {
                 iot_sensor: 'Sensor',
                 parcel_weather: 'Meteo de parcela',
@@ -910,6 +914,8 @@ const ca = {
         detail: {
             soilProperties: 'Propietats del Sòl',
             waterStress: 'Water stress',
+            waterStressOpenField: 'Water stress (open field)',
+            waterStressUnderPanel: 'Water stress under panel',
             fidelity: {
                 iot_sensor: 'Sensor',
                 parcel_weather: 'Parcel weather',
@@ -1190,6 +1196,8 @@ const eu = {
         detail: {
             soilProperties: 'Lurzoruaren Propietateak',
             waterStress: 'Water stress',
+            waterStressOpenField: 'Water stress (open field)',
+            waterStressUnderPanel: 'Water stress under panel',
             fidelity: {
                 iot_sensor: 'Sensor',
                 parcel_weather: 'Parcel weather',
@@ -1470,6 +1478,8 @@ const fr = {
         detail: {
             soilProperties: 'Propriétés du Sol',
             waterStress: 'Water stress',
+            waterStressOpenField: 'Water stress (open field)',
+            waterStressUnderPanel: 'Water stress under panel',
             fidelity: {
                 iot_sensor: 'Sensor',
                 parcel_weather: 'Parcel weather',
@@ -1750,6 +1760,8 @@ const pt = {
         detail: {
             soilProperties: 'Propriedades do Solo',
             waterStress: 'Water stress',
+            waterStressOpenField: 'Water stress (open field)',
+            waterStressUnderPanel: 'Water stress under panel',
             fidelity: {
                 iot_sensor: 'Sensor',
                 parcel_weather: 'Parcel weather',

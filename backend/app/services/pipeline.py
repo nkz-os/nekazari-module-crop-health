@@ -57,6 +57,7 @@ from app.services.parcel_link import (
     UNDER_PANEL,
     owner_from_link,
     parcel_link_target,
+    parcel_link_targets,
 )
 from app.services.redis_state import MAX_FUTURE_SKEW_S, RedisState, StoreError
 from app.services.zonation import (
@@ -1132,7 +1133,8 @@ async def _run_engines(
         from app.engines.compaction_risk import evaluate_compaction_risk
         from app.services.context_client import get_soil_susceptibility, get_multiyear_vigor_anomaly
         soil_susc = await get_soil_susceptibility(effective_parcel, tenant_id)
-        if soil_susc and soil_susc.get("overall_score", 0) > 25:
+        # The soil module can return the key with no score: no score, no risk.
+        if soil_susc and (soil_susc.get("overall_score") or 0) > 25:
             moisture_pct = soil_moisture_val
             sw_stress = (
                 assessment.soil_water_balance.stress_level
@@ -2479,7 +2481,8 @@ async def _resolve_device_owner(device_id: str, tenant_id: str) -> tuple[str, st
 
     if not isinstance(device, dict):
         return None
-    if device.get("controlledAsset") is not None:
+    # An empty link states no owner: fall through to the legacy attributes.
+    if parcel_link_targets(device.get("controlledAsset")):
         owner = owner_from_link(device.get("controlledAsset"))
         if owner is None:
             return None

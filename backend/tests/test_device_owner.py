@@ -104,3 +104,12 @@ async def test_resolve_building_first_ignored(monkeypatch):
 
     _fake(monkeypatch, {"controlledAsset": {"object": ["urn:ngsi-ld:Building:b", P1]}})
     assert await pipeline._resolve_device_owner(DEVICE, "acme") is None
+
+
+@pytest.mark.asyncio
+async def test_resolve_empty_link_falls_back_to_legacy(monkeypatch):
+    from app.services import pipeline
+
+    _fake(monkeypatch, {"controlledAsset": {"type": "Relationship", "object": []},
+                        "hasAgriParcel": {"type": "Relationship", "object": "urn:ngsi-ld:AgriParcel:p1"}})
+    assert await pipeline._resolve_device_owner(DEVICE, "acme") == ("p1", "open_field")

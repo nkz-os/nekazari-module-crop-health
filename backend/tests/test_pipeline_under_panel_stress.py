@@ -434,6 +434,18 @@ async def test_sensor_air_temp_without_et0_gives_no_index(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_no_soil_water_balance_without_et0(monkeypatch):
+    published, _ = _setup(monkeypatch, wm={}, regional={})
+    air = ParcelReading("d2", NOW - 60, 24.0, "CEL")
+    redis = FakeRedis(readings={MetricType.AIR_TEMPERATURE.value: [air]})
+    await _trigger(redis)
+    a = published["assessments"][-1]
+    assert a.soil_water_balance is None
+    assert a.water_balance is None
+    assert redis.soil_water_set == []
+
+
+@pytest.mark.asyncio
 async def test_shade_observed_at_published_with_shade(monkeypatch):
     published, _ = _setup(monkeypatch)
     ts = NOW - 120

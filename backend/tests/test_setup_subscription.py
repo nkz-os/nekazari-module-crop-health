@@ -54,3 +54,20 @@ async def test_activate_emits_derived_tokens_when_flag_on(monkeypatch):
 
     assert SR.call_args.kwargs["internal_secret"] == "s3cr3t"
     assert SR.call_args.kwargs["derived_tokens"] is True
+
+
+@pytest.mark.asyncio
+async def test_teardown_is_accepted_and_sets_nothing_up():
+    """entity-manager sends `teardown` when a parcel is deleted: acknowledge it, create nothing."""
+    from app.api import setup
+
+    with patch.object(setup, "INTERNAL_SECRET", "s3cr3t"), \
+         patch("app.api.setup.ModuleActivation") as MA, \
+         patch("app.api.setup.SubscriptionRegistrar") as SR:
+        body = setup.SetupParcelRequest(parcel_id="Parcela-4", tenant_id="t-1", action="teardown")
+        req = type("R", (), {"headers": {"X-Internal-Service-Secret": "s3cr3t"}, "client": None})()
+        result = await setup.setup_parcel(req, body)  # type: ignore[arg-type]
+
+    assert result["message"] == "torn_down"
+    MA.assert_not_called()
+    SR.assert_not_called()

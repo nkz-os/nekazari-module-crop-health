@@ -6,6 +6,7 @@ import { SeverityBadge, SEVERITY_STYLES } from './shared/SeverityBadge';
 import { Badge, MetricSection, ProgressBar } from './detail/MetricPrimitives';
 import YieldForecastSection from './YieldForecastSection';
 import { formatRelativeTime } from '../utils/relativeTime';
+import type { TFunction } from 'i18next';
 import type {
   AssessmentData,
   CorrelationPoint,
@@ -35,6 +36,19 @@ const actionLabels: Record<string, string> = {
 const KNOWN_FIDELITIES: string[] = ['iot_sensor', 'parcel_weather', 'regional_proxy', 'unavailable'];
 
 const TAB_KEYS: DetailTab[] = ['water', 'plant', 'yield', 'analytics'];
+
+/** "index · fidelity · age", or the unavailable label when there is no usable value. */
+function waterStressValue(
+  index: number | null | undefined,
+  fidelity: string,
+  observedAt: string | null | undefined,
+  t: TFunction,
+): string {
+  if (index == null || !KNOWN_FIDELITIES.includes(fidelity) || fidelity === 'unavailable') {
+    return t('detail.fidelity.unavailable');
+  }
+  return `${index.toFixed(2)} · ${t(`detail.fidelity.${fidelity}`)} · ${formatRelativeTime(observedAt, t)}`;
+}
 
 const CropHealthDetailTabs: React.FC<CropHealthDetailTabsProps> = ({
   parcelId,
@@ -192,9 +206,7 @@ const CropHealthDetailTabs: React.FC<CropHealthDetailTabsProps> = ({
         <MetricSection>
           <p className="text-xs text-nkz-text-muted">
             {assessment.underPanelWaterStressFidelity ? t('detail.waterStressOpenField') : t('detail.waterStress')}{' '}
-            {assessment.waterStressIndex == null || !KNOWN_FIDELITIES.includes(assessment.waterStressFidelity) || assessment.waterStressFidelity === 'unavailable'
-              ? t('detail.fidelity.unavailable')
-              : `${assessment.waterStressIndex.toFixed(2)} · ${t(`detail.fidelity.${assessment.waterStressFidelity}`)} · ${formatRelativeTime(assessment.waterStressObservedAt, t)}`}
+            {waterStressValue(assessment.waterStressIndex, assessment.waterStressFidelity, assessment.waterStressObservedAt, t)}
           </p>
         </MetricSection>
       )}
@@ -202,9 +214,7 @@ const CropHealthDetailTabs: React.FC<CropHealthDetailTabsProps> = ({
         <MetricSection>
           <p className="text-xs text-nkz-text-muted">
             {t('detail.waterStressUnderPanel')}{' '}
-            {assessment.underPanelWaterStressIndex == null || !KNOWN_FIDELITIES.includes(assessment.underPanelWaterStressFidelity) || assessment.underPanelWaterStressFidelity === 'unavailable'
-              ? t('detail.fidelity.unavailable')
-              : `${assessment.underPanelWaterStressIndex.toFixed(2)} · ${t(`detail.fidelity.${assessment.underPanelWaterStressFidelity}`)} · ${formatRelativeTime(assessment.underPanelWaterStressObservedAt, t)}`}
+            {waterStressValue(assessment.underPanelWaterStressIndex, assessment.underPanelWaterStressFidelity, assessment.underPanelWaterStressObservedAt, t)}
           </p>
         </MetricSection>
       )}

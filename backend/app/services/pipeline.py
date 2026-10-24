@@ -316,6 +316,28 @@ async def _sensor_air_ctx(redis_state, tenant_id: str, parcel_id: str, now_ts: f
     return ctx
 
 
+async def _resolve_both_water_stress(
+    redis_state,
+    tenant_id: str,
+    parcel_id: str,
+    soil,
+    depletion_p: float,
+    swb,
+    et0_fidelity: str,
+    now_ts: float,
+    shade_fraction: float | None,
+    root_depth_mm: float,
+    shade_observed_at: datetime | None = None,
+) -> tuple[WaterStress, WaterStress | None, float | None]:
+    """(open-field index, under-panel index or None when it has no value, assimilated soil water)."""
+    args = (soil, depletion_p, swb, et0_fidelity, now_ts, shade_fraction, root_depth_mm, shade_observed_at)
+    open_ws, assimilated = await _resolve_water_stress(
+        redis_state, tenant_id, parcel_id, OPEN_FIELD, *args
+    )
+    up_ws, _ = await _resolve_water_stress(redis_state, tenant_id, parcel_id, UNDER_PANEL, *args)
+    return open_ws, (up_ws if up_ws.index is not None else None), assimilated
+
+
 async def _resolve_water_stress(
     redis_state,
     tenant_id: str,
@@ -633,19 +655,12 @@ async def trigger(
     rollup = _aggregate_rollup(effective_parcel, zone_results)
     attach_soil_suitability(rollup, crop_context)
     # Water stress is parcel-level: computed once here, carried by the rollup only.
-    rollup.water_stress, assimilated = await _resolve_water_stress(
-        redis_state, tenant_id, effective_parcel, OPEN_FIELD, soil,
+    rollup.water_stress, rollup.under_panel_water_stress, assimilated = await _resolve_both_water_stress(
+        redis_state, tenant_id, effective_parcel, soil,
         _resolve_depletion_fraction(crop_context),
         rollup.soil_water_balance, et0_fidelity, now_ts, daily_shade, root_depth_mm,
         shade_observed_at,
     )
-    up_ws, _ = await _resolve_water_stress(
-        redis_state, tenant_id, effective_parcel, UNDER_PANEL, soil,
-        _resolve_depletion_fraction(crop_context),
-        rollup.soil_water_balance, et0_fidelity, now_ts, daily_shade, root_depth_mm,
-        shade_observed_at,
-    )
-    rollup.under_panel_water_stress = up_ws if up_ws.index is not None else None
     if assimilated is not None and redis_state:
         try:
             await redis_state.set_soil_water(tenant_id, effective_parcel, assimilated)
@@ -801,15 +816,14 @@ async def _run_engines(
     # Shade-aware water stress index (parcel-level; zones never carry it).
     assimilated_sw = None
     if parcel_stress:
-        assessment.water_stress, assimilated_sw = await _resolve_water_stress(
-            redis_state, tenant_id, effective_parcel, OPEN_FIELD, soil, depletion_p, swb,
+        (
+            assessment.water_stress,
+            assessment.under_panel_water_stress,
+            assimilated_sw,
+        ) = await _resolve_both_water_stress(
+            redis_state, tenant_id, effective_parcel, soil, depletion_p, swb,
             et0_fidelity, _now_ts(), daily_shade, root_depth_mm, shade_observed_at,
         )
-        up_ws, _ = await _resolve_water_stress(
-            redis_state, tenant_id, effective_parcel, UNDER_PANEL, soil, depletion_p, swb,
-            et0_fidelity, _now_ts(), daily_shade, root_depth_mm, shade_observed_at,
-        )
-        assessment.under_panel_water_stress = up_ws if up_ws.index is not None else None
 
     # Persist current soil water to Redis for next assessment (sensor value when it applied)
     if swb is not None and redis_state:
@@ -2343,14 +2357,13 @@ async def _cached_ghi(
     a cached regional value never hides it.
     """
     now = _now_ts()
+    # Parcel readings are at most _PARCEL_READING_MAX_AGE_S old, inside _GHI_MAX_SKEW_S.
     fresh = [
         r
         for r in await _read_parcel_readings(
             redis_state, tenant_id, parcel_id, OPEN_FIELD, MetricType.SOLAR_RADIATION.value, now
         )
-        if r.unit_code in (None, _GHI_UNIT_CODE)
-        and math.isfinite(r.value)
-        and abs(now - r.ts) <= _GHI_MAX_SKEW_S
+        if r.unit_code in (None, _GHI_UNIT_CODE) and math.isfinite(r.value)
     ]
     if fresh:
         best = max(fresh, key=lambda r: r.ts)
@@ -2459,27 +2472,8 @@ async def _resolve_device_owner(device_id: str, tenant_id: str) -> tuple[str, st
     if not device_id or not tenant_id:
         return None
 
-    from app.config import get_settings
-    from nkz_platform_sdk.orion import OrionClient
-
-    settings = get_settings()
-    client = OrionClient(
-        tenant_id,
-        base_url=settings.orion_ld_url,
-        context_url=settings.orion_ld_context,
-    )
-    try:
-        device = await client.get_entity(device_id)
-    except Exception as exc:  # noqa: BLE001 — an unreachable broker is not a parcel
-        logger.warning("Cannot read device %s to resolve its parcel: %s", device_id, exc)
-        return None
-    finally:
-        try:
-            await client.close()
-        except Exception:  # noqa: BLE001
-            pass
-
-    if not isinstance(device, dict):
+    device = await _read_entity(device_id, tenant_id, "device")
+    if device is None:
         return None
     # An empty link states no owner: fall through to the legacy attributes.
     if parcel_link_targets(device.get("controlledAsset")):
@@ -2505,6 +2499,15 @@ async def _resolve_device_owner(device_id: str, tenant_id: str) -> tuple[str, st
 
 async def _parcel_of_park(park_urn: str, tenant_id: str) -> str | None:
     """The parcel URN a solar park points at, or None (unreadable or unlinked)."""
+    park = await _read_entity(park_urn, tenant_id, "park")
+    if park is None:
+        return None
+    target = parcel_link_target(park.get("hasAgriParcel") or park.get("refAgriParcel"))
+    return target if target.startswith(PARCEL_PREFIX) else None
+
+
+async def _read_entity(entity_id: str, tenant_id: str, kind: str) -> dict | None:
+    """One entity from the broker, or None when unreadable (an unreachable entity is not a parcel)."""
     from app.config import get_settings
     from nkz_platform_sdk.orion import OrionClient
 
@@ -2515,16 +2518,13 @@ async def _parcel_of_park(park_urn: str, tenant_id: str) -> str | None:
         context_url=settings.orion_ld_context,
     )
     try:
-        park = await client.get_entity(park_urn)
-    except Exception as exc:  # noqa: BLE001 — an unreachable park is not a parcel
-        logger.warning("Cannot read park %s to resolve its parcel: %s", park_urn, exc)
+        entity = await client.get_entity(entity_id)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Cannot read %s %s to resolve its parcel: %s", kind, entity_id, exc)
         return None
     finally:
         try:
             await client.close()
         except Exception:  # noqa: BLE001
             pass
-    if not isinstance(park, dict):
-        return None
-    target = parcel_link_target(park.get("hasAgriParcel") or park.get("refAgriParcel"))
-    return target if target.startswith(PARCEL_PREFIX) else None
+    return entity if isinstance(entity, dict) else None

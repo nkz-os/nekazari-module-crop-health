@@ -96,8 +96,6 @@ async def test_both_paths_derive_same_stage_from_gdd(monkeypatch):
         gdd=gdd,
         soil=None,
         root_depth_mm=300.0,
-        sw_yesterday=None,
-        irrigation_mm=0.0,
         now=datetime.now(timezone.utc),
         stage_table=StageTable(stages=dict(_STAGE_TABLE)),
         publish=False,

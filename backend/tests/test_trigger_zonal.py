@@ -18,11 +18,8 @@ _Z1 = {"type": "Polygon", "coordinates": [[[10, 0], [10, 10], [20, 10], [20, 0],
 
 
 class _Redis:
-    async def get_soil_water(self, *a, **k):
+    async def get_balance_state(self, *a, **k):
         return None
-
-    async def get_irrigation_24h(self, *a, **k):
-        return 0.0
 
 
 def _patch_trigger(monkeypatch, *, zones, device_coords):

@@ -198,30 +198,6 @@ class RedisState:
                 logger.warning("Corrupt Redis entry in %s: %s — %s", key, raw[0], exc)
         return None
 
-    async def get_soil_water(self, tenant_id: str, parcel_id: str) -> float | None:
-        """Get stored soil water content for a parcel (mm)."""
-        if self._client is None:
-            return None
-        try:
-            val = await self._client.get(f"{self._prefix}sw:{tenant_id}:{parcel_id}")
-            return float(val) if val else None
-        except Exception as exc:
-            logger.warning("redis_state.get_soil_water: failed for parcel %s — returning None: %s", parcel_id, exc)
-            return None
-
-    async def set_soil_water(self, tenant_id: str, parcel_id: str, sw_mm: float) -> None:
-        """Store soil water content for a parcel (mm). TTL 7 days."""
-        if self._client is None:
-            return
-        try:
-            await self._client.set(
-                f"{self._prefix}sw:{tenant_id}:{parcel_id}",
-                str(sw_mm),
-                ex=86400 * 7,
-            )
-        except Exception as exc:
-            logger.warning("redis_state.set_soil_water: failed for parcel %s — state not persisted: %s", parcel_id, exc)
-
     async def set_parcel_reading(
         self,
         tenant_id: str,

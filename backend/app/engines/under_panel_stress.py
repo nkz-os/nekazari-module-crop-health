@@ -64,15 +64,6 @@ def par_open_from_ghi(ghi_wm2: float) -> float | None:
     return ghi_wm2 * PAR_PER_GHI
 
 
-def shade_corrected_etc(
-    et0_mm: float, kc: float, shade_fraction: float | None, radiative_fraction: float
-) -> float:
-    """ETc reduced by the radiative share of the shaded fraction."""
-    if shade_fraction is None:
-        return et0_mm * kc
-    return et0_mm * kc * (1.0 - radiative_fraction * shade_fraction)
-
-
 def _model_index(model_ks: float | None) -> float | None:
     if model_ks is None or not math.isfinite(model_ks) or not 0.0 <= model_ks <= 1.0:
         return None

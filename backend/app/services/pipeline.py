@@ -26,11 +26,11 @@ from nkz_platform_sdk.crypto import generate_hmac_signature
 
 from app.config import get_settings
 from app.engines.mds_model import calculate_mds_from_readings
+from app.engines.soil_water_balance import SoilWaterBalanceResult
 from app.engines.under_panel_stress import (
     MIN_GHI_WM2,
     PAR_PER_GHI,
     compute_water_stress,
-    shade_corrected_etc,
     valid_theta_readings,
 )
 from app.engines.phenology_progress import derive_stage_from_gdd
@@ -49,6 +49,12 @@ from app.schemas import (
 )
 from app.services import context_client
 from app.services.context_client import get_phenology_params
+from app.services.daily_balance import (
+    SPINUP_DAYS,
+    advance_daily_balance,
+    balance_from_state,
+    correct_balance_state,
+)
 from app.services.fiware_publisher import publish_assessment
 from app.services.meteo_context import resolve_meteo_context
 from app.services.parcel_link import (
@@ -328,14 +334,12 @@ async def _resolve_both_water_stress(
     shade_fraction: float | None,
     root_depth_mm: float,
     shade_observed_at: datetime | None = None,
-) -> tuple[WaterStress, WaterStress | None, float | None]:
-    """(open-field index, under-panel index or None when it has no value, assimilated soil water)."""
+) -> tuple[WaterStress, WaterStress | None]:
+    """(open-field index, under-panel index or None when it has no value)."""
     args = (soil, depletion_p, swb, et0_fidelity, now_ts, shade_fraction, root_depth_mm, shade_observed_at)
-    open_ws, assimilated = await _resolve_water_stress(
-        redis_state, tenant_id, parcel_id, OPEN_FIELD, *args
-    )
-    up_ws, _ = await _resolve_water_stress(redis_state, tenant_id, parcel_id, UNDER_PANEL, *args)
-    return open_ws, (up_ws if up_ws.index is not None else None), assimilated
+    open_ws = await _resolve_water_stress(redis_state, tenant_id, parcel_id, OPEN_FIELD, *args)
+    up_ws = await _resolve_water_stress(redis_state, tenant_id, parcel_id, UNDER_PANEL, *args)
+    return open_ws, (up_ws if up_ws.index is not None else None)
 
 
 async def _resolve_water_stress(
@@ -351,11 +355,12 @@ async def _resolve_water_stress(
     shade_fraction: float | None,
     root_depth_mm: float,
     shade_observed_at: datetime | None = None,
-) -> tuple[WaterStress, float | None]:
-    """Water stress index plus the sensor-assimilated soil water (mm), if the sensor path applied.
+) -> WaterStress:
+    """Water stress index of one sensor context.
 
-    ``context`` selects the soil-moisture owner. Open field keeps the model fallback and the
-    assimilation; under panel is sensor-only (no model fallback, never assimilated).
+    ``context`` selects the soil-moisture owner. Open field keeps the model fallback;
+    under panel is sensor-only (no model fallback). Probes correct the stored balance
+    in ``correct_balance_state``, not here.
     """
     readings = await _read_parcel_readings(
         redis_state, tenant_id, parcel_id, context, "soilMoisture", now_ts
@@ -379,16 +384,71 @@ async def _resolve_water_stress(
     if ws.shade_fraction is not None and shade_observed_at is not None:
         ws = dataclasses.replace(ws, shade_observed_at=shade_observed_at)
 
-    assimilated = None
-    if not under_panel and ws.fidelity == "iot_sensor" and used and swb is not None:
-        theta = sum(t for _, t in used) / len(used)
-        assimilated = min(max((theta - soil.wilting_point) * root_depth_mm, 0.0), swb.awc_mm)
-
     logger.info(
         "water_stress: parcel=%s context=%s index=%s fidelity=%s readings=%d shade=%s",
         parcel_id, context, ws.index, ws.fidelity, len(used), shade_fraction,
     )
-    return ws, assimilated
+    return ws
+
+
+def _awc_mm(soil, root_depth_mm: float) -> float:
+    """Root-zone available water exactly as the balance engine computes it (p does not enter it)."""
+    return balance_from_state(0.0, soil, root_depth_mm, 0.5).awc_mm
+
+
+async def _correct_from_open_field(
+    redis_state, tenant_id: str, parcel_id: str, soil, root_depth_mm: float, now_ts: float
+) -> float | None:
+    """Pull the stored balance toward fresh open-field probes; None when nothing was corrected."""
+    if redis_state is None:
+        return None
+    readings = await _read_parcel_readings(
+        redis_state, tenant_id, parcel_id, OPEN_FIELD, "soilMoisture", now_ts
+    )
+    if not readings:
+        return None
+    corrected = await correct_balance_state(
+        redis_state, tenant_id, parcel_id, readings, soil, root_depth_mm,
+        _awc_mm(soil, root_depth_mm), now_ts,
+    )
+    if corrected is not None:
+        logger.info("daily_balance: %s/%s corrected by probes to %.2f mm", tenant_id, parcel_id, corrected)
+    return corrected
+
+
+async def _stored_balance(
+    redis_state, tenant_id: str, parcel_id: str, soil, root_depth_mm: float,
+    depletion_p: float, today: date,
+) -> SoilWaterBalanceResult | None:
+    """The stored daily state read as today's balance, without stepping it.
+
+    Same rules as the daily step: a state older than the replay window is no
+    balance, and one lagging yesterday has ``low`` confidence.
+    """
+    if redis_state is None:
+        return None
+    try:
+        state = await redis_state.get_balance_state(tenant_id, parcel_id)
+    except StoreError as exc:
+        logger.warning("daily_balance: state unreadable for %s/%s, no balance: %s", tenant_id, parcel_id, exc)
+        return None
+    if state is None:
+        return None
+    try:
+        last = date.fromisoformat(state["date"])
+        sw_mm = float(state["sw_mm"])
+    except (KeyError, TypeError, ValueError) as exc:
+        logger.warning("daily_balance: malformed state for %s/%s, no balance: %s", tenant_id, parcel_id, exc)
+        return None
+    yesterday = today - timedelta(days=1)
+    if last < yesterday - timedelta(days=SPINUP_DAYS):
+        logger.info("daily_balance: state of %s/%s too old (%s), no balance", tenant_id, parcel_id, last)
+        return None
+    result = balance_from_state(sw_mm, soil, root_depth_mm, depletion_p)
+    if last < yesterday:
+        logger.warning("daily_balance: state of %s/%s lags yesterday (%s)", tenant_id, parcel_id, last)
+        result = dataclasses.replace(result, soil_moisture_confidence="low")
+    return result
 
 
 async def trigger(
@@ -545,22 +605,16 @@ async def trigger(
     )
 
     root_depth_mm = _resolve_root_depth(species, gdd, crop_context)
+    depletion_p = _resolve_depletion_fraction(crop_context)
 
-    # Read previous soil water from Redis
-    sw_yesterday = None
-    if redis_state:
-        try:
-            sw_yesterday = await redis_state.get_soil_water(tenant_id, effective_parcel)
-        except Exception as exc:
-            logger.warning("pipeline: redis get_soil_water failed for parcel %s — sw_yesterday=None: %s", effective_parcel, exc)
-
-    # Read irrigation volume from Redis
-    irrigation_mm = 0.0
-    if redis_state:
-        try:
-            irrigation_mm = await redis_state.get_irrigation_24h(entity_id)
-        except Exception as exc:
-            logger.warning("pipeline: redis get_irrigation_24h failed for entity %s — irrigation_mm=0: %s", entity_id, exc)
+    # The sensor path never steps the balance (the scheduled run does, once per
+    # closed day): probes only correct the stored state, then it is read back.
+    await _correct_from_open_field(
+        redis_state, tenant_id, effective_parcel, soil, root_depth_mm, now_ts
+    )
+    parcel_balance = await _stored_balance(
+        redis_state, tenant_id, effective_parcel, soil, root_depth_mm, depletion_p, now.date()
+    )
 
     # ── Resolve management zones (weather-map AgriParcelZone) ─────────────
     # Whole-parcel mode (current production reality — no zones exist until
@@ -589,8 +643,7 @@ async def trigger(
             gdd=gdd,
             soil=soil,
             root_depth_mm=root_depth_mm,
-            sw_yesterday=sw_yesterday,
-            irrigation_mm=irrigation_mm,
+            parcel_balance=parcel_balance,
             now=now,
             stage_table=stage_table,
             publish=True,
@@ -632,8 +685,7 @@ async def trigger(
                 gdd=gdd,
                 soil=soil,
                 root_depth_mm=root_depth_mm,
-                sw_yesterday=sw_yesterday if is_sensor else None,
-                irrigation_mm=irrigation_mm if is_sensor else 0.0,
+                parcel_balance=parcel_balance,
                 now=now,
                 stage_table=stage_table,
                 publish=False,
@@ -655,17 +707,11 @@ async def trigger(
     rollup = _aggregate_rollup(effective_parcel, zone_results)
     attach_soil_suitability(rollup, crop_context)
     # Water stress is parcel-level: computed once here, carried by the rollup only.
-    rollup.water_stress, rollup.under_panel_water_stress, assimilated = await _resolve_both_water_stress(
-        redis_state, tenant_id, effective_parcel, soil,
-        _resolve_depletion_fraction(crop_context),
+    rollup.water_stress, rollup.under_panel_water_stress = await _resolve_both_water_stress(
+        redis_state, tenant_id, effective_parcel, soil, depletion_p,
         rollup.soil_water_balance, et0_fidelity, now_ts, daily_shade, root_depth_mm,
         shade_observed_at,
     )
-    if assimilated is not None and redis_state:
-        try:
-            await redis_state.set_soil_water(tenant_id, effective_parcel, assimilated)
-        except Exception as exc:
-            logger.warning("pipeline: redis set_soil_water failed for parcel %s — state not persisted: %s", effective_parcel, exc)
     rollup_entity = rollup.to_ngsi_ld()
     if await _publish_assessment(rollup_entity, tenant_id):
         await _clear_stale_water_stress(rollup_entity, tenant_id)
@@ -692,8 +738,6 @@ async def _run_engines(
     gdd,
     soil,
     root_depth_mm: float,
-    sw_yesterday,
-    irrigation_mm: float,
     now: datetime,
     stage_table: StageTable | dict[str, tuple[float, float]] | None = None,
     publish: bool = True,
@@ -702,6 +746,7 @@ async def _run_engines(
     et0_fidelity: str = "unavailable",
     parcel_stress: bool = False,
     sensor_context: str | None = None,
+    parcel_balance: SoilWaterBalanceResult | None = None,
 ) -> CropHealthAssessment:
     """Shared engine-fusion core.
 
@@ -720,6 +765,9 @@ async def _run_engines(
     ``sensor_context == UNDER_PANEL`` means the triggering device sits under a
     panel: it feeds only the under-panel index (and shade), so the per-device
     leaf-temperature, trunk-diameter and soil pass-through branches are skipped.
+
+    ``parcel_balance`` is the parcel's daily soil water balance (stepped once per
+    closed day by the scheduled run); this function never steps it.
     """
     from_under_panel = sensor_context == UNDER_PANEL
 
@@ -769,29 +817,10 @@ async def _run_engines(
         readings = await redis_state.get_window(entity_id, "trunkDiameter", hours=24)
         assessment.mds = calculate_mds_from_readings(readings, mds_ref=phenology.mds_ref)
 
-    # Soil water balance (replaces simple water balance with AWC tracking)
-    swb = None
+    # Soil water balance: the parcel's daily state, stepped by the scheduled run.
+    swb = parcel_balance
     depletion_p = _resolve_depletion_fraction(crop_context)
-    # Without ET0 the balance would run with no evapotranspiration and carry a
-    # too-wet soil into the next day: no balance rather than a biased one.
-    if weather and et0_fidelity != "unavailable":
-        etc_mm = shade_corrected_etc(
-            weather.eto_mm, phenology.kc, daily_shade, get_settings().shade_et_radiative_fraction
-        )
-        from app.engines.soil_water_balance import soil_water_balance
-
-        swb = soil_water_balance(
-            sw_yesterday=sw_yesterday,
-            precip_mm=weather.precip_mm,
-            irrigation_mm=irrigation_mm,
-            etc_mm=etc_mm,
-            fc=soil.field_capacity,
-            wp=soil.wilting_point,
-            root_depth_mm=root_depth_mm,
-            depletion_fraction_p=depletion_p,
-            eto_mm=weather.eto_mm,
-            kc=phenology.kc,
-        )
+    if swb is not None:
         assessment.soil_water_balance = swb
         assessment.soil_properties = soil if soil.has_data else None
 
@@ -799,8 +828,8 @@ async def _run_engines(
         from app.schemas import WaterBalanceResult
         assessment.water_balance = WaterBalanceResult(
             balance_mm=round(swb.sw_mm - swb.awc_mm, 2),
-            precip_mm=round(weather.precip_mm, 2),
-            etc_mm=round(etc_mm, 2),
+            precip_mm=round(swb.inflow_mm, 2),
+            etc_mm=round(swb.etc_mm, 2),
             kc=phenology.kc,
             deficit=swb.stress_level != "none",
         )
@@ -816,25 +845,14 @@ async def _run_engines(
             assessment.waterlogging_risk = wlr
 
     # Shade-aware water stress index (parcel-level; zones never carry it).
-    assimilated_sw = None
     if parcel_stress:
         (
             assessment.water_stress,
             assessment.under_panel_water_stress,
-            assimilated_sw,
         ) = await _resolve_both_water_stress(
             redis_state, tenant_id, effective_parcel, soil, depletion_p, swb,
             et0_fidelity, _now_ts(), daily_shade, root_depth_mm, shade_observed_at,
         )
-
-    # Persist current soil water to Redis for next assessment (sensor value when it applied)
-    if swb is not None and redis_state:
-        try:
-            await redis_state.set_soil_water(
-                tenant_id, effective_parcel, assimilated_sw if assimilated_sw is not None else swb.sw_mm
-            )
-        except Exception as exc:
-            logger.warning("pipeline: redis set_soil_water failed for parcel %s — state not persisted: %s", effective_parcel, exc)
 
     # Thermal stress (triggered by leaf temperature or opportunistically with weather)
     if weather:
@@ -1638,6 +1656,7 @@ async def _assess_zone(
     crop_ctx: dict,
     sensor_ctx: dict | None,
     whole: bool,
+    parcel_balance: SoilWaterBalanceResult | None = None,
 ) -> CropHealthAssessment:
     """Compute one zone's assessment, reusing the existing engine core.
 
@@ -1699,8 +1718,7 @@ async def _assess_zone(
         gdd=gdd,
         soil=crop_ctx["soil"],
         root_depth_mm=crop_ctx["root_depth_mm"],
-        sw_yesterday=None,
-        irrigation_mm=0.0,
+        parcel_balance=parcel_balance,
         now=now,
         stage_table=thresholds,
         publish=False,
@@ -1772,12 +1790,32 @@ async def compute_assessment(
     # Phenology params (engine inputs: kc, d1/d2, mds_ref, stage thresholds)
     phenology = await get_phenology_params(species=species, gdd=gdd)
 
-    now = datetime.now(timezone.utc)
+    now_ts = _now_ts()
+    now = datetime.fromtimestamp(now_ts, tz=timezone.utc)
 
     # Soil + root depth for the water-balance engine (parcel-level).
     from app.services.context_client import get_soil_properties
     soil = await get_soil_properties(parcel_id=parcel_short, tenant_id=tenant_id)
     root_depth_mm = _resolve_root_depth(species, gdd, None)
+
+    # Crop context (cached 1h): the depletion fraction here, soil suitability below.
+    crop_context_obj = await context_client.get_crop_context(
+        parcel_id=parcel_id, tenant_id=tenant_id, gdd=gdd,
+    )
+    depletion_p = _resolve_depletion_fraction(crop_context_obj)
+
+    # Daily soil water balance: stepped here, once per closed day, before the zones.
+    try:
+        from app.main import get_redis_state
+
+        redis_state = get_redis_state()
+    except RuntimeError as exc:
+        logger.warning("compute_assessment: no Redis for %s/%s, no daily balance: %s", tenant_id, parcel_short, exc)
+        redis_state = None
+    parcel_balance = await _scheduled_balance(
+        redis_state, tenant_id, parcel_short, soil, root_depth_mm, depletion_p,
+        phenology, now.date(), now_ts,
+    )
 
     crop_ctx = {
         "species": species,
@@ -1809,6 +1847,7 @@ async def compute_assessment(
         try:
             za = await _assess_zone(
                 z, parcel_id, parcel_short, tenant_id, crop_ctx, zone_sensor_ctx, whole,
+                parcel_balance=parcel_balance,
             )
         except Exception as exc:  # best-effort per zone — one bad zone must not sink the rest
             logger.warning("compute_assessment: zone %s failed for %s — skipped: %s", z.zone_id, parcel_short, exc)
@@ -1822,6 +1861,16 @@ async def compute_assessment(
         return None
 
     rollup = _aggregate_rollup(parcel_short, zone_results)
+
+    # Water stress is parcel-level: computed once here, carried by the rollup only.
+    daily_shade, shade_observed_at = await _read_daily_shade_obs(
+        redis_state, tenant_id, parcel_short, now_ts
+    )
+    rollup.water_stress, rollup.under_panel_water_stress = await _resolve_both_water_stress(
+        redis_state, tenant_id, parcel_short, soil, depletion_p, rollup.soil_water_balance,
+        "parcel_weather" if rollup.soil_water_balance else "unavailable",
+        now_ts, daily_shade, root_depth_mm, shade_observed_at,
+    )
 
     # ── Nutrient recommendation from BioOrch ──
     from app.schemas import CropRequirements
@@ -1865,13 +1914,41 @@ async def compute_assessment(
 
     # Surface the committed crop's soil-suitability verdict on the scheduled path
     # too (same source as trigger(); cached 1h, circuit-breaker → None is safe).
-    crop_context_obj = await context_client.get_crop_context(
-        parcel_id=parcel_id, tenant_id=tenant_id, gdd=gdd,
-    )
     attach_soil_suitability(rollup, crop_context_obj)
 
-    await _publish_assessment(rollup.to_ngsi_ld(), tenant_id)
+    rollup_entity = rollup.to_ngsi_ld()
+    if await _publish_assessment(rollup_entity, tenant_id):
+        await _clear_stale_water_stress(rollup_entity, tenant_id)
     return rollup
+
+
+async def _scheduled_balance(
+    redis_state, tenant_id: str, parcel_id: str, soil, root_depth_mm: float,
+    depletion_p: float, phenology, today: date, now_ts: float,
+) -> SoilWaterBalanceResult | None:
+    """Step the stored balance to yesterday, then correct it with fresh open-field probes."""
+    if redis_state is None:
+        return None
+    kc = phenology.kc if phenology else context_client._DEFAULT_PARAMS.kc
+    try:
+        balance = await advance_daily_balance(
+            redis_state, tenant_id, parcel_id,
+            soil=soil, root_depth_mm=root_depth_mm, depletion_p=depletion_p,
+            kc=kc, today=today, fetch=_fetch_daily_water,
+        )
+    except Exception as exc:  # noqa: BLE001 -- fail-safe: no balance rather than no assessment
+        logger.warning("daily_balance: step failed for %s/%s, no balance: %s", tenant_id, parcel_id, exc)
+        return None
+    corrected = await _correct_from_open_field(
+        redis_state, tenant_id, parcel_id, soil, root_depth_mm, now_ts
+    )
+    if corrected is None or balance is None:
+        return balance
+    result = balance_from_state(corrected, soil, root_depth_mm, depletion_p)
+    if balance.soil_moisture_confidence == "low":
+        # The probe corrects the water, not the lag of the stored day.
+        result = dataclasses.replace(result, soil_moisture_confidence="low")
+    return result
 
 
 async def _build_sensor_ctx(entity_id: str, redis_state) -> dict:

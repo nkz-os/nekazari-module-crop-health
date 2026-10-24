@@ -12,7 +12,7 @@ import pytest
 from app.engines.under_panel_stress import ks_from_theta
 from app.schemas import MetricType, SoilProperties
 from app.services import pipeline
-from app.services.redis_state import ParcelReading
+from app.services.redis_state import ParcelReading, StoreError
 from app.services.zonation import Zone
 
 NOW = datetime(2026, 7, 15, 12, 0, 0, tzinfo=timezone.utc).timestamp()
@@ -24,21 +24,29 @@ _Z1 = {"type": "Polygon", "coordinates": [[[10, 0], [10, 10], [20, 10], [20, 0],
 
 
 class FakeRedis:
-    def __init__(self, readings=None, shade=None, fail=False, shade_ts=None):
+    def __init__(self, readings=None, shade=None, fail=False, shade_ts=None, state=None):
         self.readings = readings or {}
         self.shade = shade or {}
         self.shade_ts = shade_ts or {}
         self.fail = fail
-        self.soil_water_set = []
+        self.state = state
+        self.saved = []
 
-    async def get_soil_water(self, *a, **k):
-        return None
+    async def get_balance_state(self, tenant, parcel):
+        if self.fail:
+            raise StoreError("redis down")
+        return self.state
 
-    async def get_irrigation_24h(self, *a, **k):
-        return 0.0
+    async def set_balance_state(self, tenant, parcel, day, sw_mm):
+        self.saved.append((parcel, day, sw_mm))
+        self.state = {"date": day, "sw_mm": sw_mm}
+        return True
 
-    async def set_soil_water(self, tenant, parcel, value):
-        self.soil_water_set.append((parcel, value))
+    async def try_lock(self, key, ttl_s):
+        return None if self.fail else True
+
+    async def unlock(self, key):
+        pass
 
     async def get_window(self, *a, **k):
         return []
@@ -60,6 +68,10 @@ class FakeRedis:
         if self.fail:
             raise RuntimeError("redis down")
         return self.shade_ts.get(day)
+
+
+# A stored daily balance current to yesterday: the sensor path reads it, never steps it.
+STATE = {"date": YESTERDAY, "sw_mm": 40.0}
 
 
 def soil_reading(value, age=60, unit="P1", device="d1"):
@@ -209,7 +221,7 @@ async def test_trigger_publishes_iot_sensor_index(monkeypatch):
 @pytest.mark.asyncio
 async def test_trigger_without_soil_reading_uses_model_fidelity(monkeypatch):
     published, seen = _setup(monkeypatch)
-    await _trigger(FakeRedis())
+    await _trigger(FakeRedis(state=dict(STATE)))
     e = _entity(published)
     assert seen["ctx"].fidelity["et0_mm"] == "parcel_weather"
     assert e["waterStressFidelity"]["value"] == "parcel_weather"
@@ -228,11 +240,15 @@ async def test_no_index_attribute_when_unavailable(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_shade_reduces_etc_and_is_published(monkeypatch):
+async def test_shade_is_published_and_leaves_the_balance_untouched(monkeypatch):
     published, _ = _setup(monkeypatch)
-    await _trigger(FakeRedis(shade={TODAY: 0.5}))
+    redis = FakeRedis(shade={TODAY: 0.5}, state=dict(STATE))
+    await _trigger(redis)
     a = published["assessments"][-1]
-    assert a.water_balance.etc_mm == round(5.0 * 0.8 * (1 - 0.7 * 0.5), 2)
+    # The sensor path reads the stored state: no stepping, no ETc, shade not in the balance.
+    assert a.water_balance.etc_mm == 0.0
+    assert a.soil_water_balance.sw_mm == STATE["sw_mm"]
+    assert redis.saved == []
     assert a.to_ngsi_ld()["shadeFraction"]["value"] == 0.5
 
 
@@ -244,11 +260,11 @@ async def test_shade_falls_back_to_yesterday(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_no_shade_leaves_etc_untouched(monkeypatch):
+async def test_no_shade_publishes_no_shade_fraction(monkeypatch):
     published, _ = _setup(monkeypatch)
-    await _trigger(FakeRedis())
+    await _trigger(FakeRedis(state=dict(STATE)))
     a = published["assessments"][-1]
-    assert a.water_balance.etc_mm == round(5.0 * 0.8, 2)
+    assert a.soil_water_balance.sw_mm == STATE["sw_mm"]
     assert "shadeFraction" not in a.to_ngsi_ld()
 
 
@@ -280,21 +296,36 @@ async def test_out_of_range_air_readings_ignored(monkeypatch):
 @pytest.mark.asyncio
 async def test_sensor_path_assimilates_soil_water(monkeypatch):
     published, _ = _setup(monkeypatch)
-    redis = FakeRedis(readings={"soilMoisture": [soil_reading(20.0)]})
+    redis = FakeRedis(readings={"soilMoisture": [soil_reading(20.0)]}, state=dict(STATE))
     await _trigger(redis)
     a = published["assessments"][-1]
     swb = a.soil_water_balance
     expected = min(max((0.20 - 0.12) * swb.root_depth_mm, 0.0), swb.awc_mm)
-    assert redis.soil_water_set == [(PARCEL, pytest.approx(expected))]
+    # The probe corrects the stored water; the state date never moves.
+    assert redis.saved == [(PARCEL, YESTERDAY, pytest.approx(expected))]
+    assert swb.sw_mm == pytest.approx(expected, abs=0.01)
 
 
 @pytest.mark.asyncio
 async def test_model_path_persists_model_soil_water(monkeypatch):
     published, _ = _setup(monkeypatch)
-    redis = FakeRedis()
+    redis = FakeRedis(state=dict(STATE))
     await _trigger(redis)
     swb = published["assessments"][-1].soil_water_balance
-    assert redis.soil_water_set == [(PARCEL, swb.sw_mm)]
+    # Without probes the trigger writes nothing: the balance is the stored one.
+    assert redis.saved == []
+    assert redis.state == STATE
+    assert swb.sw_mm == STATE["sw_mm"]
+
+
+@pytest.mark.asyncio
+async def test_trigger_without_state_has_no_balance(monkeypatch):
+    published, _ = _setup(monkeypatch)
+    redis = FakeRedis(readings={"soilMoisture": [soil_reading(20.0)]})
+    await _trigger(redis)
+    a = published["assessments"][-1]
+    assert a.soil_water_balance is None
+    assert redis.saved == []
 
 
 @pytest.mark.asyncio
@@ -303,7 +334,9 @@ async def test_redis_failure_still_publishes_assessment(monkeypatch):
     out = await _trigger(FakeRedis(fail=True))
     assert out is not None
     e = _entity(published)
-    assert e["waterStressFidelity"]["value"] == "parcel_weather"
+    # No readable state, no balance: no model index rather than a cold-started one.
+    assert out.soil_water_balance is None
+    assert e["waterStressFidelity"]["value"] == "unavailable"
     assert "shadeFraction" not in e
 
 
@@ -324,7 +357,8 @@ async def test_zonal_rollup_carries_stress_zones_do_not(monkeypatch):
         return None
 
     monkeypatch.setattr(pipeline, "_resolve_device_coords", _nocoords, raising=False)
-    redis = FakeRedis(readings={"soilMoisture": [soil_reading(15.0)]}, shade={TODAY: 0.5})
+    redis = FakeRedis(
+        readings={"soilMoisture": [soil_reading(15.0)]}, shade={TODAY: 0.5}, state=dict(STATE))
     await _trigger(redis)
     zone_ents = [e for e in published["entities"] if e["type"] == "CropHealthZoneAssessment"]
     parcel_ents = [e for e in published["entities"] if e["type"] == "CropHealthAssessment"]
@@ -336,7 +370,10 @@ async def test_zonal_rollup_carries_stress_zones_do_not(monkeypatch):
     assert p["waterStressFidelity"]["value"] == "iot_sensor"
     assert p["waterStressIndex"]["value"] > 0
     assert p["shadeFraction"]["value"] == 0.5
-    assert len(redis.soil_water_set) >= 1
+    # One correction per trigger, not one per zone; every zone carries the parcel balance.
+    assert [d for _, d, _ in redis.saved] == [YESTERDAY]
+    sw = [e["soilWaterMm"]["value"] for e in published["entities"] if "soilWaterMm" in e]
+    assert sw and all(v == pytest.approx(redis.state["sw_mm"], abs=0.01) for v in sw)
 
 
 def test_olive_eppo_depletion_fraction():
@@ -368,7 +405,7 @@ async def test_unavailable_after_iot_clears_stale_attributes(monkeypatch):
 @pytest.mark.asyncio
 async def test_only_omitted_attrs_are_deleted(monkeypatch):
     published, _ = _setup(monkeypatch)
-    await _trigger(FakeRedis())  # model path: index+observedAt present, shade None
+    await _trigger(FakeRedis(state=dict(STATE)))  # model path: index+observedAt present, shade None
     assert [d[1] for d in published["deletes"]] == [
         "shadeFraction", "shadeObservedAt",
         "underPanelWaterStressIndex", "underPanelWaterStressFidelity",
@@ -419,7 +456,7 @@ async def test_defaulted_hydraulics_with_has_data_is_regional_proxy(monkeypatch)
 @pytest.mark.asyncio
 async def test_dead_probe_reading_is_not_iot_sensor(monkeypatch):
     published, _ = _setup(monkeypatch)
-    await _trigger(FakeRedis(readings={"soilMoisture": [soil_reading(0.0)]}))
+    await _trigger(FakeRedis(readings={"soilMoisture": [soil_reading(0.0)]}, state=dict(STATE)))
     assert _entity(published)["waterStressFidelity"]["value"] == "parcel_weather"
 
 
@@ -440,9 +477,22 @@ async def test_no_soil_water_balance_without_et0(monkeypatch):
     redis = FakeRedis(readings={MetricType.AIR_TEMPERATURE.value: [air]})
     await _trigger(redis)
     a = published["assessments"][-1]
+    # Without stored state the trigger never computes a balance of its own.
     assert a.soil_water_balance is None
     assert a.water_balance is None
-    assert redis.soil_water_set == []
+    assert redis.saved == []
+
+
+@pytest.mark.asyncio
+async def test_stored_balance_without_live_et0_gives_no_index(monkeypatch):
+    published, _ = _setup(monkeypatch, wm={}, regional={})
+    redis = FakeRedis(state=dict(STATE))
+    await _trigger(redis)
+    a = published["assessments"][-1]
+    # The stored balance is reported, but the live ET0 fidelity still gates the model index.
+    assert a.soil_water_balance.sw_mm == STATE["sw_mm"]
+    assert redis.saved == []
+    assert "waterStressIndex" not in _entity(published)
 
 
 @pytest.mark.asyncio

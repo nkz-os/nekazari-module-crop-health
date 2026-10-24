@@ -9,7 +9,6 @@ from app.engines.under_panel_stress import (
     compute_water_stress,
     ks_from_theta,
     par_open_from_ghi,
-    shade_corrected_etc,
     volumetric_soil_moisture,
 )
 from app.schemas import SoilProperties
@@ -67,11 +66,6 @@ def test_par_open_none_at_night():
 def test_par_open_conversion():
     assert par_open_from_ghi(500) == pytest.approx(1010.0)
     assert par_open_from_ghi(50) == pytest.approx(101.0)
-
-
-def test_shade_corrected_etc():
-    assert shade_corrected_etc(5.0, 1.0, None, 0.7) == 5.0
-    assert shade_corrected_etc(5.0, 1.0, 0.5, 0.7) == pytest.approx(5.0 * (1 - 0.35))
 
 
 def test_sensor_index_iot_with_soil_data():

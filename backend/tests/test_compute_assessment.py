@@ -83,6 +83,7 @@ async def test_compute_assessment_surfaces_soil_suitability(monkeypatch):
         suitability = SoilSuitability(verdict="marginal", reason="pH out of range")
 
     class _SentinelCtx:
+        crop = None  # CropContext always carries it; the depletion fraction reads it
         soil = _Soil()
 
     sentinel_ctx = _SentinelCtx()

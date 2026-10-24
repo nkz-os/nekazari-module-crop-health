@@ -99,10 +99,9 @@ async def advance_daily_balance(
 
         yesterday = today - timedelta(days=1)
         state_result = None
-        if state is not None:
-            state_result = balance_from_state(state["sw_mm"], soil, root_depth_mm, depletion_p)
-
         if state is not None and date.fromisoformat(state["date"]) >= yesterday - timedelta(days=SPINUP_DAYS):
+            # Only a state inside the replay window may stand in for today's balance.
+            state_result = balance_from_state(state["sw_mm"], soil, root_depth_mm, depletion_p)
             last_saved = date.fromisoformat(state["date"])
             start = last_saved + timedelta(days=1)
             sw = state["sw_mm"]

@@ -204,3 +204,17 @@ async def test_correction_lock_held_does_nothing():
     redis = FakeRedis(state={"date": "2026-10-20", "sw_mm": 30.0}, lock=False)
     assert await correct_balance_state(redis, TENANT, PARCEL, [reading()], SOIL, ROOT, 90.0, NOW) is None
     assert redis.saved == []
+
+
+@pytest.mark.asyncio
+async def test_stale_state_with_fetch_failure_returns_none():
+    redis = FakeRedis(state={"date": "2026-09-01", "sw_mm": 50.0})
+    assert await advance(redis, make_fetch(result=None)) is None
+    assert redis.saved == []
+
+
+@pytest.mark.asyncio
+async def test_stale_state_with_first_day_missing_returns_none():
+    redis = FakeRedis(state={"date": "2026-09-01", "sw_mm": 50.0})
+    assert await advance(redis, make_fetch({"2026-09-24": (None, 3.0)})) is None
+    assert redis.saved == []

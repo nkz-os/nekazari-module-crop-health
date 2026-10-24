@@ -2148,6 +2148,55 @@ async def _fetch_gdd(
     return {"gdd_total": float(gdd), "days_count": int(counted)}
 
 
+async def _fetch_daily_water(
+    tenant_id: str,
+    parcel_id: str,
+    start: date,
+    end: date,
+) -> dict[str, tuple[float | None, float | None]] | None:
+    """Daily rain and ET0 from weather-api's parcel daily series, or None.
+
+    ``{"YYYY-MM-DD": (precip_mm, et0_mm)}`` for each returned day; a missing
+    value stays None so the caller can stop stepping at that day. Signed like
+    ``_fetch_gdd``; weather-api fills the parcel's gaps from Open-Meteo.
+    """
+    settings = get_settings()
+    secret = _hmac_secret()
+    if not settings.weather_daily_url or not secret:
+        logger.warning("_fetch_daily_water: weather-api url or signing secret unset — no daily water data")
+        return None
+    params = {
+        "start": start.isoformat(),
+        "end": end.isoformat(),
+        "fill": "open_meteo",
+    }
+    headers = {
+        "X-Tenant-ID": tenant_id,
+        "X-Auth-Signature": generate_hmac_signature(secret, "", tenant_id),
+    }
+    short = parcel_id.split(":")[-1]
+    try:
+        async with httpx.AsyncClient(timeout=_DAILY_TIMEOUT_S) as client:
+            resp = await client.get(
+                f"{settings.weather_daily_url}/api/weather/parcel/{short}/daily",
+                params=params,
+                headers=headers,
+            )
+        if resp.status_code != 200:
+            logger.warning("_fetch_daily_water: HTTP %d for tenant %s parcel=%s",
+                           resp.status_code, tenant_id, parcel_id)
+            return None
+        days = (resp.json() or {}).get("days") or []
+        return {
+            str(d["date"])[:10]: (d.get("precip_mm"), d.get("et0_mm"))
+            for d in days
+        }
+    except Exception as exc:  # noqa: BLE001 — the balance keeps its previous state on any failure
+        logger.warning("_fetch_daily_water: failed for tenant %s parcel=%s — no daily water data: %s",
+                       tenant_id, parcel_id, exc)
+        return None
+
+
 def _extract_eoproduct_scalar(entity: dict, attr: str) -> float | None:
     """Read a scalar from a keyValues EOProduct attribute (scalar or Property dict)."""
     raw = entity.get(attr)

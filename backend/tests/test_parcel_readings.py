@@ -90,42 +90,42 @@ NOW = datetime(2026, 6, 15, 12, 0, tzinfo=timezone.utc).timestamp()
 
 @pytest.mark.anyio
 async def test_parcel_readings_drop_stale_and_future(state):
-    await state.set_parcel_reading(PARCEL, "soilMoisture", "d-fresh", NOW - 100, 30.0, "P1")
-    await state.set_parcel_reading(PARCEL, "soilMoisture", "d-stale", NOW - 4000, 31.0, "P1")
-    await state.set_parcel_reading(PARCEL, "soilMoisture", "d-future", NOW + 900, 32.0, None)
-    got = await state.get_parcel_readings(PARCEL, "soilMoisture", 3600, NOW)
+    await state.set_parcel_reading(TENANT, PARCEL, "open_field", "soilMoisture", "d-fresh", NOW - 100, 30.0, "P1")
+    await state.set_parcel_reading(TENANT, PARCEL, "open_field", "soilMoisture", "d-stale", NOW - 4000, 31.0, "P1")
+    await state.set_parcel_reading(TENANT, PARCEL, "open_field", "soilMoisture", "d-future", NOW + 900, 32.0, None)
+    got = await state.get_parcel_readings(TENANT, PARCEL, "open_field", "soilMoisture", 3600, NOW)
     assert got == [ParcelReading("d-fresh", NOW - 100, 30.0, "P1")]
-    assert state._client.ttl[f"{state._prefix}parcel:{PARCEL}:soilMoisture"] == 7200
+    assert state._client.ttl[f"{state._prefix}parcel:{TENANT}:{PARCEL}:open_field:soilMoisture"] == 7200
 
 
 @pytest.mark.anyio
 async def test_older_out_of_order_reading_does_not_overwrite_newer(state):
-    await state.set_parcel_reading(PARCEL, "soilMoisture", "d", NOW - 10, 30.0, "P1")
-    await state.set_parcel_reading(PARCEL, "soilMoisture", "d", NOW - 500, 99.0, "P1")
-    got = await state.get_parcel_readings(PARCEL, "soilMoisture", 3600, NOW)
+    await state.set_parcel_reading(TENANT, PARCEL, "open_field", "soilMoisture", "d", NOW - 10, 30.0, "P1")
+    await state.set_parcel_reading(TENANT, PARCEL, "open_field", "soilMoisture", "d", NOW - 500, 99.0, "P1")
+    got = await state.get_parcel_readings(TENANT, PARCEL, "open_field", "soilMoisture", 3600, NOW)
     assert got == [ParcelReading("d", NOW - 10, 30.0, "P1")]
-    await state.set_parcel_reading(PARCEL, "soilMoisture", "d", NOW - 5, 31.0, "P1")
-    got = await state.get_parcel_readings(PARCEL, "soilMoisture", 3600, NOW)
+    await state.set_parcel_reading(TENANT, PARCEL, "open_field", "soilMoisture", "d", NOW - 5, 31.0, "P1")
+    got = await state.get_parcel_readings(TENANT, PARCEL, "open_field", "soilMoisture", 3600, NOW)
     assert got[0].value == 31.0
 
 
 @pytest.mark.anyio
 async def test_daily_shade_is_one_minus_under_over_open(state):
-    await state.add_shade_sample(PARCEL, "2026-06-15", 400, 1600)
-    await state.add_shade_sample(PARCEL, "2026-06-15", 200, 1800)
-    assert await state.get_daily_shade(PARCEL, "2026-06-15") == pytest.approx(1 - 600 / 3400)
-    assert state._client.ttl[f"{state._prefix}shade:{PARCEL}:2026-06-15"] == 3 * 86400
+    await state.add_shade_sample(TENANT, PARCEL, "2026-06-15", 400, 1600)
+    await state.add_shade_sample(TENANT, PARCEL, "2026-06-15", 200, 1800)
+    assert await state.get_daily_shade(TENANT, PARCEL, "2026-06-15") == pytest.approx(1 - 600 / 3400)
+    assert state._client.ttl[f"{state._prefix}shade:{TENANT}:{PARCEL}:2026-06-15"] == 3 * 86400
 
 
 @pytest.mark.anyio
 async def test_daily_shade_none_without_open_light(state):
-    assert await state.get_daily_shade(PARCEL, "2026-06-15") is None
+    assert await state.get_daily_shade(TENANT, PARCEL, "2026-06-15") is None
 
 
 @pytest.mark.anyio
 async def test_daily_shade_clamped(state):
-    await state.add_shade_sample(PARCEL, "d", 3000, 1000)
-    assert await state.get_daily_shade(PARCEL, "d") == 0.0
+    await state.add_shade_sample(TENANT, PARCEL, "d", 3000, 1000)
+    assert await state.get_daily_shade(TENANT, PARCEL, "d") == 0.0
 
 
 @pytest.mark.anyio
@@ -171,7 +171,7 @@ async def test_par_with_daylight_adds_shade_sample_on_utc_day(state, monkeypatch
         DEVICE, "photosyntheticPhotonFluxDensity", NOW, 808.0, None, TENANT, state
     )
     assert out == PARCEL
-    assert await state.get_daily_shade(PARCEL, "2026-06-15") == pytest.approx(1 - 808 / (2.02 * 800))
+    assert await state.get_daily_shade(TENANT, PARCEL, "2026-06-15") == pytest.approx(1 - 808 / (2.02 * 800))
 
 
 @pytest.mark.anyio
@@ -180,7 +180,7 @@ async def test_par_at_night_adds_no_shade_sample(state, monkeypatch):
     await pipeline.record_parcel_reading(
         DEVICE, "photosyntheticPhotonFluxDensity", NOW, 5.0, None, TENANT, state
     )
-    assert await state.get_daily_shade(PARCEL, "2026-06-15") is None
+    assert await state.get_daily_shade(TENANT, PARCEL, "2026-06-15") is None
 
 
 @pytest.mark.anyio
@@ -189,7 +189,7 @@ async def test_par_without_ghi_adds_no_shade_sample(state, monkeypatch):
     await pipeline.record_parcel_reading(
         DEVICE, "photosyntheticPhotonFluxDensity", NOW, 500.0, None, TENANT, state
     )
-    assert await state.get_daily_shade(PARCEL, "2026-06-15") is None
+    assert await state.get_daily_shade(TENANT, PARCEL, "2026-06-15") is None
 
 
 @pytest.mark.anyio
@@ -208,7 +208,7 @@ async def test_non_par_metric_stores_reading_without_meteo(state, monkeypatch):
     calls = _patch(monkeypatch, 800.0)
     await pipeline.record_parcel_reading(DEVICE, "soilMoisture", NOW, 30.0, "P1", TENANT, state)
     assert calls["meteo"] == 0
-    got = await state.get_parcel_readings(PARCEL, "soilMoisture", 3600, NOW)
+    got = await state.get_parcel_readings(TENANT, PARCEL, "open_field", "soilMoisture", 3600, NOW)
     assert got[0].unit_code == "P1"
 
 
@@ -220,7 +220,7 @@ PAR = "photosyntheticPhotonFluxDensity"
 async def test_non_finite_ghi_adds_no_shade_sample(state, monkeypatch, ghi):
     _patch(monkeypatch, ghi)
     await pipeline.record_parcel_reading(DEVICE, PAR, NOW, 400.0, None, TENANT, state)
-    assert await state.get_daily_shade(PARCEL, "2026-06-15") is None
+    assert await state.get_daily_shade(TENANT, PARCEL, "2026-06-15") is None
 
 
 @pytest.mark.anyio
@@ -230,8 +230,8 @@ async def test_delayed_or_future_par_adds_no_shade_sample(state, monkeypatch, ts
     out = await pipeline.record_parcel_reading(DEVICE, PAR, ts, 400.0, None, TENANT, state)
     assert out == PARCEL
     day = datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d")
-    assert await state.get_daily_shade(PARCEL, day) is None
-    assert await state.get_daily_shade(PARCEL, "2026-06-15") is None
+    assert await state.get_daily_shade(TENANT, PARCEL, day) is None
+    assert await state.get_daily_shade(TENANT, PARCEL, "2026-06-15") is None
 
 
 @pytest.mark.anyio
@@ -255,20 +255,20 @@ async def test_resolver_error_does_not_raise(state, monkeypatch):
 @pytest.mark.anyio
 async def test_future_stamped_reading_not_stored_and_later_valid_one_is(state):
     now = time.time()
-    await state.set_parcel_reading(PARCEL, "soilMoisture", "d", now + 1e6, 99.0, "P1")
+    await state.set_parcel_reading(TENANT, PARCEL, "open_field", "soilMoisture", "d", now + 1e6, 99.0, "P1")
     assert state._client.hashes == {}
-    await state.set_parcel_reading(PARCEL, "soilMoisture", "d", now - 10, 30.0, "P1")
-    got = await state.get_parcel_readings(PARCEL, "soilMoisture", 3600, now)
+    await state.set_parcel_reading(TENANT, PARCEL, "open_field", "soilMoisture", "d", now - 10, 30.0, "P1")
+    got = await state.get_parcel_readings(TENANT, PARCEL, "open_field", "soilMoisture", 3600, now)
     assert [r.value for r in got] == [30.0]
 
 
 @pytest.mark.anyio
 async def test_poisoned_stored_entry_is_replaced_by_valid_reading(state):
     now = time.time()
-    key = f"{state._prefix}parcel:{PARCEL}:soilMoisture"
+    key = f"{state._prefix}parcel:{TENANT}:{PARCEL}:open_field:soilMoisture"
     state._client.hashes[key] = {"d": json.dumps({"ts": now + 1e6, "v": 99.0, "u": "P1"})}
-    await state.set_parcel_reading(PARCEL, "soilMoisture", "d", now - 10, 30.0, "P1")
-    got = await state.get_parcel_readings(PARCEL, "soilMoisture", 3600, now)
+    await state.set_parcel_reading(TENANT, PARCEL, "open_field", "soilMoisture", "d", now - 10, 30.0, "P1")
+    got = await state.get_parcel_readings(TENANT, PARCEL, "open_field", "soilMoisture", 3600, now)
     assert [r.value for r in got] == [30.0]
     assert state._client.ttl[key] == 7200
 
@@ -277,21 +277,21 @@ async def test_poisoned_stored_entry_is_replaced_by_valid_reading(state):
 async def test_stale_ghi_adds_no_shade_sample(state, monkeypatch):
     _patch(monkeypatch, 800.0, obs_ts=NOW - 2 * 3600)
     await pipeline.record_parcel_reading(DEVICE, PAR, NOW, 400.0, None, TENANT, state)
-    assert await state.get_daily_shade(PARCEL, "2026-06-15") is None
+    assert await state.get_daily_shade(TENANT, PARCEL, "2026-06-15") is None
 
 
 @pytest.mark.anyio
 async def test_ghi_without_observation_time_adds_no_shade_sample(state, monkeypatch):
     _patch(monkeypatch, 800.0, obs_ts=None)
     await pipeline.record_parcel_reading(DEVICE, PAR, NOW, 400.0, None, TENANT, state)
-    assert await state.get_daily_shade(PARCEL, "2026-06-15") is None
+    assert await state.get_daily_shade(TENANT, PARCEL, "2026-06-15") is None
 
 
 @pytest.mark.anyio
 async def test_fresh_ghi_within_90_min_adds_sample(state, monkeypatch):
     _patch(monkeypatch, 800.0, obs_ts=NOW - 80 * 60)
     await pipeline.record_parcel_reading(DEVICE, PAR, NOW, 400.0, None, TENANT, state)
-    assert await state.get_daily_shade(PARCEL, "2026-06-15") is not None
+    assert await state.get_daily_shade(TENANT, PARCEL, "2026-06-15") is not None
 
 
 @pytest.mark.anyio
@@ -300,7 +300,7 @@ async def test_implausible_par_adds_no_shade_sample(state, monkeypatch, par, cap
     _patch(monkeypatch, 800.0)
     with caplog.at_level(logging.WARNING):
         await pipeline.record_parcel_reading(DEVICE, PAR, NOW, par, None, TENANT, state)
-    assert await state.get_daily_shade(PARCEL, "2026-06-15") is None
+    assert await state.get_daily_shade(TENANT, PARCEL, "2026-06-15") is None
     assert any("PAR" in r.getMessage() for r in caplog.records)
 
 
@@ -310,8 +310,8 @@ async def test_shade_sample_records_latest_par_ts(state, monkeypatch):
     await pipeline.record_parcel_reading(DEVICE, PAR, NOW - 60, 400.0, None, TENANT, state)
     await pipeline.record_parcel_reading(DEVICE, PAR, NOW - 10, 400.0, None, TENANT, state)
     await pipeline.record_parcel_reading(DEVICE, PAR, NOW - 300, 400.0, None, TENANT, state)
-    assert await state.get_daily_shade_ts(PARCEL, "2026-06-15") == NOW - 10
-    assert await state.get_daily_shade_ts(PARCEL, "2026-06-14") is None
+    assert await state.get_daily_shade_ts(TENANT, PARCEL, "2026-06-15") == NOW - 10
+    assert await state.get_daily_shade_ts(TENANT, PARCEL, "2026-06-14") is None
 
 
 @pytest.mark.anyio

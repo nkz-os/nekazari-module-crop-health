@@ -229,14 +229,16 @@ async def _clear_stale_water_stress(entity: dict, tenant_id: str) -> None:
             pass
 
 
-async def _read_parcel_readings(redis_state, parcel_id: str, metric: str, now_ts: float) -> list:
+async def _read_parcel_readings(
+    redis_state, tenant_id: str, parcel_id: str, context: str, metric: str, now_ts: float
+) -> list:
     """Fresh per-parcel readings; any Redis failure degrades to 'no readings'."""
     if redis_state is None:
         return []
     try:
         return list(
             await redis_state.get_parcel_readings(
-                parcel_id, metric, _PARCEL_READING_MAX_AGE_S, now_ts
+                tenant_id, parcel_id, context, metric, _PARCEL_READING_MAX_AGE_S, now_ts
             )
         )
     except Exception as exc:  # noqa: BLE001 -- fail-safe: pipeline must still publish
@@ -244,13 +246,25 @@ async def _read_parcel_readings(redis_state, parcel_id: str, metric: str, now_ts
         return []
 
 
-async def _read_daily_shade(redis_state, parcel_id: str, now_ts: float) -> float | None:
+async def _read_pooled(
+    redis_state, tenant_id: str, parcel_id: str, metric: str, now_ts: float
+) -> list:
+    """Readings of a metric from both sensor contexts, pooled."""
+    out: list = []
+    for context in (UNDER_PANEL, OPEN_FIELD):
+        out.extend(
+            await _read_parcel_readings(redis_state, tenant_id, parcel_id, context, metric, now_ts)
+        )
+    return out
+
+
+async def _read_daily_shade(redis_state, tenant_id: str, parcel_id: str, now_ts: float) -> float | None:
     """Daily shade fraction: today (UTC), else yesterday (UTC), else None."""
-    return (await _read_daily_shade_obs(redis_state, parcel_id, now_ts))[0]
+    return (await _read_daily_shade_obs(redis_state, tenant_id, parcel_id, now_ts))[0]
 
 
 async def _read_daily_shade_obs(
-    redis_state, parcel_id: str, now_ts: float
+    redis_state, tenant_id: str, parcel_id: str, now_ts: float
 ) -> tuple[float | None, datetime | None]:
     """Daily shade fraction (today, else yesterday, UTC) and its latest PAR sample time."""
     if redis_state is None:
@@ -259,7 +273,7 @@ async def _read_daily_shade_obs(
     for d in (day, day - timedelta(days=1)):
         day_str = d.strftime("%Y-%m-%d")
         try:
-            shade = await redis_state.get_daily_shade(parcel_id, day_str)
+            shade = await redis_state.get_daily_shade(tenant_id, parcel_id, day_str)
         except Exception as exc:  # noqa: BLE001 -- fail-safe
             logger.warning("pipeline: daily shade unavailable for %s: %s", parcel_id, exc)
             return None, None
@@ -267,7 +281,7 @@ async def _read_daily_shade_obs(
             continue
         observed = None
         try:
-            ts = await redis_state.get_daily_shade_ts(parcel_id, day_str)
+            ts = await redis_state.get_daily_shade_ts(tenant_id, parcel_id, day_str)
             if ts is not None and math.isfinite(ts):
                 observed = datetime.fromtimestamp(ts, tz=timezone.utc)
         except Exception as exc:  # noqa: BLE001 -- the timestamp is optional
@@ -281,17 +295,17 @@ def _mean_in_range(readings: list, lo: float, hi: float) -> float | None:
     return sum(vals) / len(vals) if vals else None
 
 
-async def _sensor_air_ctx(redis_state, parcel_id: str, now_ts: float) -> dict:
+async def _sensor_air_ctx(redis_state, tenant_id: str, parcel_id: str, now_ts: float) -> dict:
     """Air temperature / RH from fresh parcel sensors, in the shape resolve_meteo_context expects."""
     ctx: dict = {}
     temp = _mean_in_range(
-        await _read_parcel_readings(redis_state, parcel_id, MetricType.AIR_TEMPERATURE.value, now_ts),
+        await _read_pooled(redis_state, tenant_id, parcel_id, MetricType.AIR_TEMPERATURE.value, now_ts),
         *_AIR_TEMP_RANGE_C,
     )
     if temp is not None:
         ctx["air_temp_c"] = temp
     rh = _mean_in_range(
-        await _read_parcel_readings(redis_state, parcel_id, MetricType.RELATIVE_HUMIDITY.value, now_ts),
+        await _read_pooled(redis_state, tenant_id, parcel_id, MetricType.RELATIVE_HUMIDITY.value, now_ts),
         *_RH_RANGE_PCT,
     )
     if rh is not None:
@@ -301,6 +315,7 @@ async def _sensor_air_ctx(redis_state, parcel_id: str, now_ts: float) -> dict:
 
 async def _resolve_water_stress(
     redis_state,
+    tenant_id: str,
     parcel_id: str,
     soil,
     depletion_p: float,
@@ -312,7 +327,9 @@ async def _resolve_water_stress(
     shade_observed_at: datetime | None = None,
 ) -> tuple[WaterStress, float | None]:
     """Water stress index plus the sensor-assimilated soil water (mm), if the sensor path applied."""
-    readings = await _read_parcel_readings(redis_state, parcel_id, "soilMoisture", now_ts)
+    readings = await _read_parcel_readings(
+        redis_state, tenant_id, parcel_id, OPEN_FIELD, "soilMoisture", now_ts
+    )
     now = datetime.fromtimestamp(now_ts, tz=timezone.utc)
     used = valid_theta_readings(readings, now_ts)
     try:
@@ -447,13 +464,13 @@ async def trigger(
     now_ts = _now_ts()
     meteo = await resolve_meteo_context(
         effective_parcel, tenant_id,
-        sensor_ctx=await _sensor_air_ctx(redis_state, effective_parcel, now_ts),
+        sensor_ctx=await _sensor_air_ctx(redis_state, tenant_id, effective_parcel, now_ts),
         weather_map_fn=_weather_map_meteo,
         regional_fn=_regional_meteo,
     )
     weather = _snapshot_from_meteo(meteo)
     daily_shade, shade_observed_at = await _read_daily_shade_obs(
-        redis_state, effective_parcel, now_ts
+        redis_state, tenant_id, effective_parcel, now_ts
     )
     et0_fidelity = meteo.fidelity.get("et0_mm", "unavailable")
 
@@ -492,7 +509,7 @@ async def trigger(
     sw_yesterday = None
     if redis_state:
         try:
-            sw_yesterday = await redis_state.get_soil_water(effective_parcel)
+            sw_yesterday = await redis_state.get_soil_water(tenant_id, effective_parcel)
         except Exception as exc:
             logger.warning("pipeline: redis get_soil_water failed for parcel %s — sw_yesterday=None: %s", effective_parcel, exc)
 
@@ -596,13 +613,13 @@ async def trigger(
     attach_soil_suitability(rollup, crop_context)
     # Water stress is parcel-level: computed once here, carried by the rollup only.
     rollup.water_stress, assimilated = await _resolve_water_stress(
-        redis_state, effective_parcel, soil, _resolve_depletion_fraction(crop_context),
+        redis_state, tenant_id, effective_parcel, soil, _resolve_depletion_fraction(crop_context),
         rollup.soil_water_balance, et0_fidelity, now_ts, daily_shade, root_depth_mm,
         shade_observed_at,
     )
     if assimilated is not None and redis_state:
         try:
-            await redis_state.set_soil_water(effective_parcel, assimilated)
+            await redis_state.set_soil_water(tenant_id, effective_parcel, assimilated)
         except Exception as exc:
             logger.warning("pipeline: redis set_soil_water failed for parcel %s — state not persisted: %s", effective_parcel, exc)
     rollup_entity = rollup.to_ngsi_ld()
@@ -750,7 +767,7 @@ async def _run_engines(
     assimilated_sw = None
     if parcel_stress:
         assessment.water_stress, assimilated_sw = await _resolve_water_stress(
-            redis_state, effective_parcel, soil, depletion_p, swb, et0_fidelity,
+            redis_state, tenant_id, effective_parcel, soil, depletion_p, swb, et0_fidelity,
             _now_ts(), daily_shade, root_depth_mm, shade_observed_at,
         )
 
@@ -758,7 +775,7 @@ async def _run_engines(
     if swb is not None and redis_state:
         try:
             await redis_state.set_soil_water(
-                effective_parcel, assimilated_sw if assimilated_sw is not None else swb.sw_mm
+                tenant_id, effective_parcel, assimilated_sw if assimilated_sw is not None else swb.sw_mm
             )
         except Exception as exc:
             logger.warning("pipeline: redis set_soil_water failed for parcel %s — state not persisted: %s", effective_parcel, exc)
@@ -2315,8 +2332,8 @@ async def record_parcel_reading(
         if not owner:
             logger.warning("record_parcel_reading: device %s has no parcel link — dropped", device_id)
             return None
-        parcel_id, _context = owner  # Task 2 stores the context
-        await redis_state.set_parcel_reading(parcel_id, metric, device_id, ts, value, unit_code)
+        parcel_id, context = owner
+        await redis_state.set_parcel_reading(tenant_id, parcel_id, context, metric, device_id, ts, value, unit_code)
         if metric == MetricType.PAR.value:
             await _add_shade_sample(parcel_id, ts, value, tenant_id, redis_state)
         return parcel_id
@@ -2346,7 +2363,7 @@ async def _add_shade_sample(
     if ghi_ts is None or not math.isfinite(ghi_ts) or abs(ts - ghi_ts) > _GHI_MAX_SKEW_S:
         return
     day = datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d")
-    await redis_state.add_shade_sample(parcel_id, day, par_under, PAR_PER_GHI * ghi, ts)
+    await redis_state.add_shade_sample(tenant_id, parcel_id, day, par_under, PAR_PER_GHI * ghi, ts)
 
 
 async def _resolve_parcel_from_device(device_id: str, tenant_id: str) -> str | None:

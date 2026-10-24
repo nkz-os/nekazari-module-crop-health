@@ -198,24 +198,24 @@ class RedisState:
                 logger.warning("Corrupt Redis entry in %s: %s — %s", key, raw[0], exc)
         return None
 
-    async def get_soil_water(self, parcel_id: str) -> float | None:
+    async def get_soil_water(self, tenant_id: str, parcel_id: str) -> float | None:
         """Get stored soil water content for a parcel (mm)."""
         if self._client is None:
             return None
         try:
-            val = await self._client.get(f"{self._prefix}sw:{parcel_id}")
+            val = await self._client.get(f"{self._prefix}sw:{tenant_id}:{parcel_id}")
             return float(val) if val else None
         except Exception as exc:
             logger.warning("redis_state.get_soil_water: failed for parcel %s — returning None: %s", parcel_id, exc)
             return None
 
-    async def set_soil_water(self, parcel_id: str, sw_mm: float) -> None:
+    async def set_soil_water(self, tenant_id: str, parcel_id: str, sw_mm: float) -> None:
         """Store soil water content for a parcel (mm). TTL 7 days."""
         if self._client is None:
             return
         try:
             await self._client.set(
-                f"{self._prefix}sw:{parcel_id}",
+                f"{self._prefix}sw:{tenant_id}:{parcel_id}",
                 str(sw_mm),
                 ex=86400 * 7,
             )
@@ -224,7 +224,9 @@ class RedisState:
 
     async def set_parcel_reading(
         self,
+        tenant_id: str,
         parcel_id: str,
+        context: str,
         metric: str,
         device_id: str,
         ts: float,
@@ -234,7 +236,7 @@ class RedisState:
         """Latest reading of a metric per device, grouped by parcel (TTL 2 h)."""
         if self._client is None:
             return
-        key = f"{self._prefix}parcel:{parcel_id}:{metric}"
+        key = f"{self._prefix}parcel:{tenant_id}:{parcel_id}:{context}:{metric}"
         now = time.time()
         if ts - now > MAX_FUTURE_SKEW_S:
             logger.warning(
@@ -262,7 +264,9 @@ class RedisState:
 
     async def get_parcel_readings(
         self,
+        tenant_id: str,
         parcel_id: str,
+        context: str,
         metric: str,
         max_age_s: float,
         now_ts: float,
@@ -270,7 +274,7 @@ class RedisState:
         """Readings of the parcel no older than max_age_s and not from the future."""
         if self._client is None:
             return []
-        key = f"{self._prefix}parcel:{parcel_id}:{metric}"
+        key = f"{self._prefix}parcel:{tenant_id}:{parcel_id}:{context}:{metric}"
         try:
             raw = await self._client.hgetall(key)
         except Exception as exc:
@@ -292,7 +296,7 @@ class RedisState:
         return out
 
     async def add_shade_sample(
-        self, parcel_id: str, day: str, par_under: float, par_open: float,
+        self, tenant_id: str, parcel_id: str, day: str, par_under: float, par_open: float,
         ts: float | None = None,
     ) -> None:
         """Add one (under-panel, open-sky) PAR pair to the parcel's daily sums.
@@ -301,7 +305,7 @@ class RedisState:
         """
         if self._client is None:
             return
-        key = f"{self._prefix}shade:{parcel_id}:{day}"
+        key = f"{self._prefix}shade:{tenant_id}:{parcel_id}:{day}"
         try:
             newest = None
             if ts is not None and math.isfinite(ts):
@@ -321,11 +325,11 @@ class RedisState:
         except Exception as exc:
             logger.warning("redis_state.add_shade_sample: failed for %s: %s", key, exc)
 
-    async def get_daily_shade(self, parcel_id: str, day: str) -> float | None:
+    async def get_daily_shade(self, tenant_id: str, parcel_id: str, day: str) -> float | None:
         """1 - sum(under)/sum(open) clamped to [0, 1]; None without open-sky light."""
         if self._client is None:
             return None
-        key = f"{self._prefix}shade:{parcel_id}:{day}"
+        key = f"{self._prefix}shade:{tenant_id}:{parcel_id}:{day}"
         try:
             raw = await self._client.hgetall(key)
             open_sum = float(raw.get("open", 0) or 0)
@@ -337,11 +341,11 @@ class RedisState:
             return None
         return min(1.0, max(0.0, 1.0 - under_sum / open_sum))
 
-    async def get_daily_shade_ts(self, parcel_id: str, day: str) -> float | None:
+    async def get_daily_shade_ts(self, tenant_id: str, parcel_id: str, day: str) -> float | None:
         """Timestamp of the latest PAR sample behind the day's shade; None if unknown."""
         if self._client is None:
             return None
-        key = f"{self._prefix}shade:{parcel_id}:{day}"
+        key = f"{self._prefix}shade:{tenant_id}:{parcel_id}:{day}"
         try:
             raw = await self._client.hget(key, "last_ts")
             return float(raw) if raw is not None else None

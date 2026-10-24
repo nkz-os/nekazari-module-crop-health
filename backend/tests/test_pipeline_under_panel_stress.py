@@ -37,7 +37,7 @@ class FakeRedis:
     async def get_irrigation_24h(self, *a, **k):
         return 0.0
 
-    async def set_soil_water(self, parcel, value):
+    async def set_soil_water(self, tenant, parcel, value):
         self.soil_water_set.append((parcel, value))
 
     async def get_window(self, *a, **k):
@@ -46,17 +46,17 @@ class FakeRedis:
     async def get_latest(self, *a, **k):
         return None
 
-    async def get_parcel_readings(self, parcel, metric, max_age_s, now_ts):
+    async def get_parcel_readings(self, tenant, parcel, context, metric, max_age_s, now_ts):
         if self.fail:
             raise RuntimeError("redis down")
         return [r for r in self.readings.get(metric, []) if 0 <= now_ts - r.ts <= max_age_s]
 
-    async def get_daily_shade(self, parcel, day):
+    async def get_daily_shade(self, tenant, parcel, day):
         if self.fail:
             raise RuntimeError("redis down")
         return self.shade.get(day)
 
-    async def get_daily_shade_ts(self, parcel, day):
+    async def get_daily_shade_ts(self, tenant, parcel, day):
         if self.fail:
             raise RuntimeError("redis down")
         return self.shade_ts.get(day)

@@ -757,7 +757,9 @@ async def _run_engines(
     # Soil water balance (replaces simple water balance with AWC tracking)
     swb = None
     depletion_p = _resolve_depletion_fraction(crop_context)
-    if weather:
+    # Without ET0 the balance would run with no evapotranspiration and carry a
+    # too-wet soil into the next day: no balance rather than a biased one.
+    if weather and et0_fidelity != "unavailable":
         etc_mm = shade_corrected_etc(
             weather.eto_mm, phenology.kc, daily_shade, get_settings().shade_et_radiative_fraction
         )
@@ -1688,6 +1690,7 @@ async def _assess_zone(
         now=now,
         stage_table=thresholds,
         publish=False,
+        et0_fidelity=meteo.fidelity.get("et0_mm", "unavailable"),
     )
     return assessment
 

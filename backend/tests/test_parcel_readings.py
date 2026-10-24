@@ -148,7 +148,7 @@ def _patch(monkeypatch, ghi, obs_ts=NOW):
 
     async def _resolve(device_id, tenant_id):
         calls["resolve"] += 1
-        return PARCEL, "open_field"
+        return PARCEL, "under_panel"
 
     async def _meteo(parcel_id, tenant_id):
         calls["meteo"] += 1
@@ -208,7 +208,7 @@ async def test_non_par_metric_stores_reading_without_meteo(state, monkeypatch):
     calls = _patch(monkeypatch, 800.0)
     await pipeline.record_parcel_reading(DEVICE, "soilMoisture", NOW, 30.0, "P1", TENANT, state)
     assert calls["meteo"] == 0
-    got = await state.get_parcel_readings(TENANT, PARCEL, "open_field", "soilMoisture", 3600, NOW)
+    got = await state.get_parcel_readings(TENANT, PARCEL, "under_panel", "soilMoisture", 3600, NOW)
     assert got[0].unit_code == "P1"
 
 

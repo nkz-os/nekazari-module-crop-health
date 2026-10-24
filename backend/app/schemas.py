@@ -45,6 +45,7 @@ class MetricType(str, enum.Enum):
     AIR_TEMPERATURE = "airTemperature"
     RELATIVE_HUMIDITY = "relativeHumidity"
     PAR = "photosyntheticPhotonFluxDensity"
+    SOLAR_RADIATION = "solarRadiation"
 
 
 # ── Sensor Reading ────────────────────────────────────────────────────────────

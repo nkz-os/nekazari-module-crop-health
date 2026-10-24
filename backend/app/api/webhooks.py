@@ -37,6 +37,7 @@ _TRACKED_ATTRIBUTES = {
     "airTemperature": MetricType.AIR_TEMPERATURE,
     "relativeHumidity": MetricType.RELATIVE_HUMIDITY,
     "photosyntheticPhotonFluxDensity": MetricType.PAR,
+    "solarRadiation": MetricType.SOLAR_RADIATION,
 }
 
 

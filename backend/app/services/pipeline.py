@@ -2267,6 +2267,8 @@ _GHI_TTL_S = 300
 _SHADE_MAX_AGE_S = 3600.0
 # GHI only pairs with a PAR reading when the station observation is this close in time.
 _GHI_MAX_SKEW_S = 90 * 60.0
+# UN/CEFACT code for W/m2; a pyranometer reading in any other unit is not trusted as GHI.
+_GHI_UNIT_CODE = "D54"
 # Physical ceiling for PAR (umol/m2/s); full sun is ~2000-2200.
 _PAR_MAX = 3000.0
 
@@ -2293,7 +2295,25 @@ async def _cached_device_owner(
 async def _cached_ghi(
     parcel_id: str, tenant_id: str, redis_state: RedisState
 ) -> tuple[float | None, float | None]:
-    """(GHI W/m2, WeatherObserved epoch time) from the regional station, cached 300 s."""
+    """(GHI W/m2, observation epoch time).
+
+    The parcel's own open-field pyranometer wins when fresh; otherwise the regional
+    WeatherObserved value, cached 300 s. The pyranometer is read before the cache so
+    a cached regional value never hides it.
+    """
+    now = _now_ts()
+    fresh = [
+        r
+        for r in await _read_parcel_readings(
+            redis_state, tenant_id, parcel_id, OPEN_FIELD, MetricType.SOLAR_RADIATION.value, now
+        )
+        if r.unit_code in (None, _GHI_UNIT_CODE)
+        and math.isfinite(r.value)
+        and abs(now - r.ts) <= _GHI_MAX_SKEW_S
+    ]
+    if fresh:
+        best = max(fresh, key=lambda r: r.ts)
+        return best.value, best.ts
     key = f"ghi:{tenant_id}:{parcel_id}"
     try:
         cached = await redis_state.get_json(key)
@@ -2333,8 +2353,14 @@ async def record_parcel_reading(
             logger.warning("record_parcel_reading: device %s has no parcel link — dropped", device_id)
             return None
         parcel_id, context = owner
+        if metric == MetricType.SOLAR_RADIATION.value and context != OPEN_FIELD:
+            # A park pyranometer rotates with the panels: never an open-sky reference.
+            logger.debug(
+                "record_parcel_reading: %s solarRadiation from device %s dropped", context, device_id
+            )
+            return parcel_id
         await redis_state.set_parcel_reading(tenant_id, parcel_id, context, metric, device_id, ts, value, unit_code)
-        if metric == MetricType.PAR.value:
+        if metric == MetricType.PAR.value and context == UNDER_PANEL:
             await _add_shade_sample(parcel_id, ts, value, tenant_id, redis_state)
         return parcel_id
     except Exception as exc:  # noqa: BLE001 — must not abort the queued trigger

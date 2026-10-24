@@ -288,6 +288,7 @@ const en = {
             soilProperties: 'Soil Properties',
             waterStress: 'Water stress',
             waterStressOpenField: 'Water stress (open field)',
+            waterStressParcel: 'Water stress (parcel)',
             waterStressUnderPanel: 'Water stress under panel',
             fidelity: {
                 iot_sensor: 'Sensor',
@@ -602,6 +603,7 @@ const es = {
             soilProperties: 'Propiedades del Suelo',
             waterStress: 'Estrés hídrico',
             waterStressOpenField: 'Estrés hídrico (campo abierto)',
+            waterStressParcel: 'Estrés hídrico (parcela)',
             waterStressUnderPanel: 'Estrés hídrico bajo panel',
             fidelity: {
                 iot_sensor: 'Sensor',
@@ -915,6 +917,7 @@ const ca = {
             soilProperties: 'Propietats del Sòl',
             waterStress: 'Water stress',
             waterStressOpenField: 'Water stress (open field)',
+            waterStressParcel: 'Estrès hídric (parcel·la)',
             waterStressUnderPanel: 'Water stress under panel',
             fidelity: {
                 iot_sensor: 'Sensor',
@@ -1197,6 +1200,7 @@ const eu = {
             soilProperties: 'Lurzoruaren Propietateak',
             waterStress: 'Water stress',
             waterStressOpenField: 'Water stress (open field)',
+            waterStressParcel: 'Ur-estresa (lursaila)',
             waterStressUnderPanel: 'Water stress under panel',
             fidelity: {
                 iot_sensor: 'Sensor',
@@ -1479,6 +1483,7 @@ const fr = {
             soilProperties: 'Propriétés du Sol',
             waterStress: 'Water stress',
             waterStressOpenField: 'Water stress (open field)',
+            waterStressParcel: 'Stress hydrique (parcelle)',
             waterStressUnderPanel: 'Water stress under panel',
             fidelity: {
                 iot_sensor: 'Sensor',
@@ -1761,6 +1766,7 @@ const pt = {
             soilProperties: 'Propriedades do Solo',
             waterStress: 'Water stress',
             waterStressOpenField: 'Water stress (open field)',
+            waterStressParcel: 'Stresse hídrico (parcela)',
             waterStressUnderPanel: 'Water stress under panel',
             fidelity: {
                 iot_sensor: 'Sensor',

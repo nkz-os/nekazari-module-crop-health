@@ -450,3 +450,16 @@ async def test_shade_observed_at_omitted_and_cleared_without_shade(monkeypatch):
     await _trigger(FakeRedis())
     assert "shadeObservedAt" not in _entity(published)
     assert "shadeObservedAt" in [d[1] for d in published["deletes"]]
+
+
+@pytest.mark.asyncio
+async def test_missing_susceptibility_score_skips_compaction(monkeypatch, caplog):
+    published, _ = _setup(monkeypatch)
+
+    async def _susc(*a, **k):
+        return {"overall_score": None, "overall_class": None}
+
+    monkeypatch.setattr(pipeline.context_client, "get_soil_susceptibility", _susc, raising=False)
+    await _trigger(FakeRedis(readings={"soilMoisture": [soil_reading(15.0)]}))
+    assert published["assessments"][-1].compaction_risk is None
+    assert "compaction risk evaluation failed" not in caplog.text

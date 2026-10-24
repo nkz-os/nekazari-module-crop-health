@@ -382,6 +382,16 @@ class RedisState:
             logger.warning("redis_state.set_json: failed for %s — not stored: %s", key, exc)
             return False
 
+    async def get_balance_state(self, tenant_id: str, parcel_id: str) -> dict | None:
+        """Daily soil water state ``{"date", "sw_mm"}``; raises StoreError like get_json."""
+        return await self.get_json(f"swd:{tenant_id}:{parcel_id}")
+
+    async def set_balance_state(self, tenant_id: str, parcel_id: str, day: str, sw_mm: float) -> bool:
+        """Store the soil water (mm) at the end of ``day``; TTL 40 days."""
+        return await self.set_json(
+            f"swd:{tenant_id}:{parcel_id}", {"date": day, "sw_mm": sw_mm}, 40 * 86400
+        )
+
     async def try_lock(self, key: str, ttl_s: int) -> bool | None:
         """True if acquired, False if held by someone else, None if Redis is down."""
         if self._client is None:

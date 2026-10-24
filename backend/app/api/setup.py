@@ -36,7 +36,7 @@ class SetupParcelRequest(BaseModel):
     parcel_id: str
     tenant_id: str
     parcel_name: str = ""
-    action: str = "activate"  # "activate" | "deactivate"
+    action: str = "activate"  # "activate" | "deactivate" | "teardown"
 
 
 @router.post("/setup-parcel", status_code=201)
@@ -45,7 +45,7 @@ async def setup_parcel(request: Request, body: SetupParcelRequest):
     if not INTERNAL_SECRET or not hmac.compare_digest(secret.encode(), INTERNAL_SECRET.encode()):
         logger.warning("Unauthorized internal setup-parcel call from %s", request.client)
         raise HTTPException(status_code=401, detail="Unauthorized")
-    if body.action not in ("activate", "deactivate"):
+    if body.action not in ("activate", "deactivate", "teardown"):
         raise HTTPException(status_code=400, detail="Invalid action")
 
     parcel_urn = body.parcel_id
@@ -55,6 +55,9 @@ async def setup_parcel(request: Request, body: SetupParcelRequest):
     if body.action == "deactivate":
         logger.info("Deactivated crop-health for parcel %s", parcel_urn)
         return {"message": "deactivated", "parcel_id": body.parcel_id}
+    if body.action == "teardown":
+        logger.info("Teardown of crop-health for parcel %s", parcel_urn)
+        return {"message": "torn_down", "parcel_id": body.parcel_id}
 
     activation = ModuleActivation(tenant_id=body.tenant_id)
     try:

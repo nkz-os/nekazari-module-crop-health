@@ -28,6 +28,7 @@ class FakeRedis:
         self.lock = lock
         self.fail = fail
         self.saved = []
+        self.flows = []
         self.locked = []
         self.unlocked = []
 
@@ -36,8 +37,9 @@ class FakeRedis:
             raise StoreError("down")
         return self.state
 
-    async def set_balance_state(self, tenant_id, parcel_id, day, sw_mm):
+    async def set_balance_state(self, tenant_id, parcel_id, day, sw_mm, precip_mm=None, etc_mm=None):
         self.saved.append((day, sw_mm))
+        self.flows.append((precip_mm, etc_mm))
         return True
 
     async def try_lock(self, key, ttl_s):
@@ -218,3 +220,41 @@ async def test_stale_state_with_first_day_missing_returns_none():
     redis = FakeRedis(state={"date": "2026-09-01", "sw_mm": 50.0})
     assert await advance(redis, make_fetch({"2026-09-24": (None, 3.0)})) is None
     assert redis.saved == []
+
+
+@pytest.mark.asyncio
+async def test_step_saves_the_last_day_flows():
+    redis = FakeRedis(state={"date": "2026-10-21", "sw_mm": 50.0})
+    res = await advance(redis, make_fetch({"2026-10-23": (4.0, 2.0)}))
+    assert redis.saved[-1][0] == "2026-10-23"
+    assert redis.flows == [(pytest.approx(4.0), pytest.approx(2.0))]
+    assert (res.inflow_mm, res.etc_mm) == (pytest.approx(4.0), pytest.approx(2.0))
+
+
+@pytest.mark.asyncio
+async def test_current_state_carries_its_stored_flows():
+    redis = FakeRedis(state={"date": "2026-10-23", "sw_mm": 50.0, "precip_mm": 4.0, "etc_mm": 2.0})
+    res = await advance(redis, make_fetch())
+    assert res.day_flows_known
+    assert (res.inflow_mm, res.etc_mm) == (4.0, 2.0)
+
+
+@pytest.mark.asyncio
+async def test_current_state_without_flows_marks_them_unknown():
+    redis = FakeRedis(state={"date": "2026-10-23", "sw_mm": 50.0})
+    res = await advance(redis, make_fetch())
+    assert res.day_flows_known is False
+
+
+def test_balance_from_state_flows():
+    assert balance_from_state(50.0, SOIL, ROOT, P).day_flows_known is False
+    r = balance_from_state(50.0, SOIL, ROOT, P, precip_mm=4.0, etc_mm=2.0)
+    assert r.day_flows_known and (r.inflow_mm, r.etc_mm) == (4.0, 2.0)
+    assert r.sw_mm == balance_from_state(50.0, SOIL, ROOT, P).sw_mm
+
+
+@pytest.mark.asyncio
+async def test_correction_keeps_the_stored_flows():
+    redis = FakeRedis(state={"date": "2026-10-20", "sw_mm": 30.0, "precip_mm": 4.0, "etc_mm": 2.0})
+    await correct_balance_state(redis, TENANT, PARCEL, [reading()], SOIL, ROOT, 90.0, NOW)
+    assert redis.flows == [(4.0, 2.0)]

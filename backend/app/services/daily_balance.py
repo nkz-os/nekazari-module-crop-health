@@ -49,10 +49,19 @@ def step_day(
 
 
 def balance_from_state(
-    sw_mm: float, soil, root_depth_mm: float, depletion_p: float
+    sw_mm: float,
+    soil,
+    root_depth_mm: float,
+    depletion_p: float,
+    precip_mm: float | None = None,
+    etc_mm: float | None = None,
 ) -> SoilWaterBalanceResult:
-    """The stored state read as a balance: no inflow, no ET; Ks and stress from it."""
-    return soil_water_balance(
+    """The stored state read as a balance: Ks and stress from it, without stepping.
+
+    Inflow and ETc are the saved day's when both are given; otherwise they are
+    unknown (``day_flows_known=False``), never a 0 mm read as real.
+    """
+    result = soil_water_balance(
         sw_yesterday=sw_mm,
         precip_mm=0.0,
         irrigation_mm=0.0,
@@ -61,6 +70,19 @@ def balance_from_state(
         wp=soil.wilting_point,
         root_depth_mm=root_depth_mm,
         depletion_fraction_p=depletion_p,
+    )
+    if precip_mm is None or etc_mm is None:
+        return dataclasses.replace(result, day_flows_known=False)
+    return dataclasses.replace(result, inflow_mm=round(precip_mm, 2), etc_mm=round(etc_mm, 2))
+
+
+def balance_from_stored(
+    state: dict, soil, root_depth_mm: float, depletion_p: float
+) -> SoilWaterBalanceResult:
+    """A stored ``{"date", "sw_mm"[, "precip_mm", "etc_mm"]}`` read as a balance."""
+    return balance_from_state(
+        state["sw_mm"], soil, root_depth_mm, depletion_p,
+        state.get("precip_mm"), state.get("etc_mm"),
     )
 
 
@@ -101,7 +123,7 @@ async def advance_daily_balance(
         state_result = None
         if state is not None and date.fromisoformat(state["date"]) >= yesterday - timedelta(days=SPINUP_DAYS):
             # Only a state inside the replay window may stand in for today's balance.
-            state_result = balance_from_state(state["sw_mm"], soil, root_depth_mm, depletion_p)
+            state_result = balance_from_stored(state, soil, root_depth_mm, depletion_p)
             last_saved = date.fromisoformat(state["date"])
             start = last_saved + timedelta(days=1)
             sw = state["sw_mm"]
@@ -139,7 +161,10 @@ async def advance_daily_balance(
         if result is None:
             return _low(state_result) if state_result is not None else None
 
-        await redis_state.set_balance_state(tenant_id, parcel_id, last_day.isoformat(), result.sw_mm)
+        await redis_state.set_balance_state(
+            tenant_id, parcel_id, last_day.isoformat(), result.sw_mm,
+            precip_mm=result.inflow_mm, etc_mm=result.etc_mm,
+        )
         return _low(result) if last_day < yesterday else result
     finally:
         await redis_state.unlock(key)
@@ -175,7 +200,10 @@ async def correct_balance_state(
             return None
         if state is None:
             return None
-        await redis_state.set_balance_state(tenant_id, parcel_id, state["date"], sw)
+        await redis_state.set_balance_state(
+            tenant_id, parcel_id, state["date"], sw,
+            precip_mm=state.get("precip_mm"), etc_mm=state.get("etc_mm"),
+        )
         return sw
     finally:
         await redis_state.unlock(key)

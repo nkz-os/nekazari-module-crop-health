@@ -53,6 +53,7 @@ from app.services.daily_balance import (
     SPINUP_DAYS,
     advance_daily_balance,
     balance_from_state,
+    balance_from_stored,
     correct_balance_state,
 )
 from app.services.fiware_publisher import publish_assessment
@@ -436,7 +437,10 @@ async def _stored_balance(
         return None
     try:
         last = date.fromisoformat(state["date"])
-        sw_mm = float(state["sw_mm"])
+        float(state["sw_mm"])
+        for flow in ("precip_mm", "etc_mm"):
+            if not isinstance(state.get(flow), (int, float, type(None))):
+                raise ValueError(f"{flow} is not a number")
     except (KeyError, TypeError, ValueError) as exc:
         logger.warning("daily_balance: malformed state for %s/%s, no balance: %s", tenant_id, parcel_id, exc)
         return None
@@ -444,7 +448,7 @@ async def _stored_balance(
     if last < yesterday - timedelta(days=SPINUP_DAYS):
         logger.info("daily_balance: state of %s/%s too old (%s), no balance", tenant_id, parcel_id, last)
         return None
-    result = balance_from_state(sw_mm, soil, root_depth_mm, depletion_p)
+    result = balance_from_stored(state, soil, root_depth_mm, depletion_p)
     if last < yesterday:
         logger.warning("daily_balance: state of %s/%s lags yesterday (%s)", tenant_id, parcel_id, last)
         result = dataclasses.replace(result, soil_moisture_confidence="low")
@@ -615,6 +619,8 @@ async def trigger(
     parcel_balance = await _stored_balance(
         redis_state, tenant_id, effective_parcel, soil, root_depth_mm, depletion_p, now.date()
     )
+    # The model index comes from the daily balance (daily weather-api inputs), not live ET0.
+    model_fidelity = "parcel_weather" if parcel_balance else "unavailable"
 
     # ── Resolve management zones (weather-map AgriParcelZone) ─────────────
     # Whole-parcel mode (current production reality — no zones exist until
@@ -649,7 +655,7 @@ async def trigger(
             publish=True,
             daily_shade=daily_shade,
             shade_observed_at=shade_observed_at,
-            et0_fidelity=et0_fidelity,
+            et0_fidelity=model_fidelity,
             parcel_stress=True,
             sensor_context=sensor_context,
         )
@@ -709,7 +715,7 @@ async def trigger(
     # Water stress is parcel-level: computed once here, carried by the rollup only.
     rollup.water_stress, rollup.under_panel_water_stress = await _resolve_both_water_stress(
         redis_state, tenant_id, effective_parcel, soil, depletion_p,
-        rollup.soil_water_balance, et0_fidelity, now_ts, daily_shade, root_depth_mm,
+        rollup.soil_water_balance, model_fidelity, now_ts, daily_shade, root_depth_mm,
         shade_observed_at,
     )
     rollup_entity = rollup.to_ngsi_ld()
@@ -824,15 +830,16 @@ async def _run_engines(
         assessment.soil_water_balance = swb
         assessment.soil_properties = soil if soil.has_data else None
 
-        # Backward-compatible water_balance field
-        from app.schemas import WaterBalanceResult
-        assessment.water_balance = WaterBalanceResult(
-            balance_mm=round(swb.sw_mm - swb.awc_mm, 2),
-            precip_mm=round(swb.inflow_mm, 2),
-            etc_mm=round(swb.etc_mm, 2),
-            kc=phenology.kc,
-            deficit=swb.stress_level != "none",
-        )
+        # Backward-compatible water_balance field: only with the day's real rain and ETc.
+        if swb.day_flows_known:
+            from app.schemas import WaterBalanceResult
+            assessment.water_balance = WaterBalanceResult(
+                balance_mm=round(swb.sw_mm - swb.awc_mm, 2),
+                precip_mm=round(swb.inflow_mm, 2),
+                etc_mm=round(swb.etc_mm, 2),
+                kc=phenology.kc,
+                deficit=swb.stress_level != "none",
+            )
 
         # Waterlogging risk (uses excess from water balance)
         if swb.excess_mm > 0:
@@ -1944,7 +1951,8 @@ async def _scheduled_balance(
     )
     if corrected is None or balance is None:
         return balance
-    result = balance_from_state(corrected, soil, root_depth_mm, depletion_p)
+    flows = (balance.inflow_mm, balance.etc_mm) if balance.day_flows_known else (None, None)
+    result = balance_from_state(corrected, soil, root_depth_mm, depletion_p, *flows)
     if balance.soil_moisture_confidence == "low":
         # The probe corrects the water, not the lag of the stored day.
         result = dataclasses.replace(result, soil_moisture_confidence="low")

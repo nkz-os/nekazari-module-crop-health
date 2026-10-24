@@ -38,6 +38,9 @@ class SoilWaterBalanceResult:
     stress_coefficient_ks: float = 1.0
     actual_et_mm: float = 0.0
     deep_percolation_mm: float = 0.0
+    # False when inflow/ETc are not the day's real values (a stored state read back
+    # without its day's flows): consumers must not publish them.
+    day_flows_known: bool = True
 
 
 def soil_water_balance(

@@ -37,9 +37,13 @@ class FakeRedis:
             raise StoreError("redis down")
         return self.state
 
-    async def set_balance_state(self, tenant, parcel, day, sw_mm):
+    async def set_balance_state(self, tenant, parcel, day, sw_mm, precip_mm=None, etc_mm=None):
         self.saved.append((parcel, day, sw_mm))
         self.state = {"date": day, "sw_mm": sw_mm}
+        if precip_mm is not None:
+            self.state["precip_mm"] = precip_mm
+        if etc_mm is not None:
+            self.state["etc_mm"] = etc_mm
         return True
 
     async def try_lock(self, key, ttl_s):
@@ -245,8 +249,9 @@ async def test_shade_is_published_and_leaves_the_balance_untouched(monkeypatch):
     redis = FakeRedis(shade={TODAY: 0.5}, state=dict(STATE))
     await _trigger(redis)
     a = published["assessments"][-1]
-    # The sensor path reads the stored state: no stepping, no ETc, shade not in the balance.
-    assert a.water_balance.etc_mm == 0.0
+    # The sensor path reads the stored state: no stepping, shade not in the balance, and
+    # without stored day flows no back-compat water balance (never a 0 mm read as real).
+    assert a.water_balance is None
     assert a.soil_water_balance.sw_mm == STATE["sw_mm"]
     assert redis.saved == []
     assert a.to_ngsi_ld()["shadeFraction"]["value"] == 0.5
@@ -484,15 +489,37 @@ async def test_no_soil_water_balance_without_et0(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_stored_balance_without_live_et0_gives_no_index(monkeypatch):
+async def test_stored_balance_without_live_et0_gives_index(monkeypatch):
     published, _ = _setup(monkeypatch, wm={}, regional={})
     redis = FakeRedis(state=dict(STATE))
     await _trigger(redis)
     a = published["assessments"][-1]
-    # The stored balance is reported, but the live ET0 fidelity still gates the model index.
+    # The model index comes from the stored daily balance, not from the live ET0.
     assert a.soil_water_balance.sw_mm == STATE["sw_mm"]
     assert redis.saved == []
-    assert "waterStressIndex" not in _entity(published)
+    e = _entity(published)
+    assert e["waterStressFidelity"]["value"] == "parcel_weather"
+    assert "waterStressIndex" in e
+
+
+@pytest.mark.asyncio
+async def test_read_only_balance_uses_the_stored_day_flows(monkeypatch):
+    published, _ = _setup(monkeypatch)
+    await _trigger(FakeRedis(state=dict(STATE, precip_mm=3.0, etc_mm=2.4)))
+    wb = published["assessments"][-1].water_balance
+    assert (wb.precip_mm, wb.etc_mm) == (3.0, 2.4)
+
+
+@pytest.mark.asyncio
+async def test_correction_keeps_the_stored_day_flows(monkeypatch):
+    published, _ = _setup(monkeypatch)
+    redis = FakeRedis(
+        readings={"soilMoisture": [soil_reading(20.0)]}, state=dict(STATE, precip_mm=3.0, etc_mm=2.4))
+    await _trigger(redis)
+    assert len(redis.saved) == 1
+    assert (redis.state["precip_mm"], redis.state["etc_mm"]) == (3.0, 2.4)
+    wb = published["assessments"][-1].water_balance
+    assert (wb.precip_mm, wb.etc_mm) == (3.0, 2.4)
 
 
 @pytest.mark.asyncio

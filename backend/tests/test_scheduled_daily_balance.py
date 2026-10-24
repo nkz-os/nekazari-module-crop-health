@@ -76,6 +76,8 @@ async def test_scheduled_run_steps_and_saves(monkeypatch):
     # Kc from phenology (0.8) x ET0 (3.0) on the last stepped day.
     assert out.water_balance.etc_mm == pytest.approx(2.4)
     assert out.water_balance.precip_mm == pytest.approx(1.0)
+    # The saved state keeps that day's flows for the read-only runs.
+    assert (redis.state["precip_mm"], redis.state["etc_mm"]) == (pytest.approx(1.0), pytest.approx(2.4))
 
 
 @pytest.mark.asyncio
@@ -95,6 +97,16 @@ async def test_scheduled_run_with_current_state_does_not_fetch(monkeypatch):
     assert fetch.calls == []
     assert redis.saved == []
     assert out.soil_water_balance.sw_mm == 40.0
+    assert out.water_balance is None  # no stored flows: no 0 mm published as real
+
+
+@pytest.mark.asyncio
+async def test_scheduled_run_with_current_state_reports_its_stored_flows(monkeypatch):
+    redis = FakeRedis(state={"date": YESTERDAY, "sw_mm": 40.0, "precip_mm": 3.0, "etc_mm": 2.4})
+    _, fetch = _setup_scheduled(monkeypatch, redis)
+    out = await pipeline.compute_assessment(URN, TENANT)
+    assert fetch.calls == []
+    assert (out.water_balance.precip_mm, out.water_balance.etc_mm) == (3.0, 2.4)
 
 
 @pytest.mark.asyncio

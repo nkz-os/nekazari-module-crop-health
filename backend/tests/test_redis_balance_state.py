@@ -23,3 +23,12 @@ async def test_balance_state_roundtrip():
 async def test_balance_state_absent_is_none():
     st = RedisState(client=FakeRedis())
     assert await st.get_balance_state("tenant-a", "p-1") is None
+
+
+@pytest.mark.anyio
+async def test_balance_state_keeps_the_day_flows():
+    st = RedisState(client=FakeRedis())
+    assert await st.set_balance_state("tenant-a", "p-1", "2026-10-20", 42.5, precip_mm=3.0, etc_mm=2.4)
+    assert await st.get_balance_state("tenant-a", "p-1") == {
+        "date": "2026-10-20", "sw_mm": 42.5, "precip_mm": 3.0, "etc_mm": 2.4,
+    }

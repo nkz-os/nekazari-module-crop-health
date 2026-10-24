@@ -362,11 +362,22 @@ class RedisState:
         """Daily soil water state ``{"date", "sw_mm"}``; raises StoreError like get_json."""
         return await self.get_json(f"swd:{tenant_id}:{parcel_id}")
 
-    async def set_balance_state(self, tenant_id: str, parcel_id: str, day: str, sw_mm: float) -> bool:
-        """Store the soil water (mm) at the end of ``day``; TTL 40 days."""
-        return await self.set_json(
-            f"swd:{tenant_id}:{parcel_id}", {"date": day, "sw_mm": sw_mm}, 40 * 86400
-        )
+    async def set_balance_state(
+        self,
+        tenant_id: str,
+        parcel_id: str,
+        day: str,
+        sw_mm: float,
+        precip_mm: float | None = None,
+        etc_mm: float | None = None,
+    ) -> bool:
+        """Store the soil water (mm) at the end of ``day``, plus that day's rain and ETc when known; TTL 40 days."""
+        value: dict = {"date": day, "sw_mm": sw_mm}
+        if precip_mm is not None:
+            value["precip_mm"] = precip_mm
+        if etc_mm is not None:
+            value["etc_mm"] = etc_mm
+        return await self.set_json(f"swd:{tenant_id}:{parcel_id}", value, 40 * 86400)
 
     async def try_lock(self, key: str, ttl_s: int) -> bool | None:
         """True if acquired, False if held by someone else, None if Redis is down."""

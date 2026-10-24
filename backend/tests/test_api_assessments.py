@@ -72,6 +72,25 @@ class TestAssessmentMapper:
         assert result["waterStressFidelity"] == "iot_sensor"
         assert result["waterStressObservedAt"] == "2026-06-28T10:00:00Z"
 
+    def test_maps_under_panel_water_stress_fields(self):
+        entity = {
+            **SAMPLE_ENTITY,
+            "underPanelWaterStressIndex": 0.31,
+            "underPanelWaterStressFidelity": {"type": "Property", "value": "iot_sensor"},
+            "underPanelWaterStressObservedAt": {
+                "type": "Property",
+                "value": {"@type": "DateTime", "@value": "2026-06-28T10:00:00Z"},
+            },
+        }
+        result = map_entity_to_assessment(entity)
+        assert result["underPanelWaterStressIndex"] == 0.31
+        assert result["underPanelWaterStressFidelity"] == "iot_sensor"
+        assert result["underPanelWaterStressObservedAt"] == "2026-06-28T10:00:00Z"
+        old = map_entity_to_assessment(SAMPLE_ENTITY)
+        assert old["underPanelWaterStressIndex"] is None
+        assert old["underPanelWaterStressFidelity"] is None
+        assert old["underPanelWaterStressObservedAt"] is None
+
     def test_water_stress_normalized_and_absent(self):
         entity = {
             **SAMPLE_ENTITY,

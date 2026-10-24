@@ -398,7 +398,17 @@ async def trigger(
     Returns:
         CropHealthAssessment if computed, None on error.
     """
-    effective_parcel = parcel_id or await _resolve_parcel_from_device(entity_id, tenant_id)
+    sensor_context: str | None = None
+    if parcel_id:
+        # Caller already knows the parcel: no owner lookup, open-field behaviour.
+        effective_parcel = parcel_id
+    else:
+        # Cached lookup; without Redis fall back to the direct (uncached) resolve.
+        if redis_state is not None:
+            owner = await _cached_device_owner(entity_id, tenant_id, redis_state)
+        else:
+            owner = await _resolve_device_owner(entity_id, tenant_id)
+        effective_parcel, sensor_context = owner if owner else (None, None)
     if not effective_parcel:
         logger.warning("Cannot resolve parcel for device %s — skipping", entity_id)
         return None
@@ -565,6 +575,7 @@ async def trigger(
             shade_observed_at=shade_observed_at,
             et0_fidelity=et0_fidelity,
             parcel_stress=True,
+            sensor_context=sensor_context,
         )
 
     # Zonal: the device's window-engines run for its zone; others sensorless.
@@ -606,6 +617,7 @@ async def trigger(
                 daily_shade=daily_shade,
                 shade_observed_at=shade_observed_at,
                 et0_fidelity=et0_fidelity,
+                sensor_context=sensor_context if is_sensor else None,
             )
         except Exception as exc:
             logger.warning("trigger: zone %s failed for %s — skipped: %s", z.zone_id, effective_parcel, exc)
@@ -673,6 +685,7 @@ async def _run_engines(
     shade_observed_at: datetime | None = None,
     et0_fidelity: str = "unavailable",
     parcel_stress: bool = False,
+    sensor_context: str | None = None,
 ) -> CropHealthAssessment:
     """Shared engine-fusion core.
 
@@ -687,7 +700,12 @@ async def _run_engines(
     Sensorless callers pass ``entity_id == effective_parcel`` (no device);
     metric-gated branches simply do not fire, which is the intended degraded
     behaviour for a parcel with no IoT sensors.
+
+    ``sensor_context == UNDER_PANEL`` means the triggering device sits under a
+    panel: it feeds only the under-panel index (and shade), so the per-device
+    leaf-temperature, trunk-diameter and soil pass-through branches are skipped.
     """
+    from_under_panel = sensor_context == UNDER_PANEL
 
     # ── 1b. Authoritative phenology stage (shared by BOTH write paths) ────
     # When GDD and the full ordered stage table are available, the current
@@ -700,7 +718,7 @@ async def _run_engines(
     # ── 2. Execute engines ───────────────────────────────────────────────
 
     # CWSI (triggered by leaf temperature sensor)
-    if metric_type == MetricType.LEAF_TEMPERATURE.value and weather:
+    if metric_type == MetricType.LEAF_TEMPERATURE.value and weather and not from_under_panel:
         readings = await redis_state.get_window(entity_id, "leafTemperature", hours=1)
         if readings:
             latest_tc = readings[-1].value
@@ -731,7 +749,7 @@ async def _run_engines(
             )
 
     # MDS (triggered by trunk diameter dendrómetro)
-    if metric_type == MetricType.TRUNK_DIAMETER.value:
+    if metric_type == MetricType.TRUNK_DIAMETER.value and not from_under_panel:
         readings = await redis_state.get_window(entity_id, "trunkDiameter", hours=24)
         assessment.mds = calculate_mds_from_readings(readings, mds_ref=phenology.mds_ref)
 
@@ -855,7 +873,7 @@ async def _run_engines(
     soil_moisture_val = None
     soil_temp_val = None
 
-    if metric_type in (
+    if not from_under_panel and metric_type in (
         MetricType.SOIL_PH.value,
         MetricType.SOIL_EC.value,
         MetricType.SOIL_MOISTURE.value,

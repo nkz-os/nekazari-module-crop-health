@@ -187,7 +187,7 @@ const CropHealthDetailTabs: React.FC<CropHealthDetailTabsProps> = ({
         </MetricSection>
       )}
 
-      {/* Water stress index (under-panel) — independent of Soil data */}
+      {/* Water stress index (open field) — independent of Soil data */}
       {assessment.waterStressFidelity && (
         <MetricSection>
           <p className="text-xs text-nkz-text-muted">

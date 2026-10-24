@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Query, Request
 
 from app.config import get_settings
-from app.services.parcel_link import parcel_link_target
+from app.services.parcel_link import parcel_link_targets
 from nkz_platform_sdk.orion import OrionClient
 
 logger = logging.getLogger(__name__)
@@ -127,9 +127,8 @@ async def _list_sources(request: Request) -> dict:
     for d in iot_devices:
         # controlledAsset is canonical; the ref* names are the migration window
         ref_parcel = d.get("controlledAsset") or d.get("hasAgriParcel") or d.get("refAgriParcel") or ""
-        ref_parcel = parcel_link_target(ref_parcel)
-        pid = ref_parcel.replace("urn:ngsi-ld:AgriParcel:", "") if ref_parcel else ""
-        if pid:
+        for target in parcel_link_targets(ref_parcel):
+            pid = target.replace("urn:ngsi-ld:AgriParcel:", "")
             iot_by_parcel[pid] = iot_by_parcel.get(pid, 0) + 1
 
     for pid, count in iot_by_parcel.items():

@@ -107,6 +107,41 @@ def test_parcel_link_target_forms():
     assert parcel_link_target({"value": 3}) == ""
 
 
+PARCEL_B = "urn:ngsi-ld:AgriParcel:acme:p2"
+
+
+def test_parcel_link_list_forms_primary_first():
+    from app.services.parcel_link import parcel_link_target, parcel_link_targets
+
+    assert parcel_link_target({"type": "Relationship", "object": [PARCEL_URN, PARCEL_B]}) == PARCEL_URN
+    assert parcel_link_target([PARCEL_URN, PARCEL_B]) == PARCEL_URN
+    assert parcel_link_target({"object": [{"object": PARCEL_URN}, {"@id": PARCEL_B}]}) == PARCEL_URN
+    assert parcel_link_targets({"object": [PARCEL_URN, PARCEL_B]}) == [PARCEL_URN, PARCEL_B]
+    assert parcel_link_targets({"object": ["", 3, PARCEL_B]}) == [PARCEL_B]
+    assert parcel_link_targets({"object": []}) == []
+    assert parcel_link_target({"object": []}) == ""
+    assert parcel_link_targets(PARCEL_URN) == [PARCEL_URN]
+
+
+async def test_resolve_parcel_list_uses_primary(monkeypatch):
+    from app.services import pipeline
+
+    class _Client:
+        def __init__(self, *a, **k):
+            pass
+
+        async def get_entity(self, entity_id):
+            return {"id": entity_id, "controlledAsset": {"type": "Relationship", "object": [PARCEL_URN, PARCEL_B]}}
+
+        async def close(self):
+            pass
+
+    import nkz_platform_sdk.orion as orion_mod
+
+    monkeypatch.setattr(orion_mod, "OrionClient", _Client)
+    assert await pipeline._resolve_parcel_from_device(DEVICE_URN, "acme") == "acme:p1"
+
+
 # --- B3: regional meteo ------------------------------------------------------
 
 class _Resp:

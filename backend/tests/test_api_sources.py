@@ -77,6 +77,33 @@ async def test_sources_list_with_assessment_data():
 
 
 @pytest.mark.anyio
+async def test_sources_list_device_linked_to_several_parcels():
+    """A device whose controlledAsset lists several parcels counts in each."""
+    with respx.mock as mock:
+        mock.get(url__regex=r".*type=CropHealthAssessment.*").respond(json=[])
+        mock.get(url__regex=r".*type=AgriParcel.*").respond(json=[
+            {"id": "urn:ngsi-ld:AgriParcel:Parcela-4", "name": "Parcela 4"},
+            {"id": "urn:ngsi-ld:AgriParcel:Parcela-15", "name": "Parcela 15"},
+            {"id": "urn:ngsi-ld:AgriParcel:Parcela-20", "name": "Parcela 20"},
+        ])
+        mock.get(url__regex=r".*type=Device(&|$|%).*").respond(json=[
+            {
+                "id": "urn:ngsi-ld:Device:test-tenant:sensor1",
+                "controlledAsset": ["urn:ngsi-ld:AgriParcel:Parcela-4", "urn:ngsi-ld:AgriParcel:Parcela-15"],
+            }
+        ])
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test", headers=GATEWAY_HEADERS) as client:
+            resp = await client.get("/api/crop-health/sources")
+            assert resp.status_code == 200
+            by_id = {p["parcelId"]: p for p in resp.json()["parcels"]}
+            assert by_id["Parcela-4"]["hasIot"] is True
+            assert by_id["Parcela-15"]["hasIot"] is True
+            assert by_id["Parcela-20"]["hasIot"] is False
+
+
+@pytest.mark.anyio
 async def test_sources_detail_returns_source_status():
     """Detail endpoint returns per-source status for a single parcel."""
     with respx.mock as mock:

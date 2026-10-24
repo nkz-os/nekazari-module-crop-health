@@ -186,6 +186,8 @@ _PARCEL_READING_MAX_AGE_S = 3600.0
 # upsert is a merge, so a stale value from an earlier write must be deleted.
 _WATER_STRESS_OPTIONAL_ATTRS = (
     "waterStressIndex", "waterStressObservedAt", "shadeFraction", "shadeObservedAt",
+    "underPanelWaterStressIndex", "underPanelWaterStressFidelity",
+    "underPanelWaterStressObservedAt",
 )
 _AIR_TEMP_RANGE_C = (-50.0, 60.0)
 _RH_RANGE_PCT = (0.0, 100.0)
@@ -317,6 +319,7 @@ async def _resolve_water_stress(
     redis_state,
     tenant_id: str,
     parcel_id: str,
+    context: str,
     soil,
     depletion_p: float,
     swb,
@@ -326,10 +329,15 @@ async def _resolve_water_stress(
     root_depth_mm: float,
     shade_observed_at: datetime | None = None,
 ) -> tuple[WaterStress, float | None]:
-    """Water stress index plus the sensor-assimilated soil water (mm), if the sensor path applied."""
+    """Water stress index plus the sensor-assimilated soil water (mm), if the sensor path applied.
+
+    ``context`` selects the soil-moisture owner. Open field keeps the model fallback and the
+    assimilation; under panel is sensor-only (no model fallback, never assimilated).
+    """
     readings = await _read_parcel_readings(
-        redis_state, tenant_id, parcel_id, OPEN_FIELD, "soilMoisture", now_ts
+        redis_state, tenant_id, parcel_id, context, "soilMoisture", now_ts
     )
+    under_panel = context == UNDER_PANEL
     now = datetime.fromtimestamp(now_ts, tz=timezone.utc)
     used = valid_theta_readings(readings, now_ts)
     try:
@@ -337,8 +345,8 @@ async def _resolve_water_stress(
             readings,
             soil,
             depletion_p,
-            swb.stress_coefficient_ks if swb is not None else None,
-            et0_fidelity,
+            None if under_panel or swb is None else swb.stress_coefficient_ks,
+            "unavailable" if under_panel else et0_fidelity,
             now,
             shade_fraction,
         )
@@ -349,13 +357,13 @@ async def _resolve_water_stress(
         ws = dataclasses.replace(ws, shade_observed_at=shade_observed_at)
 
     assimilated = None
-    if ws.fidelity == "iot_sensor" and used and swb is not None:
+    if not under_panel and ws.fidelity == "iot_sensor" and used and swb is not None:
         theta = sum(t for _, t in used) / len(used)
         assimilated = min(max((theta - soil.wilting_point) * root_depth_mm, 0.0), swb.awc_mm)
 
     logger.info(
-        "water_stress: parcel=%s index=%s fidelity=%s readings=%d shade=%s",
-        parcel_id, ws.index, ws.fidelity, len(used), shade_fraction,
+        "water_stress: parcel=%s context=%s index=%s fidelity=%s readings=%d shade=%s",
+        parcel_id, context, ws.index, ws.fidelity, len(used), shade_fraction,
     )
     return ws, assimilated
 
@@ -613,10 +621,18 @@ async def trigger(
     attach_soil_suitability(rollup, crop_context)
     # Water stress is parcel-level: computed once here, carried by the rollup only.
     rollup.water_stress, assimilated = await _resolve_water_stress(
-        redis_state, tenant_id, effective_parcel, soil, _resolve_depletion_fraction(crop_context),
+        redis_state, tenant_id, effective_parcel, OPEN_FIELD, soil,
+        _resolve_depletion_fraction(crop_context),
         rollup.soil_water_balance, et0_fidelity, now_ts, daily_shade, root_depth_mm,
         shade_observed_at,
     )
+    up_ws, _ = await _resolve_water_stress(
+        redis_state, tenant_id, effective_parcel, UNDER_PANEL, soil,
+        _resolve_depletion_fraction(crop_context),
+        rollup.soil_water_balance, et0_fidelity, now_ts, daily_shade, root_depth_mm,
+        shade_observed_at,
+    )
+    rollup.under_panel_water_stress = up_ws if up_ws.index is not None else None
     if assimilated is not None and redis_state:
         try:
             await redis_state.set_soil_water(tenant_id, effective_parcel, assimilated)
@@ -767,9 +783,14 @@ async def _run_engines(
     assimilated_sw = None
     if parcel_stress:
         assessment.water_stress, assimilated_sw = await _resolve_water_stress(
-            redis_state, tenant_id, effective_parcel, soil, depletion_p, swb, et0_fidelity,
-            _now_ts(), daily_shade, root_depth_mm, shade_observed_at,
+            redis_state, tenant_id, effective_parcel, OPEN_FIELD, soil, depletion_p, swb,
+            et0_fidelity, _now_ts(), daily_shade, root_depth_mm, shade_observed_at,
         )
+        up_ws, _ = await _resolve_water_stress(
+            redis_state, tenant_id, effective_parcel, UNDER_PANEL, soil, depletion_p, swb,
+            et0_fidelity, _now_ts(), daily_shade, root_depth_mm, shade_observed_at,
+        )
+        assessment.under_panel_water_stress = up_ws if up_ws.index is not None else None
 
     # Persist current soil water to Redis for next assessment (sensor value when it applied)
     if swb is not None and redis_state:

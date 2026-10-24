@@ -60,9 +60,9 @@ async def test_both_contexts(monkeypatch):
     assert e["underPanelWaterStressIndex"]["value"] == 0.556
     assert e["waterStressIndex"]["value"] == 0.444
     swb = published["assessments"][-1].soil_water_balance
-    # Only the open-field probe corrects the stored balance.
-    expected = min(max((0.17 - 0.12) * swb.root_depth_mm, 0.0), swb.awc_mm)
-    assert redis.saved == [(PARCEL, STATE["date"], pytest.approx(expected))]
+    # The trigger only reads the stored balance.
+    assert redis.saved == []
+    assert swb.sw_mm == STATE["sw_mm"]
 
 
 @pytest.mark.asyncio

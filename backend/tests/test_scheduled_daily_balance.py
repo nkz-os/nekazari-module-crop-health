@@ -102,7 +102,10 @@ async def test_scheduled_run_with_current_state_does_not_fetch(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_scheduled_run_with_current_state_reports_its_stored_flows(monkeypatch):
-    redis = FakeRedis(state={"date": YESTERDAY, "sw_mm": 40.0, "precip_mm": 3.0, "etc_mm": 2.4})
+    redis = FakeRedis(state={
+        "date": YESTERDAY, "sw_mm": 40.0,
+        "precip_mm": 3.0, "etc_mm": 2.4, "actual_et_mm": 2.4, "deep_percolation_mm": 0.0,
+    })
     _, fetch = _setup_scheduled(monkeypatch, redis)
     out = await pipeline.compute_assessment(URN, TENANT)
     assert fetch.calls == []
@@ -136,7 +139,7 @@ async def test_triggers_do_not_step(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_trigger_corrections_never_move_the_date(monkeypatch):
+async def test_triggers_with_probes_never_write_the_balance(monkeypatch):
     redis = FakeRedis(
         state={"date": YESTERDAY, "sw_mm": 40.0},
         readings={"soilMoisture": [soil_reading(20.0)]},
@@ -145,7 +148,27 @@ async def test_trigger_corrections_never_move_the_date(monkeypatch):
     for _ in range(3):
         await _trigger(redis)
     assert fetch.calls == []
-    assert [d for _, d, _ in redis.saved] == [YESTERDAY] * 3
+    assert redis.saved == []
+    assert redis.state == {"date": YESTERDAY, "sw_mm": 40.0}
+
+
+@pytest.mark.asyncio
+async def test_scheduled_correction_keeps_the_step_excess_and_flows(monkeypatch):
+    # A wet spin-up (heavy rain every day) ends in percolation; the probe then corrects the water.
+    redis = FakeRedis(readings={"soilMoisture": [soil_reading(20.0)]})
+    _setup_scheduled(monkeypatch, redis, fetch=_fetch_full(precip=30.0, et0=3.0))
+    out = await pipeline.compute_assessment(URN, TENANT)
+    swb = out.soil_water_balance
+    assert len(redis.saved) == 2  # the step, then the correction (same date)
+    step_sw, corrected_sw = redis.saved[0][2], redis.saved[1][2]
+    assert redis.saved[0][1] == redis.saved[1][1] == YESTERDAY
+    assert corrected_sw < step_sw
+    assert swb.sw_mm == pytest.approx(corrected_sw, abs=0.01)
+    assert swb.excess_mm > 0
+    assert swb.excess_mm == redis.state["deep_percolation_mm"]
+    assert redis.state["root_depth_mm"] == swb.root_depth_mm
+    assert out.waterlogging_risk is not None
+    assert (out.water_balance.precip_mm, out.water_balance.etc_mm) == (30.0, pytest.approx(2.4))
 
 
 @pytest.mark.asyncio

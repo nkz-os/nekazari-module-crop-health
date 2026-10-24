@@ -37,9 +37,11 @@ class FakeRedis:
             raise StoreError("down")
         return self.state
 
-    async def set_balance_state(self, tenant_id, parcel_id, day, sw_mm, precip_mm=None, etc_mm=None):
+    async def set_balance_state(self, tenant_id, parcel_id, day, sw_mm, **extras):
         self.saved.append((day, sw_mm))
-        self.flows.append((precip_mm, etc_mm))
+        self.flows.append((extras.get("precip_mm"), extras.get("etc_mm")))
+        self.extras = extras
+        self.state = {"date": day, "sw_mm": sw_mm, **{k: v for k, v in extras.items() if v is not None}}
         return True
 
     async def try_lock(self, key, ttl_s):
@@ -231,12 +233,42 @@ async def test_step_saves_the_last_day_flows():
     assert (res.inflow_mm, res.etc_mm) == (pytest.approx(4.0), pytest.approx(2.0))
 
 
+FLOWS = {"precip_mm": 4.0, "etc_mm": 2.0, "actual_et_mm": 1.5, "deep_percolation_mm": 0.5}
+
+
 @pytest.mark.asyncio
 async def test_current_state_carries_its_stored_flows():
-    redis = FakeRedis(state={"date": "2026-10-23", "sw_mm": 50.0, "precip_mm": 4.0, "etc_mm": 2.0})
+    redis = FakeRedis(state={"date": "2026-10-23", "sw_mm": 50.0, **FLOWS})
     res = await advance(redis, make_fetch())
     assert res.day_flows_known
-    assert (res.inflow_mm, res.etc_mm) == (4.0, 2.0)
+    assert (res.inflow_mm, res.etc_mm, res.actual_et_mm, res.deep_percolation_mm) == (4.0, 2.0, 1.5, 0.5)
+    assert res.excess_mm == 0.5
+
+
+@pytest.mark.asyncio
+async def test_step_then_read_back_keeps_eta_and_percolation():
+    redis = FakeRedis(state={"date": "2026-10-21", "sw_mm": 85.0})
+    stepped = await advance(redis, make_fetch({"2026-10-22": (30.0, 2.0), "2026-10-23": (20.0, 2.0)}))
+    assert stepped.deep_percolation_mm > 0
+    assert redis.state["root_depth_mm"] == ROOT
+    read = await advance(redis, make_fetch())
+    assert (read.actual_et_mm, read.deep_percolation_mm, read.excess_mm) == (
+        stepped.actual_et_mm, stepped.deep_percolation_mm, stepped.excess_mm)
+    assert read.sw_mm == stepped.sw_mm
+
+
+@pytest.mark.asyncio
+async def test_partial_flows_count_as_unknown():
+    redis = FakeRedis(state={"date": "2026-10-23", "sw_mm": 50.0, "precip_mm": 4.0, "etc_mm": 2.0})
+    assert (await advance(redis, make_fetch())).day_flows_known is False
+
+
+@pytest.mark.asyncio
+async def test_read_uses_the_saved_root_depth():
+    redis = FakeRedis(state={"date": "2026-10-23", "sw_mm": 100.0, "root_depth_mm": 800.0})
+    res = await advance(redis, make_fetch())  # caller resolves ROOT = 600 mm
+    assert res.awc_mm == pytest.approx(0.15 * 800.0)
+    assert res.excess_mm == 0.0
 
 
 @pytest.mark.asyncio
@@ -248,13 +280,13 @@ async def test_current_state_without_flows_marks_them_unknown():
 
 def test_balance_from_state_flows():
     assert balance_from_state(50.0, SOIL, ROOT, P).day_flows_known is False
-    r = balance_from_state(50.0, SOIL, ROOT, P, precip_mm=4.0, etc_mm=2.0)
+    r = balance_from_state(50.0, SOIL, ROOT, P, FLOWS)
     assert r.day_flows_known and (r.inflow_mm, r.etc_mm) == (4.0, 2.0)
     assert r.sw_mm == balance_from_state(50.0, SOIL, ROOT, P).sw_mm
 
 
 @pytest.mark.asyncio
 async def test_correction_keeps_the_stored_flows():
-    redis = FakeRedis(state={"date": "2026-10-20", "sw_mm": 30.0, "precip_mm": 4.0, "etc_mm": 2.0})
+    redis = FakeRedis(state={"date": "2026-10-20", "sw_mm": 30.0, "root_depth_mm": 600.0, **FLOWS})
     await correct_balance_state(redis, TENANT, PARCEL, [reading()], SOIL, ROOT, 90.0, NOW)
-    assert redis.flows == [(4.0, 2.0)]
+    assert redis.state == {"date": "2026-10-20", "sw_mm": pytest.approx(48.0), "root_depth_mm": 600.0, **FLOWS}

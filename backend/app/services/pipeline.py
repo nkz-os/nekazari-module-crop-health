@@ -51,10 +51,12 @@ from app.services import context_client
 from app.services.context_client import get_phenology_params
 from app.services.daily_balance import (
     SPINUP_DAYS,
+    STATE_EXTRAS,
     advance_daily_balance,
     balance_from_state,
     balance_from_stored,
     correct_balance_state,
+    day_flows,
 )
 from app.services.fiware_publisher import publish_assessment
 from app.services.meteo_context import resolve_meteo_context
@@ -438,9 +440,9 @@ async def _stored_balance(
     try:
         last = date.fromisoformat(state["date"])
         float(state["sw_mm"])
-        for flow in ("precip_mm", "etc_mm"):
-            if not isinstance(state.get(flow), (int, float, type(None))):
-                raise ValueError(f"{flow} is not a number")
+        for extra in STATE_EXTRAS:
+            if not isinstance(state.get(extra), (int, float, type(None))):
+                raise ValueError(f"{extra} is not a number")
     except (KeyError, TypeError, ValueError) as exc:
         logger.warning("daily_balance: malformed state for %s/%s, no balance: %s", tenant_id, parcel_id, exc)
         return None
@@ -611,11 +613,8 @@ async def trigger(
     root_depth_mm = _resolve_root_depth(species, gdd, crop_context)
     depletion_p = _resolve_depletion_fraction(crop_context)
 
-    # The sensor path never steps the balance (the scheduled run does, once per
-    # closed day): probes only correct the stored state, then it is read back.
-    await _correct_from_open_field(
-        redis_state, tenant_id, effective_parcel, soil, root_depth_mm, now_ts
-    )
+    # The sensor path only reads the balance: the scheduled run steps it once per
+    # closed day and applies the probe correction, so a day is never counted twice.
     parcel_balance = await _stored_balance(
         redis_state, tenant_id, effective_parcel, soil, root_depth_mm, depletion_p, now.date()
     )
@@ -1946,13 +1945,16 @@ async def _scheduled_balance(
     except Exception as exc:  # noqa: BLE001 -- fail-safe: no balance rather than no assessment
         logger.warning("daily_balance: step failed for %s/%s, no balance: %s", tenant_id, parcel_id, exc)
         return None
-    corrected = await _correct_from_open_field(
-        redis_state, tenant_id, parcel_id, soil, root_depth_mm, now_ts
-    )
-    if corrected is None or balance is None:
+    if balance is None:
+        return None
+    # The correction refers to the same root depth as the balance it corrects.
+    root = balance.root_depth_mm
+    corrected = await _correct_from_open_field(redis_state, tenant_id, parcel_id, soil, root, now_ts)
+    if corrected is None:
         return balance
-    flows = (balance.inflow_mm, balance.etc_mm) if balance.day_flows_known else (None, None)
-    result = balance_from_state(corrected, soil, root_depth_mm, depletion_p, *flows)
+    result = balance_from_state(corrected, soil, root, depletion_p, day_flows(balance))
+    # The probe corrects the water left, not the day's drainage: keep its waterlogging input.
+    result = dataclasses.replace(result, excess_mm=balance.excess_mm)
     if balance.soil_moisture_confidence == "low":
         # The probe corrects the water, not the lag of the stored day.
         result = dataclasses.replace(result, soil_moisture_confidence="low")

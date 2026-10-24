@@ -37,13 +37,9 @@ class FakeRedis:
             raise StoreError("redis down")
         return self.state
 
-    async def set_balance_state(self, tenant, parcel, day, sw_mm, precip_mm=None, etc_mm=None):
+    async def set_balance_state(self, tenant, parcel, day, sw_mm, **extras):
         self.saved.append((parcel, day, sw_mm))
-        self.state = {"date": day, "sw_mm": sw_mm}
-        if precip_mm is not None:
-            self.state["precip_mm"] = precip_mm
-        if etc_mm is not None:
-            self.state["etc_mm"] = etc_mm
+        self.state = {"date": day, "sw_mm": sw_mm, **{k: v for k, v in extras.items() if v is not None}}
         return True
 
     async def try_lock(self, key, ttl_s):
@@ -299,16 +295,15 @@ async def test_out_of_range_air_readings_ignored(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_sensor_path_assimilates_soil_water(monkeypatch):
+async def test_sensor_path_never_writes_the_balance(monkeypatch):
     published, _ = _setup(monkeypatch)
     redis = FakeRedis(readings={"soilMoisture": [soil_reading(20.0)]}, state=dict(STATE))
     await _trigger(redis)
-    a = published["assessments"][-1]
-    swb = a.soil_water_balance
-    expected = min(max((0.20 - 0.12) * swb.root_depth_mm, 0.0), swb.awc_mm)
-    # The probe corrects the stored water; the state date never moves.
-    assert redis.saved == [(PARCEL, YESTERDAY, pytest.approx(expected))]
-    assert swb.sw_mm == pytest.approx(expected, abs=0.01)
+    swb = published["assessments"][-1].soil_water_balance
+    # Probes correct the balance only in the scheduled run; the trigger only reads it.
+    assert redis.saved == []
+    assert redis.state == STATE
+    assert swb.sw_mm == STATE["sw_mm"]
 
 
 @pytest.mark.asyncio
@@ -375,8 +370,8 @@ async def test_zonal_rollup_carries_stress_zones_do_not(monkeypatch):
     assert p["waterStressFidelity"]["value"] == "iot_sensor"
     assert p["waterStressIndex"]["value"] > 0
     assert p["shadeFraction"]["value"] == 0.5
-    # One correction per trigger, not one per zone; every zone carries the parcel balance.
-    assert [d for _, d, _ in redis.saved] == [YESTERDAY]
+    # The trigger never writes the balance; every zone carries the parcel balance.
+    assert redis.saved == []
     sw = [e["soilWaterMm"]["value"] for e in published["entities"] if "soilWaterMm" in e]
     assert sw and all(v == pytest.approx(redis.state["sw_mm"], abs=0.01) for v in sw)
 
@@ -502,24 +497,40 @@ async def test_stored_balance_without_live_et0_gives_index(monkeypatch):
     assert "waterStressIndex" in e
 
 
+DAY_FLOWS = {"precip_mm": 3.0, "etc_mm": 2.4, "actual_et_mm": 2.0, "deep_percolation_mm": 0.0}
+
+
 @pytest.mark.asyncio
 async def test_read_only_balance_uses_the_stored_day_flows(monkeypatch):
     published, _ = _setup(monkeypatch)
-    await _trigger(FakeRedis(state=dict(STATE, precip_mm=3.0, etc_mm=2.4)))
-    wb = published["assessments"][-1].water_balance
-    assert (wb.precip_mm, wb.etc_mm) == (3.0, 2.4)
+    await _trigger(FakeRedis(state=dict(STATE, **DAY_FLOWS)))
+    a = published["assessments"][-1]
+    assert (a.water_balance.precip_mm, a.water_balance.etc_mm) == (3.0, 2.4)
+    e = a.to_ngsi_ld()
+    assert e["actualETmm"]["value"] == 2.0
+    assert e["deepPercolationMm"]["value"] == 0.0
 
 
 @pytest.mark.asyncio
-async def test_correction_keeps_the_stored_day_flows(monkeypatch):
+async def test_read_only_balance_without_flows_omits_them(monkeypatch):
     published, _ = _setup(monkeypatch)
-    redis = FakeRedis(
-        readings={"soilMoisture": [soil_reading(20.0)]}, state=dict(STATE, precip_mm=3.0, etc_mm=2.4))
-    await _trigger(redis)
-    assert len(redis.saved) == 1
-    assert (redis.state["precip_mm"], redis.state["etc_mm"]) == (3.0, 2.4)
-    wb = published["assessments"][-1].water_balance
-    assert (wb.precip_mm, wb.etc_mm) == (3.0, 2.4)
+    await _trigger(FakeRedis(state=dict(STATE)))
+    a = published["assessments"][-1]
+    e = a.to_ngsi_ld()
+    assert a.water_balance is None
+    assert "actualETmm" not in e and "deepPercolationMm" not in e
+    assert e["soilWaterMm"]["value"] == STATE["sw_mm"]
+
+
+@pytest.mark.asyncio
+async def test_trigger_reads_the_saved_root_depth(monkeypatch):
+    # Generic crop without GDD: the trigger resolves 300 mm; the state was saved at 800 mm.
+    published, _ = _setup(monkeypatch, eppo="ZZZZZ")
+    await _trigger(FakeRedis(state=dict(STATE, sw_mm=100.0, root_depth_mm=800.0)))
+    swb = published["assessments"][-1].soil_water_balance
+    assert swb.awc_mm == pytest.approx((0.27 - 0.12) * 800.0)
+    assert swb.excess_mm == 0.0
+    assert swb.sw_mm == 100.0
 
 
 @pytest.mark.asyncio

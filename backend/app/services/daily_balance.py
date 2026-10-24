@@ -18,6 +18,10 @@ logger = logging.getLogger(__name__)
 
 SPINUP_DAYS = 30
 BALANCE_LOCK_TTL_S = 120
+# The day's flows saved with the state: all four, or the read-back has none.
+DAY_FLOWS = ("precip_mm", "etc_mm", "actual_et_mm", "deep_percolation_mm")
+# Everything a correction must carry over unchanged.
+STATE_EXTRAS = DAY_FLOWS + ("root_depth_mm",)
 
 
 def _lock_key(tenant_id: str, parcel_id: str) -> str:
@@ -53,13 +57,13 @@ def balance_from_state(
     soil,
     root_depth_mm: float,
     depletion_p: float,
-    precip_mm: float | None = None,
-    etc_mm: float | None = None,
+    flows: dict | None = None,
 ) -> SoilWaterBalanceResult:
     """The stored state read as a balance: Ks and stress from it, without stepping.
 
-    Inflow and ETc are the saved day's when both are given; otherwise they are
-    unknown (``day_flows_known=False``), never a 0 mm read as real.
+    Inflow, ETc, ETa and percolation (= excess) are the saved day's when all four
+    are in ``flows``; otherwise they are unknown (``day_flows_known=False``),
+    never a 0 mm read as real.
     """
     result = soil_water_balance(
         sw_yesterday=sw_mm,
@@ -71,19 +75,43 @@ def balance_from_state(
         root_depth_mm=root_depth_mm,
         depletion_fraction_p=depletion_p,
     )
-    if precip_mm is None or etc_mm is None:
+    if not flows or any(flows.get(k) is None for k in DAY_FLOWS):
         return dataclasses.replace(result, day_flows_known=False)
-    return dataclasses.replace(result, inflow_mm=round(precip_mm, 2), etc_mm=round(etc_mm, 2))
+    percolation = round(flows["deep_percolation_mm"], 2)
+    return dataclasses.replace(
+        result,
+        inflow_mm=round(flows["precip_mm"], 2),
+        etc_mm=round(flows["etc_mm"], 2),
+        actual_et_mm=round(flows["actual_et_mm"], 2),
+        deep_percolation_mm=percolation,
+        excess_mm=percolation,  # the engine's excess is the percolation
+    )
+
+
+def day_flows(result: SoilWaterBalanceResult) -> dict | None:
+    """The day's flows of a balance, in the state's keys; None when unknown."""
+    if not result.day_flows_known:
+        return None
+    return {
+        "precip_mm": result.inflow_mm,
+        "etc_mm": result.etc_mm,
+        "actual_et_mm": result.actual_et_mm,
+        "deep_percolation_mm": result.deep_percolation_mm,
+    }
 
 
 def balance_from_stored(
     state: dict, soil, root_depth_mm: float, depletion_p: float
 ) -> SoilWaterBalanceResult:
-    """A stored ``{"date", "sw_mm"[, "precip_mm", "etc_mm"]}`` read as a balance."""
-    return balance_from_state(
-        state["sw_mm"], soil, root_depth_mm, depletion_p,
-        state.get("precip_mm"), state.get("etc_mm"),
-    )
+    """A stored state read as a balance.
+
+    The water refers to the root depth it was saved with; ``root_depth_mm`` (the
+    caller's) applies only to a state saved without one.
+    """
+    saved_root = state.get("root_depth_mm")
+    if isinstance(saved_root, (int, float)) and saved_root > 0:
+        root_depth_mm = float(saved_root)
+    return balance_from_state(state["sw_mm"], soil, root_depth_mm, depletion_p, state)
 
 
 def _low(result: SoilWaterBalanceResult) -> SoilWaterBalanceResult:
@@ -163,7 +191,7 @@ async def advance_daily_balance(
 
         await redis_state.set_balance_state(
             tenant_id, parcel_id, last_day.isoformat(), result.sw_mm,
-            precip_mm=result.inflow_mm, etc_mm=result.etc_mm,
+            root_depth_mm=root_depth_mm, **day_flows(result),
         )
         return _low(result) if last_day < yesterday else result
     finally:
@@ -202,7 +230,7 @@ async def correct_balance_state(
             return None
         await redis_state.set_balance_state(
             tenant_id, parcel_id, state["date"], sw,
-            precip_mm=state.get("precip_mm"), etc_mm=state.get("etc_mm"),
+            **{k: state.get(k) for k in STATE_EXTRAS},
         )
         return sw
     finally:

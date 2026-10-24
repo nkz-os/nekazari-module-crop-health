@@ -370,13 +370,23 @@ class RedisState:
         sw_mm: float,
         precip_mm: float | None = None,
         etc_mm: float | None = None,
+        actual_et_mm: float | None = None,
+        deep_percolation_mm: float | None = None,
+        root_depth_mm: float | None = None,
     ) -> bool:
-        """Store the soil water (mm) at the end of ``day``, plus that day's rain and ETc when known; TTL 40 days."""
+        """Store the soil water (mm) at the end of ``day``; TTL 40 days.
+
+        The day's flows and the root depth the water refers to are stored when given.
+        """
         value: dict = {"date": day, "sw_mm": sw_mm}
-        if precip_mm is not None:
-            value["precip_mm"] = precip_mm
-        if etc_mm is not None:
-            value["etc_mm"] = etc_mm
+        extras = {
+            "precip_mm": precip_mm,
+            "etc_mm": etc_mm,
+            "actual_et_mm": actual_et_mm,
+            "deep_percolation_mm": deep_percolation_mm,
+            "root_depth_mm": root_depth_mm,
+        }
+        value.update({k: v for k, v in extras.items() if v is not None})
         return await self.set_json(f"swd:{tenant_id}:{parcel_id}", value, 40 * 86400)
 
     async def try_lock(self, key: str, ttl_s: int) -> bool | None:

@@ -264,6 +264,9 @@ def map_entity_to_assessment(entity: dict[str, Any]) -> dict[str, Any]:
         "waterStressIndex": prop_value(entity, "waterStressIndex"),
         "waterStressFidelity": prop_value(entity, "waterStressFidelity"),
         "waterStressObservedAt": datetime_value(entity, "waterStressObservedAt"),
+        "underPanelWaterStressIndex": prop_value(entity, "underPanelWaterStressIndex"),
+        "underPanelWaterStressFidelity": prop_value(entity, "underPanelWaterStressFidelity"),
+        "underPanelWaterStressObservedAt": datetime_value(entity, "underPanelWaterStressObservedAt"),
     }
 
 

@@ -37,7 +37,7 @@ class FakeRedis:
     async def get_irrigation_24h(self, *a, **k):
         return 0.0
 
-    async def set_soil_water(self, parcel, value):
+    async def set_soil_water(self, tenant, parcel, value):
         self.soil_water_set.append((parcel, value))
 
     async def get_window(self, *a, **k):
@@ -46,17 +46,17 @@ class FakeRedis:
     async def get_latest(self, *a, **k):
         return None
 
-    async def get_parcel_readings(self, parcel, metric, max_age_s, now_ts):
+    async def get_parcel_readings(self, tenant, parcel, context, metric, max_age_s, now_ts):
         if self.fail:
             raise RuntimeError("redis down")
         return [r for r in self.readings.get(metric, []) if 0 <= now_ts - r.ts <= max_age_s]
 
-    async def get_daily_shade(self, parcel, day):
+    async def get_daily_shade(self, tenant, parcel, day):
         if self.fail:
             raise RuntimeError("redis down")
         return self.shade.get(day)
 
-    async def get_daily_shade_ts(self, parcel, day):
+    async def get_daily_shade_ts(self, tenant, parcel, day):
         if self.fail:
             raise RuntimeError("redis down")
         return self.shade_ts.get(day)
@@ -358,14 +358,22 @@ async def test_unavailable_after_iot_clears_stale_attributes(monkeypatch):
     ids = {d[0] for d in published2["deletes"]}
     attrs = {d[1] for d in published2["deletes"]}
     assert ids == {published2["assessments"][-1].to_ngsi_ld()["id"]}
-    assert attrs == {"waterStressIndex", "waterStressObservedAt", "shadeFraction", "shadeObservedAt"}
+    assert attrs == {
+        "waterStressIndex", "waterStressObservedAt", "shadeFraction", "shadeObservedAt",
+        "underPanelWaterStressIndex", "underPanelWaterStressFidelity",
+        "underPanelWaterStressObservedAt",
+    }
 
 
 @pytest.mark.asyncio
 async def test_only_omitted_attrs_are_deleted(monkeypatch):
     published, _ = _setup(monkeypatch)
     await _trigger(FakeRedis())  # model path: index+observedAt present, shade None
-    assert [d[1] for d in published["deletes"]] == ["shadeFraction", "shadeObservedAt"]
+    assert [d[1] for d in published["deletes"]] == [
+        "shadeFraction", "shadeObservedAt",
+        "underPanelWaterStressIndex", "underPanelWaterStressFidelity",
+        "underPanelWaterStressObservedAt",
+    ]
 
 
 @pytest.mark.asyncio
@@ -374,7 +382,7 @@ async def test_delete_404_is_success(monkeypatch):
     published["delete_behaviour"]["status"] = 404
     out = await _trigger(FakeRedis())
     assert out is not None
-    assert len(published["deletes"]) == 4  # does not stop after the first 404
+    assert len(published["deletes"]) == 7  # does not stop after the first 404
 
 
 @pytest.mark.asyncio
@@ -397,7 +405,7 @@ async def test_zonal_rollup_clears_stale_attributes(monkeypatch):
     await _trigger(FakeRedis())
     parcel = [e for e in published["entities"] if e["type"] == "CropHealthAssessment"][0]
     assert {d[0] for d in published["deletes"]} == {parcel["id"]}
-    assert len(published["deletes"]) == 4
+    assert len(published["deletes"]) == 7
 
 
 @pytest.mark.asyncio

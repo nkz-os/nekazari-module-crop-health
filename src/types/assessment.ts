@@ -125,6 +125,9 @@ export interface AssessmentData {
   waterStressIndex?: number | null;
   waterStressFidelity?: 'iot_sensor' | 'parcel_weather' | 'regional_proxy' | 'unavailable' | null;
   waterStressObservedAt?: string | null;
+  underPanelWaterStressIndex?: number | null;
+  underPanelWaterStressFidelity?: 'iot_sensor' | 'parcel_weather' | 'regional_proxy' | 'unavailable' | null;
+  underPanelWaterStressObservedAt?: string | null;
   soilWaterMm?: number;
   soilAWCmm?: number;
   soilWaterRatio?: number;

@@ -45,6 +45,7 @@ class MetricType(str, enum.Enum):
     AIR_TEMPERATURE = "airTemperature"
     RELATIVE_HUMIDITY = "relativeHumidity"
     PAR = "photosyntheticPhotonFluxDensity"
+    SOLAR_RADIATION = "solarRadiation"
 
 
 # ── Sensor Reading ────────────────────────────────────────────────────────────
@@ -442,6 +443,8 @@ class CropHealthAssessment(BaseModel):
     soil_suitability: "SoilSuitability | None" = None
     # Parcel-level only: never serialised on zone entities.
     water_stress: WaterStress | None = None
+    # Soil-moisture index from under-panel (park-owned) sensors; set only when computable.
+    under_panel_water_stress: WaterStress | None = None
 
     def to_ngsi_ld(self) -> dict[str, Any]:
         """Serialise to NGSI-LD entity payload."""
@@ -657,6 +660,18 @@ class CropHealthAssessment(BaseModel):
                             "@value": ws.shade_observed_at.astimezone(timezone.utc).isoformat(),
                         },
                     }
+        if self.under_panel_water_stress is not None and self.under_panel_water_stress.index is not None:
+            up = self.under_panel_water_stress
+            entity["underPanelWaterStressIndex"] = {"type": "Property", "value": up.index}
+            entity["underPanelWaterStressFidelity"] = {"type": "Property", "value": up.fidelity}
+            if up.observed_at is not None:
+                entity["underPanelWaterStressObservedAt"] = {
+                    "type": "Property",
+                    "value": {
+                        "@type": "DateTime",
+                        "@value": up.observed_at.astimezone(timezone.utc).isoformat(),
+                    },
+                }
         return entity
 
     def to_zone_ngsi_ld(self) -> dict[str, Any]:
@@ -668,7 +683,9 @@ class CropHealthAssessment(BaseModel):
         envelope, then overrides id/type and adds the zone relationship.
         """
         entity = self.to_ngsi_ld()
-        for attr in ("waterStressIndex", "waterStressFidelity", "waterStressObservedAt", "shadeFraction", "shadeObservedAt"):
+        for attr in ("waterStressIndex", "waterStressFidelity", "waterStressObservedAt", "shadeFraction", "shadeObservedAt",
+                     "underPanelWaterStressIndex", "underPanelWaterStressFidelity",
+                     "underPanelWaterStressObservedAt"):
             entity.pop(attr, None)
         date_str = self.assessed_at.strftime("%Y%m%d")
         zone = self.zone_id or "parcel"

@@ -51,7 +51,13 @@ from app.services import context_client
 from app.services.context_client import get_phenology_params
 from app.services.fiware_publisher import publish_assessment
 from app.services.meteo_context import resolve_meteo_context
-from app.services.parcel_link import parcel_link_target
+from app.services.parcel_link import (
+    OPEN_FIELD,
+    PARCEL_PREFIX,
+    UNDER_PANEL,
+    owner_from_link,
+    parcel_link_target,
+)
 from app.services.redis_state import MAX_FUTURE_SKEW_S, RedisState, StoreError
 from app.services.zonation import (
     resolve_zones,
@@ -180,6 +186,8 @@ _PARCEL_READING_MAX_AGE_S = 3600.0
 # upsert is a merge, so a stale value from an earlier write must be deleted.
 _WATER_STRESS_OPTIONAL_ATTRS = (
     "waterStressIndex", "waterStressObservedAt", "shadeFraction", "shadeObservedAt",
+    "underPanelWaterStressIndex", "underPanelWaterStressFidelity",
+    "underPanelWaterStressObservedAt",
 )
 _AIR_TEMP_RANGE_C = (-50.0, 60.0)
 _RH_RANGE_PCT = (0.0, 100.0)
@@ -223,14 +231,16 @@ async def _clear_stale_water_stress(entity: dict, tenant_id: str) -> None:
             pass
 
 
-async def _read_parcel_readings(redis_state, parcel_id: str, metric: str, now_ts: float) -> list:
+async def _read_parcel_readings(
+    redis_state, tenant_id: str, parcel_id: str, context: str, metric: str, now_ts: float
+) -> list:
     """Fresh per-parcel readings; any Redis failure degrades to 'no readings'."""
     if redis_state is None:
         return []
     try:
         return list(
             await redis_state.get_parcel_readings(
-                parcel_id, metric, _PARCEL_READING_MAX_AGE_S, now_ts
+                tenant_id, parcel_id, context, metric, _PARCEL_READING_MAX_AGE_S, now_ts
             )
         )
     except Exception as exc:  # noqa: BLE001 -- fail-safe: pipeline must still publish
@@ -238,13 +248,25 @@ async def _read_parcel_readings(redis_state, parcel_id: str, metric: str, now_ts
         return []
 
 
-async def _read_daily_shade(redis_state, parcel_id: str, now_ts: float) -> float | None:
+async def _read_pooled(
+    redis_state, tenant_id: str, parcel_id: str, metric: str, now_ts: float
+) -> list:
+    """Readings of a metric from both sensor contexts, pooled."""
+    out: list = []
+    for context in (UNDER_PANEL, OPEN_FIELD):
+        out.extend(
+            await _read_parcel_readings(redis_state, tenant_id, parcel_id, context, metric, now_ts)
+        )
+    return out
+
+
+async def _read_daily_shade(redis_state, tenant_id: str, parcel_id: str, now_ts: float) -> float | None:
     """Daily shade fraction: today (UTC), else yesterday (UTC), else None."""
-    return (await _read_daily_shade_obs(redis_state, parcel_id, now_ts))[0]
+    return (await _read_daily_shade_obs(redis_state, tenant_id, parcel_id, now_ts))[0]
 
 
 async def _read_daily_shade_obs(
-    redis_state, parcel_id: str, now_ts: float
+    redis_state, tenant_id: str, parcel_id: str, now_ts: float
 ) -> tuple[float | None, datetime | None]:
     """Daily shade fraction (today, else yesterday, UTC) and its latest PAR sample time."""
     if redis_state is None:
@@ -253,7 +275,7 @@ async def _read_daily_shade_obs(
     for d in (day, day - timedelta(days=1)):
         day_str = d.strftime("%Y-%m-%d")
         try:
-            shade = await redis_state.get_daily_shade(parcel_id, day_str)
+            shade = await redis_state.get_daily_shade(tenant_id, parcel_id, day_str)
         except Exception as exc:  # noqa: BLE001 -- fail-safe
             logger.warning("pipeline: daily shade unavailable for %s: %s", parcel_id, exc)
             return None, None
@@ -261,7 +283,7 @@ async def _read_daily_shade_obs(
             continue
         observed = None
         try:
-            ts = await redis_state.get_daily_shade_ts(parcel_id, day_str)
+            ts = await redis_state.get_daily_shade_ts(tenant_id, parcel_id, day_str)
             if ts is not None and math.isfinite(ts):
                 observed = datetime.fromtimestamp(ts, tz=timezone.utc)
         except Exception as exc:  # noqa: BLE001 -- the timestamp is optional
@@ -275,17 +297,17 @@ def _mean_in_range(readings: list, lo: float, hi: float) -> float | None:
     return sum(vals) / len(vals) if vals else None
 
 
-async def _sensor_air_ctx(redis_state, parcel_id: str, now_ts: float) -> dict:
+async def _sensor_air_ctx(redis_state, tenant_id: str, parcel_id: str, now_ts: float) -> dict:
     """Air temperature / RH from fresh parcel sensors, in the shape resolve_meteo_context expects."""
     ctx: dict = {}
     temp = _mean_in_range(
-        await _read_parcel_readings(redis_state, parcel_id, MetricType.AIR_TEMPERATURE.value, now_ts),
+        await _read_pooled(redis_state, tenant_id, parcel_id, MetricType.AIR_TEMPERATURE.value, now_ts),
         *_AIR_TEMP_RANGE_C,
     )
     if temp is not None:
         ctx["air_temp_c"] = temp
     rh = _mean_in_range(
-        await _read_parcel_readings(redis_state, parcel_id, MetricType.RELATIVE_HUMIDITY.value, now_ts),
+        await _read_pooled(redis_state, tenant_id, parcel_id, MetricType.RELATIVE_HUMIDITY.value, now_ts),
         *_RH_RANGE_PCT,
     )
     if rh is not None:
@@ -295,7 +317,9 @@ async def _sensor_air_ctx(redis_state, parcel_id: str, now_ts: float) -> dict:
 
 async def _resolve_water_stress(
     redis_state,
+    tenant_id: str,
     parcel_id: str,
+    context: str,
     soil,
     depletion_p: float,
     swb,
@@ -305,8 +329,15 @@ async def _resolve_water_stress(
     root_depth_mm: float,
     shade_observed_at: datetime | None = None,
 ) -> tuple[WaterStress, float | None]:
-    """Water stress index plus the sensor-assimilated soil water (mm), if the sensor path applied."""
-    readings = await _read_parcel_readings(redis_state, parcel_id, "soilMoisture", now_ts)
+    """Water stress index plus the sensor-assimilated soil water (mm), if the sensor path applied.
+
+    ``context`` selects the soil-moisture owner. Open field keeps the model fallback and the
+    assimilation; under panel is sensor-only (no model fallback, never assimilated).
+    """
+    readings = await _read_parcel_readings(
+        redis_state, tenant_id, parcel_id, context, "soilMoisture", now_ts
+    )
+    under_panel = context == UNDER_PANEL
     now = datetime.fromtimestamp(now_ts, tz=timezone.utc)
     used = valid_theta_readings(readings, now_ts)
     try:
@@ -314,8 +345,8 @@ async def _resolve_water_stress(
             readings,
             soil,
             depletion_p,
-            swb.stress_coefficient_ks if swb is not None else None,
-            et0_fidelity,
+            None if under_panel or swb is None else swb.stress_coefficient_ks,
+            "unavailable" if under_panel else et0_fidelity,
             now,
             shade_fraction,
         )
@@ -326,13 +357,13 @@ async def _resolve_water_stress(
         ws = dataclasses.replace(ws, shade_observed_at=shade_observed_at)
 
     assimilated = None
-    if ws.fidelity == "iot_sensor" and used and swb is not None:
+    if not under_panel and ws.fidelity == "iot_sensor" and used and swb is not None:
         theta = sum(t for _, t in used) / len(used)
         assimilated = min(max((theta - soil.wilting_point) * root_depth_mm, 0.0), swb.awc_mm)
 
     logger.info(
-        "water_stress: parcel=%s index=%s fidelity=%s readings=%d shade=%s",
-        parcel_id, ws.index, ws.fidelity, len(used), shade_fraction,
+        "water_stress: parcel=%s context=%s index=%s fidelity=%s readings=%d shade=%s",
+        parcel_id, context, ws.index, ws.fidelity, len(used), shade_fraction,
     )
     return ws, assimilated
 
@@ -367,7 +398,17 @@ async def trigger(
     Returns:
         CropHealthAssessment if computed, None on error.
     """
-    effective_parcel = parcel_id or await _resolve_parcel_from_device(entity_id, tenant_id)
+    sensor_context: str | None = None
+    if parcel_id:
+        # Caller already knows the parcel: no owner lookup, open-field behaviour.
+        effective_parcel = parcel_id
+    else:
+        # Cached lookup; without Redis fall back to the direct (uncached) resolve.
+        if redis_state is not None:
+            owner = await _cached_device_owner(entity_id, tenant_id, redis_state)
+        else:
+            owner = await _resolve_device_owner(entity_id, tenant_id)
+        effective_parcel, sensor_context = owner if owner else (None, None)
     if not effective_parcel:
         logger.warning("Cannot resolve parcel for device %s — skipping", entity_id)
         return None
@@ -441,13 +482,13 @@ async def trigger(
     now_ts = _now_ts()
     meteo = await resolve_meteo_context(
         effective_parcel, tenant_id,
-        sensor_ctx=await _sensor_air_ctx(redis_state, effective_parcel, now_ts),
+        sensor_ctx=await _sensor_air_ctx(redis_state, tenant_id, effective_parcel, now_ts),
         weather_map_fn=_weather_map_meteo,
         regional_fn=_regional_meteo,
     )
     weather = _snapshot_from_meteo(meteo)
     daily_shade, shade_observed_at = await _read_daily_shade_obs(
-        redis_state, effective_parcel, now_ts
+        redis_state, tenant_id, effective_parcel, now_ts
     )
     et0_fidelity = meteo.fidelity.get("et0_mm", "unavailable")
 
@@ -486,7 +527,7 @@ async def trigger(
     sw_yesterday = None
     if redis_state:
         try:
-            sw_yesterday = await redis_state.get_soil_water(effective_parcel)
+            sw_yesterday = await redis_state.get_soil_water(tenant_id, effective_parcel)
         except Exception as exc:
             logger.warning("pipeline: redis get_soil_water failed for parcel %s — sw_yesterday=None: %s", effective_parcel, exc)
 
@@ -534,6 +575,7 @@ async def trigger(
             shade_observed_at=shade_observed_at,
             et0_fidelity=et0_fidelity,
             parcel_stress=True,
+            sensor_context=sensor_context,
         )
 
     # Zonal: the device's window-engines run for its zone; others sensorless.
@@ -575,6 +617,7 @@ async def trigger(
                 daily_shade=daily_shade,
                 shade_observed_at=shade_observed_at,
                 et0_fidelity=et0_fidelity,
+                sensor_context=sensor_context if is_sensor else None,
             )
         except Exception as exc:
             logger.warning("trigger: zone %s failed for %s — skipped: %s", z.zone_id, effective_parcel, exc)
@@ -590,13 +633,21 @@ async def trigger(
     attach_soil_suitability(rollup, crop_context)
     # Water stress is parcel-level: computed once here, carried by the rollup only.
     rollup.water_stress, assimilated = await _resolve_water_stress(
-        redis_state, effective_parcel, soil, _resolve_depletion_fraction(crop_context),
+        redis_state, tenant_id, effective_parcel, OPEN_FIELD, soil,
+        _resolve_depletion_fraction(crop_context),
         rollup.soil_water_balance, et0_fidelity, now_ts, daily_shade, root_depth_mm,
         shade_observed_at,
     )
+    up_ws, _ = await _resolve_water_stress(
+        redis_state, tenant_id, effective_parcel, UNDER_PANEL, soil,
+        _resolve_depletion_fraction(crop_context),
+        rollup.soil_water_balance, et0_fidelity, now_ts, daily_shade, root_depth_mm,
+        shade_observed_at,
+    )
+    rollup.under_panel_water_stress = up_ws if up_ws.index is not None else None
     if assimilated is not None and redis_state:
         try:
-            await redis_state.set_soil_water(effective_parcel, assimilated)
+            await redis_state.set_soil_water(tenant_id, effective_parcel, assimilated)
         except Exception as exc:
             logger.warning("pipeline: redis set_soil_water failed for parcel %s — state not persisted: %s", effective_parcel, exc)
     rollup_entity = rollup.to_ngsi_ld()
@@ -634,6 +685,7 @@ async def _run_engines(
     shade_observed_at: datetime | None = None,
     et0_fidelity: str = "unavailable",
     parcel_stress: bool = False,
+    sensor_context: str | None = None,
 ) -> CropHealthAssessment:
     """Shared engine-fusion core.
 
@@ -648,7 +700,12 @@ async def _run_engines(
     Sensorless callers pass ``entity_id == effective_parcel`` (no device);
     metric-gated branches simply do not fire, which is the intended degraded
     behaviour for a parcel with no IoT sensors.
+
+    ``sensor_context == UNDER_PANEL`` means the triggering device sits under a
+    panel: it feeds only the under-panel index (and shade), so the per-device
+    leaf-temperature, trunk-diameter and soil pass-through branches are skipped.
     """
+    from_under_panel = sensor_context == UNDER_PANEL
 
     # ── 1b. Authoritative phenology stage (shared by BOTH write paths) ────
     # When GDD and the full ordered stage table are available, the current
@@ -661,7 +718,7 @@ async def _run_engines(
     # ── 2. Execute engines ───────────────────────────────────────────────
 
     # CWSI (triggered by leaf temperature sensor)
-    if metric_type == MetricType.LEAF_TEMPERATURE.value and weather:
+    if metric_type == MetricType.LEAF_TEMPERATURE.value and weather and not from_under_panel:
         readings = await redis_state.get_window(entity_id, "leafTemperature", hours=1)
         if readings:
             latest_tc = readings[-1].value
@@ -692,7 +749,7 @@ async def _run_engines(
             )
 
     # MDS (triggered by trunk diameter dendrómetro)
-    if metric_type == MetricType.TRUNK_DIAMETER.value:
+    if metric_type == MetricType.TRUNK_DIAMETER.value and not from_under_panel:
         readings = await redis_state.get_window(entity_id, "trunkDiameter", hours=24)
         assessment.mds = calculate_mds_from_readings(readings, mds_ref=phenology.mds_ref)
 
@@ -744,15 +801,20 @@ async def _run_engines(
     assimilated_sw = None
     if parcel_stress:
         assessment.water_stress, assimilated_sw = await _resolve_water_stress(
-            redis_state, effective_parcel, soil, depletion_p, swb, et0_fidelity,
-            _now_ts(), daily_shade, root_depth_mm, shade_observed_at,
+            redis_state, tenant_id, effective_parcel, OPEN_FIELD, soil, depletion_p, swb,
+            et0_fidelity, _now_ts(), daily_shade, root_depth_mm, shade_observed_at,
         )
+        up_ws, _ = await _resolve_water_stress(
+            redis_state, tenant_id, effective_parcel, UNDER_PANEL, soil, depletion_p, swb,
+            et0_fidelity, _now_ts(), daily_shade, root_depth_mm, shade_observed_at,
+        )
+        assessment.under_panel_water_stress = up_ws if up_ws.index is not None else None
 
     # Persist current soil water to Redis for next assessment (sensor value when it applied)
     if swb is not None and redis_state:
         try:
             await redis_state.set_soil_water(
-                effective_parcel, assimilated_sw if assimilated_sw is not None else swb.sw_mm
+                tenant_id, effective_parcel, assimilated_sw if assimilated_sw is not None else swb.sw_mm
             )
         except Exception as exc:
             logger.warning("pipeline: redis set_soil_water failed for parcel %s — state not persisted: %s", effective_parcel, exc)
@@ -811,7 +873,7 @@ async def _run_engines(
     soil_moisture_val = None
     soil_temp_val = None
 
-    if metric_type in (
+    if not from_under_panel and metric_type in (
         MetricType.SOIL_PH.value,
         MetricType.SOIL_EC.value,
         MetricType.SOIL_MOISTURE.value,
@@ -2244,30 +2306,53 @@ _GHI_TTL_S = 300
 _SHADE_MAX_AGE_S = 3600.0
 # GHI only pairs with a PAR reading when the station observation is this close in time.
 _GHI_MAX_SKEW_S = 90 * 60.0
+# UN/CEFACT code for W/m2; a pyranometer reading in any other unit is not trusted as GHI.
+_GHI_UNIT_CODE = "D54"
 # Physical ceiling for PAR (umol/m2/s); full sun is ~2000-2200.
 _PAR_MAX = 3000.0
 
 
-async def _cached_parcel_for_device(
+async def _cached_device_owner(
     device_id: str, tenant_id: str, redis_state: RedisState
-) -> str | None:
-    key = f"devparcel:{tenant_id}:{device_id}"
+) -> tuple[str, str] | None:
+    """(parcel_id, context) for a device, cached. Unresolvable owner -> None."""
+    key = f"devowner:{tenant_id}:{device_id}"
     try:
         cached = await redis_state.get_json(key)
     except StoreError:
         cached = None
-    if cached and cached.get("parcel_id"):
-        return cached["parcel_id"]
-    parcel_id = await _resolve_parcel_from_device(device_id, tenant_id)
-    if parcel_id:
-        await redis_state.set_json(key, {"parcel_id": parcel_id}, _DEVICE_PARCEL_TTL_S)
-    return parcel_id
+    if cached and cached.get("parcel_id") and cached.get("context") in (UNDER_PANEL, OPEN_FIELD):
+        return cached["parcel_id"], cached["context"]
+    owner = await _resolve_device_owner(device_id, tenant_id)
+    if owner:
+        await redis_state.set_json(
+            key, {"parcel_id": owner[0], "context": owner[1]}, _DEVICE_PARCEL_TTL_S
+        )
+    return owner
 
 
 async def _cached_ghi(
     parcel_id: str, tenant_id: str, redis_state: RedisState
 ) -> tuple[float | None, float | None]:
-    """(GHI W/m2, WeatherObserved epoch time) from the regional station, cached 300 s."""
+    """(GHI W/m2, observation epoch time).
+
+    The parcel's own open-field pyranometer wins when fresh; otherwise the regional
+    WeatherObserved value, cached 300 s. The pyranometer is read before the cache so
+    a cached regional value never hides it.
+    """
+    now = _now_ts()
+    fresh = [
+        r
+        for r in await _read_parcel_readings(
+            redis_state, tenant_id, parcel_id, OPEN_FIELD, MetricType.SOLAR_RADIATION.value, now
+        )
+        if r.unit_code in (None, _GHI_UNIT_CODE)
+        and math.isfinite(r.value)
+        and abs(now - r.ts) <= _GHI_MAX_SKEW_S
+    ]
+    if fresh:
+        best = max(fresh, key=lambda r: r.ts)
+        return best.value, best.ts
     key = f"ghi:{tenant_id}:{parcel_id}"
     try:
         cached = await redis_state.get_json(key)
@@ -2302,12 +2387,19 @@ async def record_parcel_reading(
     ahead of ``trigger``, and an exception here would abort that trigger.
     """
     try:
-        parcel_id = await _cached_parcel_for_device(device_id, tenant_id, redis_state)
-        if not parcel_id:
+        owner = await _cached_device_owner(device_id, tenant_id, redis_state)
+        if not owner:
             logger.warning("record_parcel_reading: device %s has no parcel link — dropped", device_id)
             return None
-        await redis_state.set_parcel_reading(parcel_id, metric, device_id, ts, value, unit_code)
-        if metric == MetricType.PAR.value:
+        parcel_id, context = owner
+        if metric == MetricType.SOLAR_RADIATION.value and context != OPEN_FIELD:
+            # A park pyranometer rotates with the panels: never an open-sky reference.
+            logger.debug(
+                "record_parcel_reading: %s solarRadiation from device %s dropped", context, device_id
+            )
+            return parcel_id
+        await redis_state.set_parcel_reading(tenant_id, parcel_id, context, metric, device_id, ts, value, unit_code)
+        if metric == MetricType.PAR.value and context == UNDER_PANEL:
             await _add_shade_sample(parcel_id, ts, value, tenant_id, redis_state)
         return parcel_id
     except Exception as exc:  # noqa: BLE001 — must not abort the queued trigger
@@ -2336,11 +2428,17 @@ async def _add_shade_sample(
     if ghi_ts is None or not math.isfinite(ghi_ts) or abs(ts - ghi_ts) > _GHI_MAX_SKEW_S:
         return
     day = datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d")
-    await redis_state.add_shade_sample(parcel_id, day, par_under, PAR_PER_GHI * ghi, ts)
+    await redis_state.add_shade_sample(tenant_id, parcel_id, day, par_under, PAR_PER_GHI * ghi, ts)
 
 
 async def _resolve_parcel_from_device(device_id: str, tenant_id: str) -> str | None:
-    """Resolve a device's parcel through its canonical ``controlledAsset`` link.
+    """Parcel id of a device (see ``_resolve_device_owner``), or None."""
+    owner = await _resolve_device_owner(device_id, tenant_id)
+    return owner[0] if owner else None
+
+
+async def _resolve_device_owner(device_id: str, tenant_id: str) -> tuple[str, str] | None:
+    """Resolve (parcel_id, context) from a device's ``controlledAsset`` link.
 
     There is no id convention to fall back on: a `DeviceMeasurement` id ends in
     the measured property, and a `Device` id ends in the device's own external
@@ -2349,8 +2447,12 @@ async def _resolve_parcel_from_device(device_id: str, tenant_id: str) -> str | N
     broker hop, so take the hop.
 
     ``hasAgriParcel``/``refAgriParcel`` stay as fallbacks for devices provisioned
-    before the cutover. Returns None when the device is unlinked or unreachable —
-    the caller skips rather than guessing.
+    before the cutover and mean ``open_field``. The first ``controlledAsset``
+    entry is the owner: a solar park means ``under_panel`` (parcel read from the
+    entity itself or, if only the park is listed, from the park's
+    ``hasAgriParcel``); a parcel means ``open_field``; anything else is ignored.
+    Returns None when the owner cannot be resolved — the caller skips rather
+    than guessing.
     """
     if not device_id or not tenant_id:
         return None
@@ -2377,11 +2479,49 @@ async def _resolve_parcel_from_device(device_id: str, tenant_id: str) -> str | N
 
     if not isinstance(device, dict):
         return None
-    for attr in ("controlledAsset", "hasAgriParcel", "refAgriParcel"):
+    if device.get("controlledAsset") is not None:
+        owner = owner_from_link(device.get("controlledAsset"))
+        if owner is None:
+            return None
+        context, parcel_urn, park_urn = owner
+        if parcel_urn is None:
+            parcel_urn = await _parcel_of_park(park_urn, tenant_id)
+            if not parcel_urn:
+                logger.warning("Park %s of device %s has no parcel link", park_urn, device_id)
+                return None
+        # Same normalisation the rest of the module uses (sources.py builds
+        # its parcel map this way, and _resolve_parcel_coords rebuilds the
+        # URN from it): strip the prefix, keep any tenant segment.
+        return parcel_urn.replace(PARCEL_PREFIX, ""), context
+    for attr in ("hasAgriParcel", "refAgriParcel"):
         target = parcel_link_target(device.get(attr))
-        if target:
-            # Same normalisation the rest of the module uses (sources.py builds
-            # its parcel map this way, and _resolve_parcel_coords rebuilds the
-            # URN from it): strip the prefix, keep any tenant segment.
-            return target.replace("urn:ngsi-ld:AgriParcel:", "")
+        if target.startswith(PARCEL_PREFIX):
+            return target.replace(PARCEL_PREFIX, ""), OPEN_FIELD
     return None
+
+
+async def _parcel_of_park(park_urn: str, tenant_id: str) -> str | None:
+    """The parcel URN a solar park points at, or None (unreadable or unlinked)."""
+    from app.config import get_settings
+    from nkz_platform_sdk.orion import OrionClient
+
+    settings = get_settings()
+    client = OrionClient(
+        tenant_id,
+        base_url=settings.orion_ld_url,
+        context_url=settings.orion_ld_context,
+    )
+    try:
+        park = await client.get_entity(park_urn)
+    except Exception as exc:  # noqa: BLE001 — an unreachable park is not a parcel
+        logger.warning("Cannot read park %s to resolve its parcel: %s", park_urn, exc)
+        return None
+    finally:
+        try:
+            await client.close()
+        except Exception:  # noqa: BLE001
+            pass
+    if not isinstance(park, dict):
+        return None
+    target = parcel_link_target(park.get("hasAgriParcel") or park.get("refAgriParcel"))
+    return target if target.startswith(PARCEL_PREFIX) else None

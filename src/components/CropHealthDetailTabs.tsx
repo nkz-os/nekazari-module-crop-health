@@ -187,14 +187,24 @@ const CropHealthDetailTabs: React.FC<CropHealthDetailTabsProps> = ({
         </MetricSection>
       )}
 
-      {/* Water stress index (under-panel) — independent of Soil data */}
+      {/* Water stress index (open field) — independent of Soil data */}
       {assessment.waterStressFidelity && (
         <MetricSection>
           <p className="text-xs text-nkz-text-muted">
-            {t('detail.waterStress')}{' '}
+            {assessment.underPanelWaterStressFidelity ? t('detail.waterStressOpenField') : t('detail.waterStress')}{' '}
             {assessment.waterStressIndex == null || !KNOWN_FIDELITIES.includes(assessment.waterStressFidelity) || assessment.waterStressFidelity === 'unavailable'
               ? t('detail.fidelity.unavailable')
               : `${assessment.waterStressIndex.toFixed(2)} · ${t(`detail.fidelity.${assessment.waterStressFidelity}`)} · ${formatRelativeTime(assessment.waterStressObservedAt, t)}`}
+          </p>
+        </MetricSection>
+      )}
+      {assessment.underPanelWaterStressFidelity && (
+        <MetricSection>
+          <p className="text-xs text-nkz-text-muted">
+            {t('detail.waterStressUnderPanel')}{' '}
+            {assessment.underPanelWaterStressIndex == null || !KNOWN_FIDELITIES.includes(assessment.underPanelWaterStressFidelity) || assessment.underPanelWaterStressFidelity === 'unavailable'
+              ? t('detail.fidelity.unavailable')
+              : `${assessment.underPanelWaterStressIndex.toFixed(2)} · ${t(`detail.fidelity.${assessment.underPanelWaterStressFidelity}`)} · ${formatRelativeTime(assessment.underPanelWaterStressObservedAt, t)}`}
           </p>
         </MetricSection>
       )}

@@ -104,6 +104,30 @@ async def test_sources_list_device_linked_to_several_parcels():
 
 
 @pytest.mark.anyio
+async def test_sources_list_park_owned_device_counts_for_parcel_only():
+    """A park-first controlledAsset counts for its parcel and creates no park entry."""
+    with respx.mock as mock:
+        mock.get(url__regex=r".*type=CropHealthAssessment.*").respond(json=[])
+        mock.get(url__regex=r".*type=AgriParcel.*").respond(json=[
+            {"id": "urn:ngsi-ld:AgriParcel:Parcela-4", "name": "Parcela 4"},
+        ])
+        mock.get(url__regex=r".*type=Device(&|$|%).*").respond(json=[
+            {
+                "id": "urn:ngsi-ld:Device:test-tenant:sensor1",
+                "controlledAsset": ["urn:ngsi-ld:AgriSolarPark:x", "urn:ngsi-ld:AgriParcel:Parcela-4"],
+            }
+        ])
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test", headers=GATEWAY_HEADERS) as client:
+            resp = await client.get("/api/crop-health/sources")
+            assert resp.status_code == 200
+            parcels = resp.json()["parcels"]
+            assert [p["parcelId"] for p in parcels] == ["Parcela-4"]
+            assert parcels[0]["hasIot"] is True
+
+
+@pytest.mark.anyio
 async def test_sources_detail_returns_source_status():
     """Detail endpoint returns per-source status for a single parcel."""
     with respx.mock as mock:

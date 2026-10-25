@@ -436,3 +436,57 @@ async def test_anchor_root_is_recorded_not_stepped():
     res = await advance(redis, make_fetch(), make_irrigation())
     assert redis.state["root_depth_mm"] == ROOT
     assert res.root_depth_mm == ROOT
+    # No stepped day is a week old: the anchor keeps the depth its water was saved at.
+    assert redis.state["anchor_root_depth_mm"] == 800.0
+
+
+ANCHORED = {"date": "2026-10-21", "sw_mm": 45.0, "root_depth_mm": ROOT,
+            "anchor_date": "2026-10-16", "anchor_sw_mm": 40.0, "anchor_root_depth_mm": ROOT}
+
+
+@pytest.mark.asyncio
+async def test_old_gap_steps_on_from_the_saved_day():
+    redis = FakeRedis(state=dict(ANCHORED))
+    res = await advance(redis, _zero_fetch_with({"2026-10-18": (None, 0.0)}), make_irrigation({"2026-10-22": 5.0}))
+    assert redis.saved == [("2026-10-23", pytest.approx(50.0))]
+    assert (redis.state["anchor_date"], redis.state["anchor_sw_mm"]) == ("2026-10-16", 40.0)
+    assert res.sw_mm == pytest.approx(50.0) and res.soil_moisture_confidence != "low"
+
+
+@pytest.mark.asyncio
+async def test_old_gap_on_first_replayed_day_steps_on_from_the_saved_day():
+    redis = FakeRedis(state=dict(ANCHORED))
+    await advance(redis, _zero_fetch_with({"2026-10-17": (None, 0.0)}), make_irrigation())
+    assert redis.saved == [("2026-10-23", pytest.approx(45.0))]
+    assert redis.state["anchor_date"] == "2026-10-16"
+
+
+@pytest.mark.asyncio
+async def test_old_gap_and_no_later_day_keeps_state():
+    redis = FakeRedis(state=dict(ANCHORED))
+    res = await advance(
+        redis, _zero_fetch_with({"2026-10-18": (None, 0.0), "2026-10-22": (None, 0.0)}), make_irrigation())
+    assert redis.saved == []
+    assert res.sw_mm == pytest.approx(45.0) and res.soil_moisture_confidence == "low"
+
+
+@pytest.mark.asyncio
+async def test_two_consecutive_runs_move_anchor_one_day():
+    redis = FakeRedis(state={"date": "2026-10-10", "sw_mm": 40.0})
+    await advance(redis, _zero_fetch(), make_irrigation())
+    first = dict(redis.state)
+    await advance(redis, _zero_fetch(), make_irrigation(), today=date(2026, 10, 25))
+    assert (first["date"], first["anchor_date"]) == ("2026-10-23", "2026-10-16")
+    assert (redis.state["date"], redis.state["anchor_date"]) == ("2026-10-24", "2026-10-17")
+
+
+def _zero_fetch_with(data):
+    base = _zero_fetch()
+
+    async def fetch(tenant_id, parcel_id, start, end):
+        out = await base(tenant_id, parcel_id, start, end)
+        out.update(data)
+        return out
+
+    fetch.calls = base.calls
+    return fetch

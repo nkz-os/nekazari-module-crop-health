@@ -5,9 +5,10 @@ depth and an anchor (``anchor_date``, ``anchor_sw_mm``, ``anchor_root_depth_mm``
 the water at the end of an older day. Each scheduled run replays from the anchor
 to yesterday with the latest rain, ET0 and irrigation, so late records reach the
 balance, then moves the anchor to the latest stepped day <= yesterday - 7. A probe
-correction becomes the anchor, so the replay never undoes it. Only the scheduled
-run writes the state (step, then correction), each under a short lock, and the
-saved date never moves backwards.
+correction becomes the anchor, so the replay never undoes it. A replay stopped by a
+gap on an already-stepped day steps on from the saved day and keeps the anchor.
+Only the scheduled run writes the state (step, then correction), each under a
+short lock, and the saved date never moves backwards.
 """
 from __future__ import annotations
 
@@ -225,37 +226,44 @@ async def advance_daily_balance(
                 return _low(state_result) if state_result is not None else None
 
         anchor_limit = yesterday - timedelta(days=REPLAY_DAYS)
-        new_anchor = base
-        result = None
-        last_day = None
-        day = start
-        while day <= yesterday:
-            precip, et0 = daily.get(day.isoformat(), (None, None))
-            if precip is None or et0 is None:
-                logger.warning(
-                    "daily_balance: no rain/ET0 for %s/%s on %s, stepping stopped",
-                    tenant_id, parcel_id, day.isoformat(),
+
+        def step_from(day: date, sw: float | None):
+            """Step from ``day`` to yesterday; stops at the first day without rain or ET0."""
+            result = last_day = anchor = gap = None
+            while day <= yesterday:
+                precip, et0 = daily.get(day.isoformat(), (None, None))
+                if precip is None or et0 is None:
+                    logger.warning(
+                        "daily_balance: no rain/ET0 for %s/%s on %s, stepping stopped",
+                        tenant_id, parcel_id, day.isoformat(),
+                    )
+                    gap = day
+                    break
+                result = step_day(
+                    sw, precip, et0, kc, soil, root_depth_mm, depletion_p,
+                    irrigation_mm=irrigation.get(day.isoformat(), 0.0),
                 )
-                break
-            result = step_day(
-                sw, precip, et0, kc, soil, root_depth_mm, depletion_p,
-                irrigation_mm=irrigation.get(day.isoformat(), 0.0),
+                sw = result.sw_mm
+                last_day = day
+                if day <= anchor_limit:
+                    anchor = (day, result.sw_mm, root_depth_mm)
+                day += timedelta(days=1)
+            return result, last_day, anchor, gap
+
+        result, last_day, stepped_anchor, gap = step_from(start, sw)
+        new_anchor = stepped_anchor or base
+        if state_day is not None and gap is not None and gap <= state_day:
+            # A gap on an old, already-stepped day: never move the state backwards; step on
+            # from the saved day and keep the anchor so the next run retries the replay.
+            logger.warning(
+                "daily_balance: replay of %s/%s stopped at %s before the saved %s, stepping on from the saved day",
+                tenant_id, parcel_id, gap.isoformat(), state_day.isoformat(),
             )
-            sw = result.sw_mm
-            last_day = day
-            if day <= anchor_limit:
-                new_anchor = (day, result.sw_mm, root_depth_mm)
-            day += timedelta(days=1)
+            result, last_day, _, _ = step_from(state_day + timedelta(days=1), state["sw_mm"])
+            new_anchor = base
 
         if result is None:
             return _low(state_result) if state_result is not None else None
-        if state_day is not None and last_day < state_day:
-            # A replay that stops short of the saved day must not move the state backwards.
-            logger.warning(
-                "daily_balance: replay of %s/%s stopped at %s before the saved %s, keeping previous state",
-                tenant_id, parcel_id, last_day.isoformat(), state_day.isoformat(),
-            )
-            return _low(state_result)
 
         await redis_state.set_balance_state(
             tenant_id, parcel_id, last_day.isoformat(), result.sw_mm,

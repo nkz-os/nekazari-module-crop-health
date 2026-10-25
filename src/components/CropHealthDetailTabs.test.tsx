@@ -42,4 +42,16 @@ describe('CropHealthDetailTabs water stress lines', () => {
     expect(html).toContain('detail.waterStressOpenField detail.fidelity.unavailable');
     expect(html).toContain('detail.waterStressUnderPanel detail.fidelity.unavailable');
   });
+  it.each(['parcel_weather', 'regional_proxy'])('labels a %s index as parcel', (fidelity) => {
+    const html = render({ waterStressIndex: 0.3, waterStressFidelity: fidelity });
+    expect(html).toContain('detail.waterStressParcel 0.30');
+  });
+  it('labels a model index as parcel even with an under-panel index', () => {
+    const html = render({
+      waterStressIndex: 0.3, waterStressFidelity: 'parcel_weather',
+      underPanelWaterStressIndex: 0.5, underPanelWaterStressFidelity: 'iot_sensor',
+    });
+    expect(html).toContain('detail.waterStressParcel 0.30');
+    expect(html).toContain('detail.waterStressUnderPanel 0.50');
+  });
 });

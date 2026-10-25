@@ -37,6 +37,14 @@ const KNOWN_FIDELITIES: string[] = ['iot_sensor', 'parcel_weather', 'regional_pr
 
 const TAB_KEYS: DetailTab[] = ['water', 'plant', 'yield', 'analytics'];
 
+// The open-field index is a model value (parcel) unless a probe produced it.
+function openFieldWaterStressLabelKey(fidelity: string, hasUnderPanel: boolean): string {
+  if (KNOWN_FIDELITIES.includes(fidelity) && fidelity !== 'iot_sensor' && fidelity !== 'unavailable') {
+    return 'detail.waterStressParcel';
+  }
+  return hasUnderPanel ? 'detail.waterStressOpenField' : 'detail.waterStress';
+}
+
 /** "index · fidelity · age", or the unavailable label when there is no usable value. */
 function waterStressValue(
   index: number | null | undefined,
@@ -205,7 +213,7 @@ const CropHealthDetailTabs: React.FC<CropHealthDetailTabsProps> = ({
       {assessment.waterStressFidelity && (
         <MetricSection>
           <p className="text-xs text-nkz-text-muted">
-            {assessment.underPanelWaterStressFidelity ? t('detail.waterStressOpenField') : t('detail.waterStress')}{' '}
+            {t(openFieldWaterStressLabelKey(assessment.waterStressFidelity, Boolean(assessment.underPanelWaterStressFidelity)))}{' '}
             {waterStressValue(assessment.waterStressIndex, assessment.waterStressFidelity, assessment.waterStressObservedAt, t)}
           </p>
         </MetricSection>

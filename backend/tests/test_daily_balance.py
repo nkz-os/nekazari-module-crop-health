@@ -73,10 +73,23 @@ def make_fetch(data=None, result="ok"):
     return fetch
 
 
-async def advance(redis, fetch):
+def make_irrigation(data=None, result="ok"):
+    calls = []
+
+    async def fetch_irrigation(tenant_id, parcel_id, start, end):
+        calls.append((start, end))
+        if result is None:
+            return None
+        return dict(data or {})
+
+    fetch_irrigation.calls = calls
+    return fetch_irrigation
+
+
+async def advance(redis, fetch, fetch_irrigation=None, today=TODAY):
     return await advance_daily_balance(
         redis, TENANT, PARCEL, soil=SOIL, root_depth_mm=ROOT, depletion_p=P,
-        kc=1.0, today=TODAY, fetch=fetch,
+        kc=1.0, today=today, fetch=fetch, fetch_irrigation=fetch_irrigation,
     )
 
 
@@ -251,7 +264,8 @@ async def test_step_then_read_back_keeps_eta_and_percolation():
     stepped = await advance(redis, make_fetch({"2026-10-22": (30.0, 2.0), "2026-10-23": (20.0, 2.0)}))
     assert stepped.deep_percolation_mm > 0
     assert redis.state["root_depth_mm"] == ROOT
-    read = await advance(redis, make_fetch())
+    # The state carries an anchor now: the next run re-steps those days with the same data.
+    read = await advance(redis, make_fetch({"2026-10-22": (30.0, 2.0), "2026-10-23": (20.0, 2.0)}))
     assert (read.actual_et_mm, read.deep_percolation_mm, read.excess_mm) == (
         stepped.actual_et_mm, stepped.deep_percolation_mm, stepped.excess_mm)
     assert read.sw_mm == stepped.sw_mm
@@ -289,4 +303,136 @@ def test_balance_from_state_flows():
 async def test_correction_keeps_the_stored_flows():
     redis = FakeRedis(state={"date": "2026-10-20", "sw_mm": 30.0, "root_depth_mm": 600.0, **FLOWS})
     await correct_balance_state(redis, TENANT, PARCEL, [reading()], SOIL, ROOT, 90.0, NOW)
-    assert redis.state == {"date": "2026-10-20", "sw_mm": pytest.approx(48.0), "root_depth_mm": 600.0, **FLOWS}
+    assert redis.state == {
+        "date": "2026-10-20", "sw_mm": pytest.approx(48.0), "root_depth_mm": 600.0, **FLOWS,
+        "anchor_date": "2026-10-20", "anchor_sw_mm": pytest.approx(48.0), "anchor_root_depth_mm": ROOT,
+    }
+
+
+def test_irrigation_adds_water():
+    r = step_day(40.0, 0.0, 0.0, 1.0, SOIL, ROOT, P, irrigation_mm=12.0)
+    assert r.sw_mm == pytest.approx(52.0)
+
+
+def _zero_fetch():
+    from datetime import timedelta
+
+    calls = []
+
+    async def fetch(tenant_id, parcel_id, start, end):
+        calls.append((start, end))
+        out, d = {}, start
+        while d <= end:
+            out[d.isoformat()] = (0.0, 0.0)
+            d += timedelta(days=1)
+        return out
+
+    fetch.calls = calls
+    return fetch
+
+
+@pytest.mark.asyncio
+async def test_late_irrigation_is_replayed():
+    redis = FakeRedis(state={"date": "2026-10-15", "sw_mm": 40.0})
+    await advance(redis, _zero_fetch(), make_irrigation())
+    assert redis.saved[-1] == ("2026-10-23", pytest.approx(40.0))
+    assert redis.state["anchor_date"] == "2026-10-16"
+    irrigation = make_irrigation({"2026-10-21": 10.0})
+    fetch = _zero_fetch()
+    res = await advance(redis, fetch, irrigation)
+    assert fetch.calls == irrigation.calls == [(date(2026, 10, 17), date(2026, 10, 23))]
+    assert redis.saved[-1] == ("2026-10-23", pytest.approx(50.0))
+    assert res.sw_mm == pytest.approx(50.0)
+
+
+@pytest.mark.asyncio
+async def test_anchor_moves_to_yesterday_minus_7():
+    redis = FakeRedis()
+    await advance(redis, make_fetch(), make_irrigation())
+    assert redis.state["date"] == "2026-10-23"
+    assert redis.state["anchor_date"] == "2026-10-16"
+    assert redis.state["anchor_root_depth_mm"] == ROOT
+
+
+@pytest.mark.asyncio
+async def test_correction_becomes_anchor():
+    redis = FakeRedis(state={"date": "2026-10-23", "sw_mm": 30.0, "root_depth_mm": ROOT,
+                             "anchor_date": "2026-10-16", "anchor_sw_mm": 70.0,
+                             "anchor_root_depth_mm": ROOT})
+    sw = await correct_balance_state(redis, TENANT, PARCEL, [reading()], SOIL, ROOT, 90.0, NOW)
+    assert (redis.state["anchor_date"], redis.state["anchor_sw_mm"]) == ("2026-10-23", pytest.approx(sw))
+    fetch, irrigation = _zero_fetch(), make_irrigation()
+    res = await advance(redis, fetch, irrigation, today=date(2026, 10, 25))
+    assert fetch.calls == irrigation.calls == [(date(2026, 10, 24), date(2026, 10, 24))]
+    assert redis.saved[-1] == ("2026-10-24", pytest.approx(sw))
+    assert res.sw_mm == pytest.approx(sw)
+    # Nothing stepped is a week old yet: the correction stays the anchor.
+    assert (redis.state["anchor_date"], redis.state["anchor_sw_mm"]) == ("2026-10-23", pytest.approx(sw))
+
+
+@pytest.mark.asyncio
+async def test_correction_on_yesterday_returns_state_without_fetch():
+    redis = FakeRedis(state={"date": "2026-10-23", "sw_mm": 30.0})
+    sw = await correct_balance_state(redis, TENANT, PARCEL, [reading()], SOIL, ROOT, 90.0, NOW)
+    fetch, irrigation = _zero_fetch(), make_irrigation()
+    res = await advance(redis, fetch, irrigation)
+    assert fetch.calls == irrigation.calls == []
+    assert res.sw_mm == pytest.approx(sw)
+
+
+@pytest.mark.asyncio
+async def test_irrigation_unavailable_keeps_state():
+    redis = FakeRedis(state={"date": "2026-10-20", "sw_mm": 50.0})
+    res = await advance(redis, make_fetch(), make_irrigation(result=None))
+    assert redis.saved == []
+    assert res.sw_mm == pytest.approx(50.0)
+    assert res.soil_moisture_confidence == "low"
+
+
+@pytest.mark.asyncio
+async def test_irrigation_unavailable_without_state_returns_none():
+    redis = FakeRedis()
+    assert await advance(redis, make_fetch(), make_irrigation(result=None)) is None
+    assert redis.saved == []
+
+
+@pytest.mark.asyncio
+async def test_state_without_anchor_is_base():
+    redis = FakeRedis(state={"date": "2026-10-22", "sw_mm": 50.0, "root_depth_mm": ROOT})
+    fetch = make_fetch()
+    await advance(redis, fetch, make_irrigation())
+    assert fetch.calls == [(date(2026, 10, 23), date(2026, 10, 23))]
+    assert redis.state["date"] == "2026-10-23"
+    assert (redis.state["anchor_date"], redis.state["anchor_sw_mm"]) == ("2026-10-22", 50.0)
+    assert redis.state["anchor_root_depth_mm"] == ROOT
+
+
+@pytest.mark.asyncio
+async def test_stale_anchor_is_ignored():
+    redis = FakeRedis(state={"date": "2026-10-20", "sw_mm": 50.0,
+                             "anchor_date": "2026-09-01", "anchor_sw_mm": 10.0})
+    fetch = make_fetch()
+    await advance(redis, fetch, make_irrigation())
+    assert fetch.calls == [(date(2026, 10, 21), date(2026, 10, 23))]
+
+
+@pytest.mark.asyncio
+async def test_replay_never_moves_the_state_back():
+    redis = FakeRedis(state={"date": "2026-10-23", "sw_mm": 45.0,
+                             "anchor_date": "2026-10-16", "anchor_sw_mm": 40.0,
+                             "anchor_root_depth_mm": ROOT})
+    res = await advance(redis, make_fetch({"2026-10-20": (None, 3.0)}), make_irrigation())
+    assert redis.saved == []
+    assert res.sw_mm == pytest.approx(45.0)
+    assert res.soil_moisture_confidence == "low"
+
+
+@pytest.mark.asyncio
+async def test_anchor_root_is_recorded_not_stepped():
+    # The anchor water was saved at 800 mm; the step uses the caller's (growing) root.
+    redis = FakeRedis(state={"date": "2026-10-23", "sw_mm": 45.0, "root_depth_mm": 800.0,
+                             "anchor_date": "2026-10-16", "anchor_sw_mm": 40.0,
+                             "anchor_root_depth_mm": 800.0})
+    res = await advance(redis, make_fetch(), make_irrigation())
+    assert redis.state["root_depth_mm"] == ROOT
+    assert res.root_depth_mm == ROOT

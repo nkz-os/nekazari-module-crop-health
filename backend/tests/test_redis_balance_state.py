@@ -36,3 +36,16 @@ async def test_balance_state_keeps_the_day_flows():
         "date": "2026-10-20", "sw_mm": 42.5, "precip_mm": 3.0, "etc_mm": 2.4,
         "actual_et_mm": 2.0, "deep_percolation_mm": 0.5, "root_depth_mm": 800.0,
     }
+
+
+@pytest.mark.anyio
+async def test_balance_state_keeps_anchor_fields():
+    st = RedisState(client=FakeRedis())
+    assert await st.set_balance_state(
+        "tenant-a", "p-1", "2026-10-23", 42.5, root_depth_mm=600.0,
+        anchor_date="2026-10-16", anchor_sw_mm=40.0, anchor_root_depth_mm=600.0,
+    )
+    assert await st.get_balance_state("tenant-a", "p-1") == {
+        "date": "2026-10-23", "sw_mm": 42.5, "root_depth_mm": 600.0,
+        "anchor_date": "2026-10-16", "anchor_sw_mm": 40.0, "anchor_root_depth_mm": 600.0,
+    }

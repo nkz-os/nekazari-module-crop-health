@@ -1940,7 +1940,7 @@ async def _scheduled_balance(
         balance = await advance_daily_balance(
             redis_state, tenant_id, parcel_id,
             soil=soil, root_depth_mm=root_depth_mm, depletion_p=depletion_p,
-            kc=kc, today=today, fetch=_fetch_daily_water,
+            kc=kc, today=today, fetch=_fetch_daily_water, fetch_irrigation=_fetch_irrigation,
         )
     except Exception as exc:  # noqa: BLE001 -- fail-safe: no balance rather than no assessment
         logger.warning("daily_balance: step failed for %s/%s, no balance: %s", tenant_id, parcel_id, exc)

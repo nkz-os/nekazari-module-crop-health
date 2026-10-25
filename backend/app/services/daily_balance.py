@@ -1,8 +1,13 @@
 """Daily FAO-56 soil water bucket: one step per closed day, corrected by probes.
 
-The state is ``{"date", "sw_mm"}`` in Redis. Only this module advances it, under
-a short lock shared with the sensor correction, so a webhook arriving during the
-04:00 step skips instead of racing it and the saved date never moves backwards.
+The state in Redis is ``{"date", "sw_mm"}`` plus the last day's flows, the root
+depth and an anchor (``anchor_date``, ``anchor_sw_mm``, ``anchor_root_depth_mm``):
+the water at the end of an older day. Each scheduled run replays from the anchor
+to yesterday with the latest rain, ET0 and irrigation, so late records reach the
+balance, then moves the anchor to the latest stepped day <= yesterday - 7. A probe
+correction becomes the anchor, so the replay never undoes it. Only the scheduled
+run writes the state (step, then correction), each under a short lock, and the
+saved date never moves backwards.
 """
 from __future__ import annotations
 
@@ -17,6 +22,7 @@ from app.services.redis_state import StoreError
 logger = logging.getLogger(__name__)
 
 SPINUP_DAYS = 30
+REPLAY_DAYS = 7
 BALANCE_LOCK_TTL_S = 120
 # The day's flows saved with the state: all four, or the read-back has none.
 DAY_FLOWS = ("precip_mm", "etc_mm", "actual_et_mm", "deep_percolation_mm")
@@ -36,12 +42,13 @@ def step_day(
     soil,
     root_depth_mm: float,
     depletion_p: float,
+    irrigation_mm: float = 0.0,
 ) -> SoilWaterBalanceResult:
     """One closed day; ``sw_prev=None`` is the engine cold start."""
     return soil_water_balance(
         sw_yesterday=sw_prev,
         precip_mm=precip_mm,
-        irrigation_mm=0.0,
+        irrigation_mm=irrigation_mm,
         etc_mm=et0_mm * kc,
         fc=soil.field_capacity,
         wp=soil.wilting_point,
@@ -118,6 +125,27 @@ def _low(result: SoilWaterBalanceResult) -> SoilWaterBalanceResult:
     return dataclasses.replace(result, soil_moisture_confidence="low")
 
 
+def _positive(value) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+        return None
+    return float(value)
+
+
+def _anchor(state: dict | None, tenant_id: str, parcel_id: str) -> tuple[date, float, float | None] | None:
+    """The state's anchor (day, water, root depth); None when absent or malformed."""
+    if not state or state.get("anchor_date") is None:
+        return None
+    sw = state.get("anchor_sw_mm")
+    try:
+        day = date.fromisoformat(state["anchor_date"])
+        if isinstance(sw, bool) or not isinstance(sw, (int, float)):
+            raise ValueError("anchor_sw_mm is not a number")
+    except (TypeError, ValueError) as exc:
+        logger.warning("daily_balance: malformed anchor for %s/%s, ignored: %s", tenant_id, parcel_id, exc)
+        return None
+    return day, float(sw), _positive(state.get("anchor_root_depth_mm"))
+
+
 async def advance_daily_balance(
     redis_state,
     tenant_id: str,
@@ -129,8 +157,12 @@ async def advance_daily_balance(
     kc: float,
     today: date,
     fetch,
+    fetch_irrigation=None,
 ) -> SoilWaterBalanceResult | None:
-    """Step the stored balance up to yesterday; None when nothing trustworthy exists."""
+    """Replay the stored balance from its anchor up to yesterday; None when nothing trustworthy exists.
+
+    ``fetch_irrigation=None`` means no irrigation source (every day 0 mm).
+    """
     key = _lock_key(tenant_id, parcel_id)
     acquired = await redis_state.try_lock(key, BALANCE_LOCK_TTL_S)
     if not acquired:
@@ -148,13 +180,26 @@ async def advance_daily_balance(
             return None
 
         yesterday = today - timedelta(days=1)
+        window_start = yesterday - timedelta(days=SPINUP_DAYS)
         state_result = None
-        if state is not None and date.fromisoformat(state["date"]) >= yesterday - timedelta(days=SPINUP_DAYS):
+        state_day = None
+        if state is not None and date.fromisoformat(state["date"]) >= window_start:
             # Only a state inside the replay window may stand in for today's balance.
             state_result = balance_from_stored(state, soil, root_depth_mm, depletion_p)
-            last_saved = date.fromisoformat(state["date"])
-            start = last_saved + timedelta(days=1)
-            sw = state["sw_mm"]
+            state_day = date.fromisoformat(state["date"])
+
+        # Replay base: the anchor, else the state itself (saved before anchors), else spin-up.
+        # The anchor root only records the depth its water was saved at; steps use the caller's.
+        anchor = _anchor(state, tenant_id, parcel_id)
+        if anchor is not None and anchor[0] >= window_start:
+            base = anchor
+        elif state_day is not None:
+            base = (state_day, state["sw_mm"], _positive(state.get("root_depth_mm")) or root_depth_mm)
+        else:
+            base = None
+        if base is not None:
+            start = base[0] + timedelta(days=1)
+            sw = base[1]
         else:
             start = yesterday - timedelta(days=SPINUP_DAYS - 1)
             sw = None
@@ -169,7 +214,18 @@ async def advance_daily_balance(
                 tenant_id, parcel_id,
             )
             return _low(state_result) if state_result is not None else None
+        irrigation = {}
+        if fetch_irrigation is not None:
+            irrigation = await fetch_irrigation(tenant_id, parcel_id, start, yesterday)
+            if irrigation is None:
+                logger.warning(
+                    "daily_balance: irrigation unavailable for %s/%s, keeping previous state",
+                    tenant_id, parcel_id,
+                )
+                return _low(state_result) if state_result is not None else None
 
+        anchor_limit = yesterday - timedelta(days=REPLAY_DAYS)
+        new_anchor = base
         result = None
         last_day = None
         day = start
@@ -181,17 +237,31 @@ async def advance_daily_balance(
                     tenant_id, parcel_id, day.isoformat(),
                 )
                 break
-            result = step_day(sw, precip, et0, kc, soil, root_depth_mm, depletion_p)
+            result = step_day(
+                sw, precip, et0, kc, soil, root_depth_mm, depletion_p,
+                irrigation_mm=irrigation.get(day.isoformat(), 0.0),
+            )
             sw = result.sw_mm
             last_day = day
+            if day <= anchor_limit:
+                new_anchor = (day, result.sw_mm, root_depth_mm)
             day += timedelta(days=1)
 
         if result is None:
             return _low(state_result) if state_result is not None else None
+        if state_day is not None and last_day < state_day:
+            # A replay that stops short of the saved day must not move the state backwards.
+            logger.warning(
+                "daily_balance: replay of %s/%s stopped at %s before the saved %s, keeping previous state",
+                tenant_id, parcel_id, last_day.isoformat(), state_day.isoformat(),
+            )
+            return _low(state_result)
 
         await redis_state.set_balance_state(
             tenant_id, parcel_id, last_day.isoformat(), result.sw_mm,
             root_depth_mm=root_depth_mm, **day_flows(result),
+            anchor_date=new_anchor[0].isoformat(), anchor_sw_mm=new_anchor[1],
+            anchor_root_depth_mm=new_anchor[2],
         )
         return _low(result) if last_day < yesterday else result
     finally:
@@ -208,7 +278,10 @@ async def correct_balance_state(
     awc_mm: float,
     now_ts: float,
 ) -> float | None:
-    """Pull the stored water toward the probe mean; the state date is unchanged."""
+    """Pull the stored water toward the probe mean; the state date is unchanged.
+
+    The corrected water becomes the anchor, so the next replay starts from it.
+    """
     used = valid_theta_readings(readings, now_ts)
     if not used:
         return None
@@ -231,6 +304,7 @@ async def correct_balance_state(
         await redis_state.set_balance_state(
             tenant_id, parcel_id, state["date"], sw,
             **{k: state.get(k) for k in STATE_EXTRAS},
+            anchor_date=state["date"], anchor_sw_mm=sw, anchor_root_depth_mm=root_depth_mm,
         )
         return sw
     finally:

@@ -373,10 +373,14 @@ class RedisState:
         actual_et_mm: float | None = None,
         deep_percolation_mm: float | None = None,
         root_depth_mm: float | None = None,
+        anchor_date: str | None = None,
+        anchor_sw_mm: float | None = None,
+        anchor_root_depth_mm: float | None = None,
     ) -> bool:
         """Store the soil water (mm) at the end of ``day``; TTL 40 days.
 
-        The day's flows and the root depth the water refers to are stored when given.
+        The day's flows, the root depth the water refers to and the replay anchor
+        (water at the end of an older day) are stored when given.
         """
         value: dict = {"date": day, "sw_mm": sw_mm}
         extras = {
@@ -385,6 +389,9 @@ class RedisState:
             "actual_et_mm": actual_et_mm,
             "deep_percolation_mm": deep_percolation_mm,
             "root_depth_mm": root_depth_mm,
+            "anchor_date": anchor_date,
+            "anchor_sw_mm": anchor_sw_mm,
+            "anchor_root_depth_mm": anchor_root_depth_mm,
         }
         value.update({k: v for k, v in extras.items() if v is not None})
         return await self.set_json(f"swd:{tenant_id}:{parcel_id}", value, 40 * 86400)

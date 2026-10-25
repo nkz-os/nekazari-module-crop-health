@@ -33,7 +33,18 @@ def _fetch_full(precip=1.0, et0=3.0):
     return fetch
 
 
-def _setup_scheduled(monkeypatch, redis, *, redis_error=False, fetch=None):
+def _irrigation(data=None):
+    calls = []
+
+    async def fetch_irrigation(tenant_id, parcel_id, start, end):
+        calls.append((tenant_id, parcel_id, start, end))
+        return dict(data or {})
+
+    fetch_irrigation.calls = calls
+    return fetch_irrigation
+
+
+def _setup_scheduled(monkeypatch, redis, *, redis_error=False, fetch=None, irrigation=None):
     published, _ = _setup(monkeypatch)
 
     async def _crop(parcel_id, tenant_id):
@@ -55,6 +66,7 @@ def _setup_scheduled(monkeypatch, redis, *, redis_error=False, fetch=None):
     monkeypatch.setattr(pipeline, "_gather_parcel_sensors", _no_sensors)
     monkeypatch.setattr(pipeline.context_client, "get_nutrient_recommendation", _none, raising=False)
     monkeypatch.setattr(pipeline, "_fetch_daily_water", fetch)
+    monkeypatch.setattr(pipeline, "_fetch_irrigation", irrigation or _irrigation())
     monkeypatch.setattr("app.main.get_redis_state", _get_redis_state)
     return published, fetch
 
@@ -202,3 +214,17 @@ async def test_redis_unavailable_scheduled_run_still_publishes(monkeypatch):
     e = _rollup_entity(published)
     assert e["waterStressFidelity"]["value"] == "unavailable"
     assert "waterStressIndex" not in e
+
+
+@pytest.mark.asyncio
+async def test_scheduled_run_passes_irrigation(monkeypatch):
+    dry = FakeRedis()
+    _setup_scheduled(monkeypatch, dry)
+    await pipeline.compute_assessment(URN, TENANT)
+    wet = FakeRedis()
+    irrigation = _irrigation({YESTERDAY: 5.0})
+    _setup_scheduled(monkeypatch, wet, irrigation=irrigation)
+    await pipeline.compute_assessment(URN, TENANT)
+    assert irrigation.calls == [(TENANT, PARCEL, YDAY - timedelta(days=29), YDAY)]
+    assert wet.state["sw_mm"] == pytest.approx(dry.state["sw_mm"] + 5.0, abs=0.01)
+    assert wet.state["anchor_date"] == (YDAY - timedelta(days=7)).isoformat()

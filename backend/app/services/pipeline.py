@@ -1940,7 +1940,7 @@ async def _scheduled_balance(
         balance = await advance_daily_balance(
             redis_state, tenant_id, parcel_id,
             soil=soil, root_depth_mm=root_depth_mm, depletion_p=depletion_p,
-            kc=kc, today=today, fetch=_fetch_daily_water,
+            kc=kc, today=today, fetch=_fetch_daily_water, fetch_irrigation=_fetch_irrigation,
         )
     except Exception as exc:  # noqa: BLE001 -- fail-safe: no balance rather than no assessment
         logger.warning("daily_balance: step failed for %s/%s, no balance: %s", tenant_id, parcel_id, exc)
@@ -2282,6 +2282,93 @@ async def _fetch_daily_water(
         logger.warning("_fetch_daily_water: failed for tenant %s parcel=%s — no daily water data: %s",
                        tenant_id, parcel_id, exc)
         return None
+
+
+_IRRIGATION_PAGE = 1000
+
+
+def _irrigation_day(raw) -> date | None:
+    """UTC date of a keyValues DateTime (ISO string or ``{"@value": ...}``), or None."""
+    if isinstance(raw, dict):
+        raw = raw.get("@value", raw.get("value"))
+    if not isinstance(raw, str) or not raw:
+        return None
+    try:
+        dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if dt.tzinfo is not None:
+        dt = dt.astimezone(timezone.utc)
+    return dt.date()
+
+
+async def _fetch_irrigation(
+    tenant_id: str,
+    parcel_id: str,
+    start: date,
+    end: date,
+) -> dict[str, float] | None:
+    """Completed irrigation per UTC day (mm) from field-operations, or None.
+
+    ``{"YYYY-MM-DD": mm}`` for days in [start, end] (days without irrigation
+    are absent). None on any Orion error so the caller keeps its previous
+    state rather than stepping a dry day. Operations without a usable dose or
+    date are skipped with a warning.
+    """
+    from nkz_platform_sdk.orion import OrionClient
+
+    settings = get_settings()
+    urn = parcel_id if parcel_id.startswith("urn:") else f"urn:ngsi-ld:AgriParcel:{parcel_id}"
+    q = f'operationType=="irrigation";status=="completed";hasAgriParcel=="{urn}"'
+    client = OrionClient(
+        tenant_id,
+        base_url=settings.orion_ld_url,
+        context_url=settings.orion_ld_context,
+    )
+    ops: list[dict] = []
+    try:
+        offset = 0
+        while True:
+            page = await client.query_entities(
+                type="AgriParcelOperation", q=q, limit=_IRRIGATION_PAGE,
+                offset=offset, options="keyValues",
+            )
+            page = page or []
+            ops.extend(o for o in page if isinstance(o, dict))
+            if len(page) < _IRRIGATION_PAGE:
+                break
+            offset += _IRRIGATION_PAGE
+    except Exception as exc:  # noqa: BLE001 — the balance keeps its previous state on any failure
+        logger.warning("_fetch_irrigation: failed for tenant %s parcel=%s — no irrigation data: %s",
+                       tenant_id, parcel_id, exc)
+        return None
+    finally:
+        try:
+            await client.close()
+        except Exception:  # noqa: BLE001
+            pass
+
+    out: dict[str, float] = {}
+    for op in ops:
+        op_id = op.get("id")
+        dose = op.get("waterPerHectare")
+        if isinstance(dose, dict):
+            dose = dose.get("value")
+        if isinstance(dose, bool) or not isinstance(dose, (int, float)) \
+                or not math.isfinite(dose) or dose <= 0:
+            logger.warning("_fetch_irrigation: operation %s of tenant %s parcel=%s has no usable dose — skipped",
+                           op_id, tenant_id, parcel_id)
+            continue
+        day = _irrigation_day(op.get("endedAt")) or _irrigation_day(op.get("startedAt"))
+        if day is None:
+            logger.warning("_fetch_irrigation: operation %s of tenant %s parcel=%s has no usable date — skipped",
+                           op_id, tenant_id, parcel_id)
+            continue
+        if day < start or day > end:
+            continue
+        key = day.isoformat()
+        out[key] = out.get(key, 0.0) + dose / 10_000.0
+    return out
 
 
 def _extract_eoproduct_scalar(entity: dict, attr: str) -> float | None:

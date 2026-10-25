@@ -3,6 +3,15 @@ from app.services import pipeline
 from app.services import context_client
 
 
+@pytest.fixture(autouse=True)
+def _no_orion_cleanup(monkeypatch):
+    """No real Orion call from the stale-attribute cleanup after a publish."""
+    async def _noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(pipeline, "_clear_stale_water_stress", _noop)
+
+
 @pytest.mark.asyncio
 async def test_returns_none_when_no_crop(monkeypatch):
     async def _read_crop(parcel_id, tenant_id):
@@ -83,6 +92,7 @@ async def test_compute_assessment_surfaces_soil_suitability(monkeypatch):
         suitability = SoilSuitability(verdict="marginal", reason="pH out of range")
 
     class _SentinelCtx:
+        crop = None  # CropContext always carries it; the depletion fraction reads it
         soil = _Soil()
 
     sentinel_ctx = _SentinelCtx()

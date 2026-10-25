@@ -29,9 +29,9 @@ async def test_readings_scoped_by_tenant_and_context(state):
 
 @pytest.mark.anyio
 async def test_soil_water_scoped_by_tenant(state):
-    await state.set_soil_water("acme", "p1", 42.0)
-    assert await state.get_soil_water("acme", "p1") == 42.0
-    assert await state.get_soil_water("other", "p1") is None
+    await state.set_balance_state("acme", "p1", "2026-06-14", 42.0)
+    assert await state.get_balance_state("acme", "p1") == {"date": "2026-06-14", "sw_mm": 42.0}
+    assert await state.get_balance_state("other", "p1") is None
 
 
 @pytest.mark.anyio

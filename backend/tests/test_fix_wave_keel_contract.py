@@ -15,6 +15,15 @@ from app.services import pipeline
 from app.services.meteo_context import MeteoContext
 
 
+@pytest.fixture(autouse=True)
+def _no_orion_cleanup(monkeypatch):
+    """No real Orion call from the stale-attribute cleanup after a publish."""
+    async def _noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(pipeline, "_clear_stale_water_stress", _noop)
+
+
 _STAGE_TABLE = {
     "emergence": (0.0, 90.0),
     "vegetative": (90.0, 520.0),
@@ -96,8 +105,6 @@ async def test_both_paths_derive_same_stage_from_gdd(monkeypatch):
         gdd=gdd,
         soil=None,
         root_depth_mm=300.0,
-        sw_yesterday=None,
-        irrigation_mm=0.0,
         now=datetime.now(timezone.utc),
         stage_table=StageTable(stages=dict(_STAGE_TABLE)),
         publish=False,

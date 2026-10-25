@@ -6,7 +6,7 @@ import pytest
 from app.schemas import SoilProperties
 from app.services.parcel_link import OPEN_FIELD, UNDER_PANEL
 from tests.test_pipeline_under_panel_stress import (
-    ENTITY_ID, NOW, PARCEL, FakeRedis, _entity, _setup, _trigger, soil_reading,
+    ENTITY_ID, NOW, PARCEL, STATE, FakeRedis, _entity, _setup, _trigger, soil_reading,
 )
 
 SOIL = SoilProperties(has_data=True, hydraulics_from_soil=True, field_capacity=0.30, wilting_point=0.12)
@@ -54,23 +54,26 @@ async def test_both_contexts(monkeypatch):
     redis = CtxRedis({
         (UNDER_PANEL, "soilMoisture"): [soil_reading(16.0)],
         (OPEN_FIELD, "soilMoisture"): [soil_reading(17.0)],
-    })
+    }, state=dict(STATE))
     await _trigger(redis)
     e = _entity(published)
     assert e["underPanelWaterStressIndex"]["value"] == 0.556
     assert e["waterStressIndex"]["value"] == 0.444
     swb = published["assessments"][-1].soil_water_balance
-    expected = min(max((0.17 - 0.12) * swb.root_depth_mm, 0.0), swb.awc_mm)
-    assert redis.soil_water_set == [(PARCEL, pytest.approx(expected))]
+    # The trigger only reads the stored balance.
+    assert redis.saved == []
+    assert swb.sw_mm == STATE["sw_mm"]
 
 
 @pytest.mark.asyncio
 async def test_under_panel_not_assimilated(monkeypatch):
     published, _ = _setup2(monkeypatch)
-    redis = CtxRedis({(UNDER_PANEL, "soilMoisture"): [soil_reading(16.0)]})
+    redis = CtxRedis({(UNDER_PANEL, "soilMoisture"): [soil_reading(16.0)]}, state=dict(STATE))
     await _trigger(redis)
     swb = published["assessments"][-1].soil_water_balance
-    assert redis.soil_water_set == [(PARCEL, swb.sw_mm)]
+    # Under-panel probes never correct the stored balance.
+    assert redis.saved == []
+    assert swb.sw_mm == STATE["sw_mm"]
 
 
 @pytest.mark.asyncio

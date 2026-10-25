@@ -225,6 +225,8 @@ class SoilWaterBalanceResult(BaseModel):
     stress_coefficient_ks: float = 1.0
     actual_et_mm: float = 0.0
     deep_percolation_mm: float = 0.0
+    # False when the day's flows (inflow, ETc, ETa, percolation) are unknown.
+    day_flows_known: bool = True
 
 
 class WaterloggingRiskResult(BaseModel):
@@ -597,8 +599,9 @@ class CropHealthAssessment(BaseModel):
             entity["soilRAWmm"] = {"type": "Property", "value": swb.raw_mm, "unitCode": "MMT"}
             entity["depletionFractionP"] = {"type": "Property", "value": swb.depletion_fraction_p}
             entity["stressCoefficientKs"] = {"type": "Property", "value": round(swb.stress_coefficient_ks, 3)}
-            entity["actualETmm"] = {"type": "Property", "value": swb.actual_et_mm, "unitCode": "MMT"}
-            entity["deepPercolationMm"] = {"type": "Property", "value": swb.deep_percolation_mm, "unitCode": "MMT"}
+            if getattr(swb, "day_flows_known", True):
+                entity["actualETmm"] = {"type": "Property", "value": swb.actual_et_mm, "unitCode": "MMT"}
+                entity["deepPercolationMm"] = {"type": "Property", "value": swb.deep_percolation_mm, "unitCode": "MMT"}
         if self.waterlogging_risk:
             wlr = self.waterlogging_risk
             entity["waterloggingRiskLevel"] = {"type": "Property", "value": wlr.risk_level}

@@ -198,30 +198,6 @@ class RedisState:
                 logger.warning("Corrupt Redis entry in %s: %s — %s", key, raw[0], exc)
         return None
 
-    async def get_soil_water(self, tenant_id: str, parcel_id: str) -> float | None:
-        """Get stored soil water content for a parcel (mm)."""
-        if self._client is None:
-            return None
-        try:
-            val = await self._client.get(f"{self._prefix}sw:{tenant_id}:{parcel_id}")
-            return float(val) if val else None
-        except Exception as exc:
-            logger.warning("redis_state.get_soil_water: failed for parcel %s — returning None: %s", parcel_id, exc)
-            return None
-
-    async def set_soil_water(self, tenant_id: str, parcel_id: str, sw_mm: float) -> None:
-        """Store soil water content for a parcel (mm). TTL 7 days."""
-        if self._client is None:
-            return
-        try:
-            await self._client.set(
-                f"{self._prefix}sw:{tenant_id}:{parcel_id}",
-                str(sw_mm),
-                ex=86400 * 7,
-            )
-        except Exception as exc:
-            logger.warning("redis_state.set_soil_water: failed for parcel %s — state not persisted: %s", parcel_id, exc)
-
     async def set_parcel_reading(
         self,
         tenant_id: str,
@@ -381,6 +357,37 @@ class RedisState:
         except Exception as exc:
             logger.warning("redis_state.set_json: failed for %s — not stored: %s", key, exc)
             return False
+
+    async def get_balance_state(self, tenant_id: str, parcel_id: str) -> dict | None:
+        """Daily soil water state ``{"date", "sw_mm"}``; raises StoreError like get_json."""
+        return await self.get_json(f"swd:{tenant_id}:{parcel_id}")
+
+    async def set_balance_state(
+        self,
+        tenant_id: str,
+        parcel_id: str,
+        day: str,
+        sw_mm: float,
+        precip_mm: float | None = None,
+        etc_mm: float | None = None,
+        actual_et_mm: float | None = None,
+        deep_percolation_mm: float | None = None,
+        root_depth_mm: float | None = None,
+    ) -> bool:
+        """Store the soil water (mm) at the end of ``day``; TTL 40 days.
+
+        The day's flows and the root depth the water refers to are stored when given.
+        """
+        value: dict = {"date": day, "sw_mm": sw_mm}
+        extras = {
+            "precip_mm": precip_mm,
+            "etc_mm": etc_mm,
+            "actual_et_mm": actual_et_mm,
+            "deep_percolation_mm": deep_percolation_mm,
+            "root_depth_mm": root_depth_mm,
+        }
+        value.update({k: v for k, v in extras.items() if v is not None})
+        return await self.set_json(f"swd:{tenant_id}:{parcel_id}", value, 40 * 86400)
 
     async def try_lock(self, key: str, ttl_s: int) -> bool | None:
         """True if acquired, False if held by someone else, None if Redis is down."""

@@ -6,6 +6,15 @@ from app.services.zonation import Zone
 from app.schemas import CropHealthAssessment, Severity
 
 
+@pytest.fixture(autouse=True)
+def _no_orion_cleanup(monkeypatch):
+    """No real Orion call from the stale-attribute cleanup after a publish."""
+    async def _noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(pipeline, "_clear_stale_water_stress", _noop)
+
+
 _Z0 = {"type": "Polygon", "coordinates": [[[0, 0], [0, 1], [1, 1], [1, 0], [0, 0]]]}
 _Z1 = {"type": "Polygon", "coordinates": [[[1, 0], [1, 1], [2, 1], [2, 0], [1, 0]]]}
 

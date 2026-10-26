@@ -63,11 +63,10 @@ const ParcelHealthWorkbench: React.FC<ParcelHealthWorkbenchProps> = ({ parcelId,
       <CropStatusSnapshot
         parcelId={parcelId}
         parcelName={parcelName}
-        assessment={data.assessment as never}
+        assessment={data.assessment}
         nextJob={data.nextJob}
         surprise={data.surprise}
         freshness={data.freshness}
-        stale={data.stale}
       />
       <PhenologyTimeline status={data.phenologyStatus} />
       <CropHealthDetailTabs

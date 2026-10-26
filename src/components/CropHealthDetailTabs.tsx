@@ -92,6 +92,7 @@ const CropHealthDetailTabs: React.FC<CropHealthDetailTabsProps> = ({
           <p className="text-sm text-nkz-text-muted mt-1">{t('contextPanel.noData')}</p>
           <p className="text-xs text-nkz-text-muted mt-1">{t('contextPanel.noDataHint')}</p>
         </div>
+        {diseases.length > 0 && <CropHealthRisksPanel diseases={diseases} assessment={null} />}
         <YieldForecastSection parcelId={parcelId} />
       </>
     );

@@ -6,7 +6,7 @@ vi.mock('@nekazari/sdk', () => ({
   useTranslation: () => ({ t: (k: string) => k }),
 }));
 vi.mock('./YieldForecastSection', () => ({ default: () => null }));
-vi.mock('./CropHealthRisksPanel', () => ({ default: () => null }));
+vi.mock('./CropHealthRisksPanel', () => ({ default: () => <i>risks-panel</i> }));
 vi.mock('./ZoneHealthPanel', () => ({ default: () => null }));
 
 import CropHealthDetailTabs from './CropHealthDetailTabs';
@@ -67,5 +67,16 @@ describe('CropHealthDetailTabs tabs', () => {
     expect(html).toContain('tabs.risks');
     expect(html).not.toContain('tabs.yield');
     expect(html).not.toContain('tabs.analytics');
+  });
+});
+
+describe('CropHealthDetailTabs without an assessment', () => {
+  const r = (diseases: unknown[]) => renderToStaticMarkup(
+    <CropHealthDetailTabs parcelId="p1" assessment={null} phenology={null} trend={[]} correlation={[]}
+      correlationStats={null} diseases={diseases as never} />,
+  );
+  it('still shows the disease risks when there are some', () => {
+    expect(r([{ disease: 'downy_mildew' }])).toContain('risks-panel');
+    expect(r([])).not.toContain('risks-panel');
   });
 });

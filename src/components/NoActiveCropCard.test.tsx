@@ -18,8 +18,13 @@ describe('NoActiveCropCard', () => {
   it('names the planned crop and offers planning', () => {
     const h = render({ plannedCrop: { species: 'TRZAX', names: { es: 'Trigo', en: 'Wheat' } } });
     expect(h).toContain('noCrop.title');
-    expect(h).toContain('noCrop.next:{"crop":"Trigo"}');
+    expect(h).toContain('noCrop.next:{"crop":"Trigo","when":"worklist.when.noDate"}');
     expect(h).toContain('noCrop.plan');
+  });
+  it('shows the planned sowing date when there is one', () => {
+    const h = render({ plannedCrop: { species: 'TRZAX', sowingDate: '2026-11-05' } });
+    expect(h).not.toContain('worklist.when.noDate');
+    expect(h).toMatch(/"when":"[^"]*2026|"when":"[^"]*11/);
   });
   it('falls back to the species code without a localised name', () => {
     expect(render({ plannedCrop: { species: 'TRZAX' } })).toContain('"crop":"TRZAX"');

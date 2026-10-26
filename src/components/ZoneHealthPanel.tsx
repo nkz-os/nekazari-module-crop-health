@@ -3,7 +3,7 @@ import { useTranslation } from '@nekazari/sdk';
 import { SeverityBadge } from './shared/SeverityBadge';
 import type { ZoneAssessmentData, ZonesResponse } from '../types/assessment';
 import { navigateTo } from '../api/cropHealthApi';
-import { splitZones, zoneKey, zoneNumberList, zoneNumbers, zoneSelection, type ZoneRef } from '../utils/zones';
+import { splitZones, zoneKey, zoneNumberList, zoneNumbers, zoneSelection, zoneViewerPath, type ZoneRef } from '../utils/zones';
 
 interface ZoneHealthPanelProps {
   zones: ZoneAssessmentData[];
@@ -114,7 +114,7 @@ const ZoneHealthPanel: React.FC<ZoneHealthPanelProps> = ({ zones, isWholeParcel,
                     onBlur={() => zoneSelection.hover(null)}
                     onClick={() => {
                       zoneSelection.pin(ref);
-                      navigateTo(`/viewer?parcel=${ref.parcelId}&zone=${ref.zoneId}`);
+                      navigateTo(zoneViewerPath(ref));
                     }}
                     className="text-xs text-nkz-accent-base font-medium cursor-pointer"
                   >

@@ -14,11 +14,13 @@ const NoActiveCropCard: React.FC<NoActiveCropCardProps> = ({ parcelId, plannedCr
   const lang = i18n?.language || 'es';
   const plannedName = plannedCrop ? (plannedCrop.names?.[lang] ?? plannedCrop.names?.[lang.split('-')[0]] ?? plannedCrop.species) : '';
 
+  const when = plannedCrop?.sowingDate ? new Date(plannedCrop.sowingDate).toLocaleDateString(lang) : t('worklist.when.noDate');
+
   return (
     <div className="bg-nkz-surface-raised border border-nkz-border rounded-lg p-3 mb-3 space-y-2">
       <p className="text-lg font-semibold text-nkz-text-primary">{t('noCrop.title')}</p>
       {plannedCrop && (
-        <p className="text-sm text-nkz-text-secondary">{t('noCrop.next', { crop: plannedName })}</p>
+        <p className="text-sm text-nkz-text-secondary">{t('noCrop.next', { crop: plannedName, when })}</p>
       )}
       <button
         type="button"

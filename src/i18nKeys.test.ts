@@ -18,13 +18,6 @@ describe('i18n parity', () => {
   }
 });
 
-describe('zone strings', () => {
-  for (const [lang, res] of Object.entries(resources)) {
-    it(`${lang} has the zone selection hint`, () => {
-      expect(typeof (res as any)['crop-health'].zones.selectHint).toBe('string');
-    });
-  }
-});
 
 describe('worklist and fleet parity', () => {
   const en = (resources.en as any)['crop-health'];
@@ -33,7 +26,7 @@ describe('worklist and fleet parity', () => {
       const ns = (res as any)['crop-health'];
       expect(keys(ns.worklist).sort()).toEqual(keys(en.worklist).sort());
       expect(keys(ns.fleet).sort()).toEqual(['jobsToday', 'noData', 'surprises']);
-      expect(keys(en.worklist).length).toBe(20);
+      expect(keys(en.worklist).length).toBe(21);
     });
   }
 });

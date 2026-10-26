@@ -6,7 +6,7 @@ import { MAP_LAYER_MODE_KEY, readMapLayerMode, type MapLayerMode } from '../cons
 import type { AssessmentData, ZoneAssessmentData } from '../types/assessment';
 import {
   SEVERITY_COLORS, emphasisStyle, parcelOnlyLabel, polygonRings, readZoneFromLocation, zoneCentroid, zoneEmphasis,
-  zoneFillAlpha, zoneKey, zoneLabelStyle, zoneLabelText, zoneMapLabel, zoneNumbers, zoneOutlineStyle, zoneSelection, type ZoneRef,
+  zoneFillAlpha, zoneKey, zoneLabelStyle, zoneLabelText, zoneMapLabel, zoneNumbers, zoneOutlineStyle, zoneSelection, pinnedZoneExists, type ZoneRef,
 } from '../utils/zones';
 import {
   fetchAssessmentHistory,
@@ -228,6 +228,11 @@ const CropHealthLayer: React.FC = () => {
 
       const { assessments, zones } = cache;
       zonesRef.current = zones;
+      const pinnedNow = zoneSelection.getPinned();
+      if (!pinnedZoneExists(pinnedNow, zones)) {
+        pendingFlyRef.current = null;
+        zoneSelection.pin(null);
+      }
       flyToPinnedRef.current?.();
 
       restoreSnapshots();

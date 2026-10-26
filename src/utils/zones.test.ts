@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { parcelOnlyLabel, readZoneFromLocation, zoneEmphasis, zoneFillAlpha, zoneKey, zoneLabelStyle, zoneLabelText, zoneMapLabel, zoneNumbers, zoneOutlineStyle, zoneSelection } from './zones';
+import { parcelOnlyLabel, readZoneFromLocation, zoneEmphasis, zoneFillAlpha, zoneKey, zoneLabelStyle, zoneLabelText, zoneMapLabel, zoneNumbers, zoneOutlineStyle, zoneSelection, pinnedZoneExists, zoneViewerPath } from './zones';
 
 const sq = (lon: number, lat: number) => ({ type: 'Polygon', coordinates: [[[lon, lat], [lon + 0.001, lat],
   [lon + 0.001, lat + 0.001], [lon, lat + 0.001], [lon, lat]]] });
@@ -127,5 +127,24 @@ describe('zoneOutlineStyle', () => {
     expect(zoneOutlineStyle('normal', '#dc2626')).toEqual({ colorHex: '#dc2626', alpha: 1, width: 2 });
     expect(zoneOutlineStyle('selected', '#dc2626')).toEqual({ colorHex: '#ffffff', alpha: 1, width: 4 });
     expect(zoneOutlineStyle('dimmed', '#dc2626')).toEqual({ colorHex: '#dc2626', alpha: 0.4, width: 2 });
+  });
+});
+
+describe('pinnedZoneExists', () => {
+  const zs = [{ parcelId: 'p1', zoneId: 'a' }, { parcelId: 'p2', zoneId: 'b' }];
+  it('is true for a loaded zone and for no pin', () => {
+    expect(pinnedZoneExists({ parcelId: 'p1', zoneId: 'a' }, zs)).toBe(true);
+    expect(pinnedZoneExists(null, zs)).toBe(true);
+  });
+  it('is false for a zone that is gone or belongs to another parcel', () => {
+    expect(pinnedZoneExists({ parcelId: 'p1', zoneId: 'gone' }, zs)).toBe(false);
+    expect(pinnedZoneExists({ parcelId: 'p1', zoneId: 'b' }, zs)).toBe(false);
+    expect(pinnedZoneExists({ parcelId: 'p1', zoneId: 'a' }, [])).toBe(false);
+  });
+});
+
+describe('zoneViewerPath', () => {
+  it('points at the host viewer route with both ids encoded', () => {
+    expect(zoneViewerPath({ parcelId: 'urn:p 1', zoneId: 'a/b' })).toBe('/entities?parcel=urn%3Ap%201&zone=a%2Fb');
   });
 });

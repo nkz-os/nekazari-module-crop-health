@@ -4,7 +4,7 @@ import { cropHealthFetch } from '../api/cropHealthApi';
 import { formatRelativeTime } from '../utils/relativeTime';
 import type { ParcelSummary } from '../types/assessment';
 
-import { jobLabelKey, whenLabel, freshnessTone, semaphore } from '../utils/worklist';
+import { jobText, freshnessTone, semaphore } from '../utils/worklist';
 
 type TFn = (key: string, opts?: Record<string, unknown>) => string;
 
@@ -32,14 +32,7 @@ function jobLine(p: ParcelSummary, t: TFn, lang: string): string | null {
   if (!job && p.cropStatus === 'active' && !p.hasData) {
     job = { kind: 'pending_assessment', when: null, detail: {} };
   }
-  if (!job) return null;
-  let text = t(jobLabelKey(job), (job.detail ?? {}) as Record<string, unknown>);
-  const w = job.kind === 'sow' ? job.detail?.workability : undefined;
-  if (w === 'optimal' || w === 'too_wet' || w === 'too_dry') {
-    text += `: ${t(`worklist.workability.${w}`)}`;
-  }
-  const when = whenLabel(job, t as (k: string) => string, lang);
-  return when ? `${text} · ${when}` : text;
+  return jobText(job, t, lang, p.plannedCrop);
 }
 
 interface ParcelRowsProps {

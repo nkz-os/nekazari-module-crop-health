@@ -111,6 +111,8 @@ export interface AssessmentData {
     advisory?: string;
   };
   soilSensors?: { ph?: number; ec?: number; moisturePct?: number; temperatureC?: number };
+  kc?: number;
+  management?: string;
   soilProperties?: {
     sandPct?: number;
     clayPct?: number;

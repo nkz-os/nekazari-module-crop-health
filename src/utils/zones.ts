@@ -101,6 +101,20 @@ export interface ZoneRef {
   zoneId: string;
 }
 
+/** The host's viewer route with the zone to light up (`/viewer` is redirected and drops the query). */
+export function zoneViewerPath(ref: ZoneRef): string {
+  return `/entities?parcel=${encodeURIComponent(ref.parcelId)}&zone=${encodeURIComponent(ref.zoneId)}`;
+}
+
+/** Whether a pinned zone (e.g. from a stale deep link) is among the loaded zones. */
+export function pinnedZoneExists(
+  pinned: ZoneRef | null,
+  zones: { parcelId?: string; zoneId: string }[],
+): boolean {
+  if (!pinned) return true;
+  return zones.some((z) => z.parcelId === pinned.parcelId && z.zoneId === pinned.zoneId);
+}
+
 type Listener = (sel: ZoneRef | null) => void;
 
 function same(a: ZoneRef | null, b: ZoneRef | null): boolean {

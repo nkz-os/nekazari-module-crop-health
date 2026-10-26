@@ -328,23 +328,14 @@ async def all_assessments(request: Request):
     return await latest_assessments(request, parcelId="")
 
 
-@router.get("/assessments/history")
-async def assessment_history(
+async def _history_points(
     request: Request,
-    parcelId: str = "",
-    days: int = 7,
-    from_: date | None = Query(None, alias="from"),
+    parcel_id: str,
+    days: int,
+    from_: date | None = None,
     to: date | None = None,
-):
-    """Return CWSI/MDS/water balance/composite time series for a parcel, oldest first.
-
-    Range: ``from``/``to`` (UTC dates, ``to`` inclusive). Without ``from`` it is
-    ``today - days``; without ``to`` the reader's default (now) applies.
-    Queries timeseries-reader (no direct DB access), forwarding the caller's auth.
-    """
-    if not parcelId:
-        return {"points": []}
-
+) -> list[dict]:
+    """CropHealthAssessment series for a parcel, oldest first; [] on any failure."""
     try:
         settings = get_settings()
         start = from_ or (datetime.now(timezone.utc).date() - timedelta(days=days))
@@ -356,7 +347,7 @@ async def assessment_history(
         if to is not None:
             # Reader's upper bound is exclusive: close the day so `to` is inclusive.
             params["to"] = f"{to.isoformat()}T23:59:59.999999Z"
-        url = f"{settings.weather_api_url}/api/timeseries/type/CropHealthAssessment/parcel/{parcelId}/data"
+        url = f"{settings.weather_api_url}/api/timeseries/type/CropHealthAssessment/parcel/{parcel_id}/data"
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.get(url, params=params, headers=_reader_headers(request))
             resp.raise_for_status()
@@ -374,17 +365,36 @@ async def assessment_history(
             for p in result.get("data", [])
         ]
         points.sort(key=lambda p: p["date"])
-        return {"points": points}
+        return points
     except httpx.HTTPStatusError as e:
         logger.error(
             "History query failed: timeseries-reader returned HTTP %s (parcel=%s)",
             e.response.status_code,
-            parcelId,
+            parcel_id,
         )
-        return {"points": []}
+        return []
     except Exception as e:
         logger.error("History query failed: %s", e)
+        return []
+
+
+@router.get("/assessments/history")
+async def assessment_history(
+    request: Request,
+    parcelId: str = "",
+    days: int = 7,
+    from_: date | None = Query(None, alias="from"),
+    to: date | None = None,
+):
+    """Return CWSI/MDS/water balance/composite time series for a parcel, oldest first.
+
+    Range: ``from``/``to`` (UTC dates, ``to`` inclusive). Without ``from`` it is
+    ``today - days``; without ``to`` the reader's default (now) applies.
+    Queries timeseries-reader (no direct DB access), forwarding the caller's auth.
+    """
+    if not parcelId:
         return {"points": []}
+    return {"points": await _history_points(request, parcelId, days, from_=from_, to=to)}
 
 
 @router.get("/assessments/correlation")
@@ -652,21 +662,8 @@ async def list_parcels(request: Request):
     return {"parcels": parcels}
 
 
-@router.get("/diseases/active")
-async def active_disease_risks(
-    request: Request,
-    parcelId: str = "",
-):
-    """Return active disease risks from Orion-LD.
-
-    Disease risks are published by the risk module as Alert entities with
-    category = disease. The disease metadata (code, crop, conditions, model,
-    action) lives in evaluationData. The legacy DiseaseRiskAssessment type is
-    no longer written.
-
-    Optionally filter by parcelId (refEntity relationship).
-    """
-    tenant_id = getattr(request.state, "tenant_id", "")
+async def _active_alert_rows(tenant_id: str) -> list[dict]:
+    """Active disease Alert rows of the tenant (unfiltered by parcel), each with its Alert id."""
     settings = get_settings()
     client = OrionClient(tenant_id, base_url=settings.orion_ld_url, context_url=settings.orion_ld_context)
     try:
@@ -692,9 +689,6 @@ async def active_disease_risks(
             parcel = str(ref.get("object", "")).replace("urn:ngsi-ld:AgriParcel:", "")
         elif isinstance(ref, str):
             parcel = ref.replace("urn:ngsi-ld:AgriParcel:", "")
-
-        if parcelId and parcel != parcelId:
-            continue
 
         eval_data = e.get("evaluationData") or {}
         if isinstance(eval_data, dict) and "value" in eval_data:
@@ -724,6 +718,28 @@ async def active_disease_risks(
             "source_model": eval_data.get("source_model", ""),
             "recommended_action": eval_data.get("recommended_action", ""),
             "parcelId": parcel,
+            "id": e.get("id"),
         })
 
+    return risks
+
+
+@router.get("/diseases/active")
+async def active_disease_risks(
+    request: Request,
+    parcelId: str = "",
+):
+    """Return active disease risks from Orion-LD.
+
+    Disease risks are published by the risk module as Alert entities with
+    category = disease. The disease metadata (code, crop, conditions, model,
+    action) lives in evaluationData. The legacy DiseaseRiskAssessment type is
+    no longer written.
+
+    Optionally filter by parcelId (refEntity relationship).
+    """
+    tenant_id = getattr(request.state, "tenant_id", "")
+    risks = await _active_alert_rows(tenant_id)
+    if parcelId:
+        risks = [r for r in risks if r["parcelId"] == parcelId]
     return {"risks": risks}

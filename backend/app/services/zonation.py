@@ -36,11 +36,23 @@ def is_whole_parcel(zones: list[Zone]) -> bool:
     return len(zones) == 1 and zones[0].zone_id == "parcel"
 
 
+NKZ_NS = "https://nkz-os.org/ns/"
+
+
 def _attr(row: dict, *names: str):
-    """First present value among candidate keys (handles nkz: prefix vs compacted)."""
+    """First present value among candidate keys.
+
+    A producer term that is not in the platform @context reaches us under its
+    full IRI (``https://nkz-os.org/ns/centroid``), so every bare name is also
+    tried with that namespace, besides the ``nkz:`` prefix and compacted forms.
+    """
     for n in names:
         if n in row and row[n] is not None:
             return row[n]
+        bare = n.split(":", 1)[1] if n.startswith("nkz:") else n
+        for key in (NKZ_NS + bare, "nkz:" + bare):
+            if key in row and row[key] is not None:
+                return row[key]
     return None
 
 

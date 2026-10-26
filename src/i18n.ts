@@ -164,7 +164,9 @@ const en = {
                 new_high_alert: 'New alert: {{disease}}',
             },
         },
+        legend: { numbers: 'n = zone n (north to south)', outline: 'outline = no difference with the parcel' },
         zones: {
+            parcelOnly: 'One value for the whole parcel',
             title: 'Management zones',
             count: '{{count}} zones',
             hint: 'Per-zone synthesis from weather-map AgriParcelZone boundaries.',
@@ -543,7 +545,9 @@ const es = {
                 new_high_alert: 'Alerta nueva: {{disease}}',
             },
         },
+        legend: { numbers: 'n = zona n (norte a sur)', outline: 'contorno = sin diferencia con la parcela' },
         zones: {
+            parcelOnly: '1 valor para toda la parcela',
             title: 'Zonas de gestión',
             count: '{{count}} zonas',
             hint: 'Síntesis por zona según los límites AgriParcelZone de weather-map.',
@@ -889,7 +893,9 @@ const ca = {
                 new_high_alert: 'Novo alerta: {{disease}}',
             },
         },
+        legend: { numbers: 'n = zona n (nord a sud)', outline: 'contorn = sense diferència amb la parcel·la' },
         zones: {
+            parcelOnly: '1 valor per a tota la parcel·la',
             title: 'Zones de gestió',
             count: '{{count}} zones',
             hint: 'Síntesi per zona segons els límits AgriParcelZone de weather-map.',
@@ -1204,7 +1210,9 @@ const eu = {
                 new_high_alert: 'Alerta berria: {{disease}}',
             },
         },
+        legend: { numbers: 'n = n. zona (iparretik hegora)', outline: 'ertza = lursailarekiko alderik gabe' },
         zones: {
+            parcelOnly: 'Balio 1 lursail osoarentzat',
             title: 'Kudeaketa-zonak',
             count: '{{count}} zona',
             hint: 'Zonaldeko sintesia weather-map AgriParcelZone mugen arabera.',
@@ -1519,7 +1527,9 @@ const fr = {
                 new_high_alert: 'Nouvelle alerte : {{disease}}',
             },
         },
+        legend: { numbers: 'n = zone n (du nord au sud)', outline: 'contour = sans différence avec la parcelle' },
         zones: {
+            parcelOnly: '1 valeur pour toute la parcelle',
             title: 'Zones de gestion',
             count: '{{count}} zones',
             hint: 'Synthèse par zone selon les limites AgriParcelZone de weather-map.',
@@ -1834,7 +1844,9 @@ const pt = {
                 new_high_alert: 'Novo alerta: {{disease}}',
             },
         },
+        legend: { numbers: 'n = zona n (de norte a sul)', outline: 'contorno = sem diferença com a parcela' },
         zones: {
+            parcelOnly: '1 valor para toda a parcela',
             title: 'Zonas de gestão',
             count: '{{count}} zonas',
             hint: 'Síntese por zona com base nos limites AgriParcelZone do weather-map.',

@@ -119,6 +119,7 @@ function createZoneSelection() {
   };
   return {
     get: current,
+    getPinned: () => pinned,
     hover(ref: ZoneRef | null) {
       const before = current();
       hovered = ref;
@@ -162,4 +163,43 @@ export function emphasisStyle(emphasis: ZoneEmphasis, baseAlpha: number): Emphas
   if (emphasis === 'selected') return { fillAlpha: 0.75, outlineWhite: true, outlineAlpha: 1, labelAlpha: 1, bold: true };
   if (emphasis === 'dimmed') return { fillAlpha: baseAlpha * 0.35, outlineWhite: false, outlineAlpha: 0.4, labelAlpha: 0.45, bold: false };
   return { fillAlpha: baseAlpha, outlineWhite: false, outlineAlpha: 1, labelAlpha: 1, bold: false };
+}
+
+/** Severity colours of the map layer, shared with the legend so both always agree. */
+export const SEVERITY_COLORS: Record<string, { fill: string; alpha: number }> = {
+  LOW: { fill: '#16a34a', alpha: 0.3 },
+  MEDIUM: { fill: '#d97706', alpha: 0.4 },
+  HIGH: { fill: '#ea580c', alpha: 0.5 },
+  CRITICAL: { fill: '#dc2626', alpha: 0.55 },
+};
+
+/** Fill opacity of a zone: only zones that differ from the parcel get the full colour. */
+export function zoneFillAlpha(zone: { differsFromParcel?: boolean }, base: number): number {
+  return zone.differsFromParcel ? base : 0.1;
+}
+
+/** The map label of a zone: just its number (the value goes to the infobox). */
+export function zoneLabelText(n: number | undefined): string {
+  return String(n ?? '');
+}
+
+/** Big, bold numbers that shrink with distance so they never pile up when zoomed out. */
+export function zoneLabelStyle(emphasis: ZoneEmphasis): { font: string; scaleByDistance: [number, number, number, number] } {
+  return {
+    font: emphasis === 'selected' ? 'bold 24px sans-serif' : 'bold 20px sans-serif',
+    scaleByDistance: [500, 1.0, 5000, 0.5],
+  };
+}
+
+/** True when no zone differs from the parcel: the map then shows one value for the whole parcel. */
+export function parcelOnlyLabel(zones: Array<{ differsFromParcel?: boolean }>): boolean {
+  return !zones.some((z) => z.differsFromParcel);
+}
+
+/** The zone a deep link points at (`?parcel=<id>&zone=<id>`), if both are present. */
+export function readZoneFromLocation(search: string): ZoneRef | null {
+  const params = new URLSearchParams(search);
+  const parcelId = params.get('parcel');
+  const zoneId = params.get('zone');
+  return parcelId && zoneId ? { parcelId, zoneId } : null;
 }

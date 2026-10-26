@@ -1,11 +1,12 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { useViewer } from '@nekazari/sdk';
+import { useTranslation, useViewer } from '@nekazari/sdk';
 import { DAY_MS, latestAtOrBefore, snapToUtcDay } from '@nekazari/viewer-kit';
 import { cropHealthFetch } from '../api/cropHealthApi';
 import { MAP_LAYER_MODE_KEY, readMapLayerMode, type MapLayerMode } from '../constants';
 import type { AssessmentData, ZoneAssessmentData } from '../types/assessment';
 import {
-  emphasisStyle, polygonRings, zoneCentroid, zoneEmphasis, zoneKey, zoneMapLabel, zoneNumbers, zoneSelection,
+  SEVERITY_COLORS, emphasisStyle, parcelOnlyLabel, polygonRings, readZoneFromLocation, zoneCentroid, zoneEmphasis,
+  zoneFillAlpha, zoneKey, zoneLabelStyle, zoneLabelText, zoneMapLabel, zoneNumbers, zoneSelection, type ZoneRef,
 } from '../utils/zones';
 import {
   fetchAssessmentHistory,
@@ -26,13 +27,6 @@ const HISTORY_WINDOW_DAYS = 14;
 const TIMELINE_PARCEL_TYPES: readonly string[] = ['AgriParcel', 'https://saref.etsi.org/saref4agri/AgriParcel'];
 
 const NO_DATA_COLOR = { fill: '#9ca3af', alpha: 0.2 };
-
-const SEVERITY_COLORS: Record<string, { fill: string; alpha: number }> = {
-  LOW: { fill: '#16a34a', alpha: 0.3 },
-  MEDIUM: { fill: '#d97706', alpha: 0.4 },
-  HIGH: { fill: '#ea580c', alpha: 0.5 },
-  CRITICAL: { fill: '#dc2626', alpha: 0.55 },
-};
 
 function layerValue(a: AssessmentData, mode: MapLayerMode): number | null {
   switch (mode) {
@@ -133,6 +127,9 @@ interface PaintSnapshot {
 }
 
 const CropHealthLayer: React.FC = () => {
+  const { t } = useTranslation('crop-health');
+  const tRef = useRef(t);
+  tRef.current = t;
   const { cesiumViewer, currentDate, selectedEntityId, selectedEntityType } = useViewer();
   const [mode, setMode] = useState<MapLayerMode>(readMapLayerMode);
 
@@ -150,6 +147,10 @@ const CropHealthLayer: React.FC = () => {
   const historicalRef = useRef<HistoricalSelection | null>(null);
   // Repaints from the last fetched assessments, without refetching them.
   const repaintRef = useRef<(() => void) | null>(null);
+  // Zones of the last fetch, and the pinned zone the camera still has to fly to (once per pin).
+  const zonesRef = useRef<ZoneAssessmentData[]>([]);
+  const pendingFlyRef = useRef<ZoneRef | null>(null);
+  const flyToPinnedRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     const onStorage = (event: StorageEvent) => {
@@ -226,6 +227,8 @@ const CropHealthLayer: React.FC = () => {
       }
 
       const { assessments, zones } = cache;
+      zonesRef.current = zones;
+      flyToPinnedRef.current?.();
 
       restoreSnapshots();
       clearCropHealthEntities();
@@ -234,7 +237,15 @@ const CropHealthLayer: React.FC = () => {
       const Cesium = (window as { Cesium?: typeof import('cesium') }).Cesium;
       if (!Cesium) return;
 
-      const zonedParcels = new Set(zones.map((z) => z.parcelId).filter(Boolean) as string[]);
+      // A parcel whose zones all equal the parcel value is painted whole, with no zone entities.
+      const zonesByParcel = new Map<string, ZoneAssessmentData[]>();
+      for (const z of zones) {
+        if (!z.parcelId) continue;
+        zonesByParcel.set(z.parcelId, [...(zonesByParcel.get(z.parcelId) ?? []), z]);
+      }
+      const wholeParcels = new Set<string>();
+      const zonedParcels = new Set<string>();
+      zonesByParcel.forEach((list, parcelId) => (parcelOnlyLabel(list) ? wholeParcels : zonedParcels).add(parcelId));
 
       // Zones have no history: while the cursor is in the past the selected parcel is painted whole instead.
       const historicalParcelId = historicalRef.current?.parcelId;
@@ -246,10 +257,15 @@ const CropHealthLayer: React.FC = () => {
       for (const zone of zones) {
         if (!zone.geometry || !zone.parcelId || !zone.zoneId) continue;
         if (zone.parcelId === historicalParcelId) continue;
+        if (wholeParcels.has(zone.parcelId)) continue;
         if (currentMode !== 'severity' && layerValue(zone, currentMode) == null) continue;
 
         const colors = layerColor(zone, currentMode);
-        const style = emphasisStyle(zoneEmphasis(selection, zone.parcelId, zone.zoneId), colors.alpha);
+        const emphasis = zoneEmphasis(selection, zone.parcelId, zone.zoneId);
+        const style = emphasisStyle(emphasis, zoneFillAlpha(zone, colors.alpha));
+        const number = numbers.get(zoneKey(zone.parcelId, zone.zoneId));
+        const description = zoneMapLabel(number, layerLabel(zone, currentMode));
+        const labelStyle = zoneLabelStyle(emphasis);
         const material = Cesium.Color.fromCssColorString(colors.fill)?.withAlpha(style.fillAlpha);
         const outline = (style.outlineWhite ? Cesium.Color.WHITE : Cesium.Color.fromCssColorString(colors.fill))
           ?.withAlpha(style.outlineAlpha);
@@ -259,6 +275,7 @@ const CropHealthLayer: React.FC = () => {
           const positions = Cesium.Cartesian3.fromDegreesArray(ringToDegreesArray(rings[i]));
           viewerEntities!.add({
             id: `crop-health-zone-${zone.parcelId}-${zone.zoneId}-${i}`,
+            description,
             polygon: {
               hierarchy: positions,
               material,
@@ -275,10 +292,12 @@ const CropHealthLayer: React.FC = () => {
         if (centroid) {
           viewerEntities!.add({
             id: `crop-health-zone-label-${zone.parcelId}-${zone.zoneId}`,
+            description,
             position: Cesium.Cartesian3.fromDegrees(centroid[0], centroid[1]),
             label: {
-              text: zoneMapLabel(numbers.get(zoneKey(zone.parcelId, zone.zoneId)), layerLabel(zone, currentMode)),
-              font: style.bold ? 'bold 13px sans-serif' : '11px sans-serif',
+              text: zoneLabelText(number),
+              font: labelStyle.font,
+              scaleByDistance: new Cesium.NearFarScalar(...labelStyle.scaleByDistance),
               fillColor: Cesium.Color.WHITE.withAlpha(style.labelAlpha),
               outlineColor: Cesium.Color.BLACK.withAlpha(style.labelAlpha),
               outlineWidth: 2,
@@ -322,7 +341,7 @@ const CropHealthLayer: React.FC = () => {
         parcelEntity.polygon.outlineColor = Cesium.Color.fromCssColorString(colors.fill);
 
         parcelEntity.label = {
-          text: layerLabel(shown, currentMode),
+          text: wholeParcels.has(a.parcelId) && !historical ? tRef.current('zones.parcelOnly') : layerLabel(shown, currentMode),
           font: '12px sans-serif',
           fillColor: Cesium.Color.WHITE,
           outlineColor: Cesium.Color.BLACK,
@@ -349,8 +368,44 @@ const CropHealthLayer: React.FC = () => {
     };
   }, [cesiumViewer, mode]);
 
-  // The zone pointed at in the side panel: repaint from the last data, without refetching.
-  useEffect(() => zoneSelection.subscribe(() => repaintRef.current?.()), []);
+  // Fly to the pinned zone once per pin. Pending until its zone is loaded (a deep link pins before the fetch ends).
+  useEffect(() => {
+    flyToPinnedRef.current = () => {
+      const target = pendingFlyRef.current;
+      const Cesium = (window as { Cesium?: typeof import('cesium') }).Cesium;
+      const viewer = cesiumViewer as { camera?: { flyTo: (o: unknown) => void } } | null | undefined;
+      if (!target || !Cesium || !viewer?.camera) return;
+      const zone = zonesRef.current.find((z: ZoneAssessmentData) => z.parcelId === target.parcelId && z.zoneId === target.zoneId);
+      const rings = polygonRings(zone?.geometry);
+      if (!rings.length) return;
+      pendingFlyRef.current = null;
+      const positions = rings.flatMap((ring) => Cesium.Cartesian3.fromDegreesArray(ringToDegreesArray(ring)));
+      viewer.camera.flyTo({ destination: Cesium.Rectangle.fromCartesianArray(positions), duration: 1.0 });
+    };
+    return () => {
+      flyToPinnedRef.current = null;
+    };
+  }, [cesiumViewer]);
+
+  // The zone pointed at in the side panel: repaint from the last data, without refetching. Hovering only
+  // repaints; the camera moves when a zone is pinned (the panel's "show on map", or a deep link).
+  useEffect(() => {
+    let lastPinned = zoneSelection.getPinned();
+    const unsubscribe = zoneSelection.subscribe(() => {
+      const pinned = zoneSelection.getPinned();
+      if (pinned !== lastPinned) {
+        lastPinned = pinned;
+        pendingFlyRef.current = pinned;
+        flyToPinnedRef.current?.();
+      }
+      repaintRef.current?.();
+    });
+    // Deep link `?parcel=&zone=`: pin it unless it already is (a remount must not toggle it off).
+    const ref = readZoneFromLocation(window.location.search);
+    const current = zoneSelection.getPinned();
+    if (ref && !(current && current.parcelId === ref.parcelId && current.zoneId === ref.zoneId)) zoneSelection.pin(ref);
+    return unsubscribe;
+  }, []);
 
   // History of the selected parcel on the cursor's day. Debounced: dragging the axis moves the cursor
   // once per day crossed, and only the position it settles on is worth a request.

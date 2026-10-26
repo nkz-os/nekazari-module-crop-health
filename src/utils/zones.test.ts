@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { zoneEmphasis, zoneKey, zoneMapLabel, zoneNumbers, zoneSelection } from './zones';
+import { parcelOnlyLabel, readZoneFromLocation, zoneEmphasis, zoneFillAlpha, zoneKey, zoneLabelStyle, zoneLabelText, zoneMapLabel, zoneNumbers, zoneSelection } from './zones';
 
 const sq = (lon: number, lat: number) => ({ type: 'Polygon', coordinates: [[[lon, lat], [lon + 0.001, lat],
   [lon + 0.001, lat + 0.001], [lon, lat + 0.001], [lon, lat]]] });
@@ -93,5 +93,31 @@ describe('splitZones', () => {
     const { differing, rest } = splitZones([a, b, c]);
     expect(differing).toEqual([a]);
     expect(rest).toEqual([b, c]);
+  });
+});
+
+describe('map paint helpers', () => {
+  it('fills only the zones that differ from the parcel', () => {
+    expect(zoneFillAlpha({ differsFromParcel: false }, 0.55)).toBe(0.1);
+    expect(zoneFillAlpha({ differsFromParcel: true }, 0.55)).toBe(0.55);
+  });
+  it('labels with the number only', () => {
+    expect(zoneLabelText(3)).toBe('3');
+    expect(zoneLabelText(undefined)).toBe('');
+  });
+  it('makes the selected label larger and shrinks labels with distance', () => {
+    expect(zoneLabelStyle('normal').font).toBe('bold 20px sans-serif');
+    expect(zoneLabelStyle('dimmed').font).toBe('bold 20px sans-serif');
+    expect(zoneLabelStyle('selected').font).toBe('bold 24px sans-serif');
+    expect(zoneLabelStyle('normal').scaleByDistance).toEqual([500, 1.0, 5000, 0.5]);
+  });
+  it('detects a parcel where no zone differs', () => {
+    expect(parcelOnlyLabel([{ differsFromParcel: false }, { differsFromParcel: false }] as never)).toBe(true);
+    expect(parcelOnlyLabel([{ differsFromParcel: false }, { differsFromParcel: true }] as never)).toBe(false);
+  });
+  it('reads the zone to pin from the URL', () => {
+    expect(readZoneFromLocation('?parcel=p1&zone=z3')).toEqual({ parcelId: 'p1', zoneId: 'z3' });
+    expect(readZoneFromLocation('?parcel=p1')).toBeNull();
+    expect(readZoneFromLocation('')).toBeNull();
   });
 });

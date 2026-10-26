@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-vi.mock('@nekazari/sdk', () => ({ useViewer: () => ({ cesiumViewer: null }) }));
+vi.mock('@nekazari/sdk', () => ({ useViewer: () => ({ cesiumViewer: null }), useTranslation: () => ({ t: (k: string) => k }) }));
 vi.mock('@nekazari/viewer-kit', () => ({ DAY_MS: 86400000, latestAtOrBefore: () => null, snapToUtcDay: (d: number) => d }));
 
 import { layerColor } from './CropHealthLayer';

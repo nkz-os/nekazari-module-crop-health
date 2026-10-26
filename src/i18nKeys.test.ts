@@ -63,3 +63,14 @@ describe('zone panel strings', () => {
     });
   }
 });
+
+describe('map legend strings', () => {
+  for (const [lang, res] of Object.entries(resources)) {
+    it(`${lang} has the legend and parcel-only keys`, () => {
+      const ns = (res as any)['crop-health'];
+      expect(typeof ns.zones.parcelOnly).toBe('string');
+      expect(typeof ns.legend.numbers).toBe('string');
+      expect(typeof ns.legend.outline).toBe('string');
+    });
+  }
+});

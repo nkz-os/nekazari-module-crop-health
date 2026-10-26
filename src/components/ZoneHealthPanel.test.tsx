@@ -20,6 +20,13 @@ describe('ZoneHealthPanel', () => {
     expect(html.indexOf('zones.zoneLabel:{"id":1}')).toBeLessThan(html.indexOf('zones.zoneLabel:{"id":2}'));
     expect(html).not.toContain('zones.zoneLabel:{"id":"south"}');
   });
+  it('shows the composite index on its own 0-100 scale', () => {
+    const composite = { parcelId: 'p1', zoneId: 'c', geometry: sq(-1, 42), overallSeverity: 'CRITICAL',
+      compositeStressIndex: 66.7 } as never;
+    const out = renderToStaticMarkup(<ZoneHealthPanel zones={[composite]} isWholeParcel={false} />);
+    expect(out).toContain('67%');
+    expect(out).not.toContain('6670%');
+  });
   it('rows are buttons that say how to find the zone on the map', () => {
     expect(html.match(/<button[^>]*aria-pressed="false"/g)?.length).toBe(2);
     expect(html).toContain('zones.selectHint');

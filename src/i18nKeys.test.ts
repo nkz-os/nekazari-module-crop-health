@@ -46,6 +46,7 @@ describe('detail strings parity', () => {
       expect(keys(ns.noCrop).sort()).toEqual(keys(en.noCrop).sort());
       expect(keys(ns.tabs).sort()).toEqual(['plant', 'risks', 'water']);
       expect(typeof ns.sources.generic).toBe('string');
+      expect(typeof ns.sources.toggle).toBe('string');
       expect(typeof ns.yieldForecast.none).toBe('string');
     });
   }

@@ -111,9 +111,11 @@ const en = {
             next: 'Next: sow {{crop}}',
             plan: 'Go to planning',
             last: 'Last assessment: {{date}} ({{crop}})',
+            lastNoCrop: 'Last assessment: {{date}}',
         },
         sources: {
             generic: 'generic',
+            toggle: 'Show or hide sources',
             title: 'Data Sources: {{parcel}}',
             refresh: 'Refresh',
             retry: 'Retry',
@@ -161,9 +163,6 @@ const en = {
                 phenology_deviation: 'Phenology off schedule',
                 new_high_alert: 'New alert: {{disease}}',
             },
-        },
-        workbench: {
-            diagnosticsTitle: 'Data source diagnostics',
         },
         zones: {
             title: 'Management zones',
@@ -487,9 +486,11 @@ const es = {
             next: 'Siguiente: sembrar {{crop}}',
             plan: 'Ir a planificación',
             last: 'Última evaluación: {{date}} ({{crop}})',
+            lastNoCrop: 'Última evaluación: {{date}}',
         },
         sources: {
             generic: 'genérico',
+            toggle: 'Mostrar u ocultar fuentes',
             title: 'Fuentes de datos: {{parcel}}',
             refresh: 'Actualizar',
             retry: 'Reintentar',
@@ -538,7 +539,6 @@ const es = {
                 new_high_alert: 'Alerta nueva: {{disease}}',
             },
         },
-        workbench: { diagnosticsTitle: 'Diagnóstico de fuentes de datos' },
         zones: {
             title: 'Zonas de gestión',
             count: '{{count}} zonas',
@@ -828,9 +828,11 @@ const ca = {
             next: 'Següent: sembrar {{crop}}',
             plan: 'Anar a planificació',
             last: 'Darrera avaluació: {{date}} ({{crop}})',
+            lastNoCrop: 'Darrera avaluació: {{date}}',
         },
         sources: {
             generic: 'genèric',
+            toggle: 'Mostra o amaga les fonts',
             title: 'Fonts de dades: {{parcel}}',
             refresh: 'Actualitzar',
             retry: 'Reintentar',
@@ -879,7 +881,6 @@ const ca = {
                 new_high_alert: 'Novo alerta: {{disease}}',
             },
         },
-        workbench: { diagnosticsTitle: 'Diagnòstic de fonts de dades' },
         zones: {
             title: 'Zones de gestió',
             count: '{{count}} zones',
@@ -1138,9 +1139,11 @@ const eu = {
             next: 'Hurrengoa: {{crop}} ereitea',
             plan: 'Joan planifikaziora',
             last: 'Azken ebaluazioa: {{date}} ({{crop}})',
+            lastNoCrop: 'Azken ebaluazioa: {{date}}',
         },
         sources: {
             generic: 'generikoa',
+            toggle: 'Erakutsi edo ezkutatu iturriak',
             title: 'Datu-iturriak: {{parcel}}',
             refresh: 'Eguneratu',
             retry: 'Saiatu berriro',
@@ -1189,7 +1192,6 @@ const eu = {
                 new_high_alert: 'Alerta berria: {{disease}}',
             },
         },
-        workbench: { diagnosticsTitle: 'Datu-iturrien diagnostikoa' },
         zones: {
             title: 'Kudeaketa-zonak',
             count: '{{count}} zona',
@@ -1448,9 +1450,11 @@ const fr = {
             next: 'Prochaine étape : semer {{crop}}',
             plan: 'Aller à la planification',
             last: 'Dernière évaluation : {{date}} ({{crop}})',
+            lastNoCrop: 'Dernière évaluation : {{date}}',
         },
         sources: {
             generic: 'générique',
+            toggle: 'Afficher ou masquer les sources',
             title: 'Sources de données : {{parcel}}',
             refresh: 'Actualiser',
             retry: 'Réessayer',
@@ -1499,7 +1503,6 @@ const fr = {
                 new_high_alert: 'Nouvelle alerte : {{disease}}',
             },
         },
-        workbench: { diagnosticsTitle: 'Diagnostic des sources de données' },
         zones: {
             title: 'Zones de gestion',
             count: '{{count}} zones',
@@ -1758,9 +1761,11 @@ const pt = {
             next: 'Seguinte: semear {{crop}}',
             plan: 'Ir para o planeamento',
             last: 'Última avaliação: {{date}} ({{crop}})',
+            lastNoCrop: 'Última avaliação: {{date}}',
         },
         sources: {
             generic: 'genérico',
+            toggle: 'Mostrar ou ocultar fontes',
             title: 'Fontes de dados: {{parcel}}',
             refresh: 'Atualizar',
             retry: 'Tentar novamente',
@@ -1809,7 +1814,6 @@ const pt = {
                 new_high_alert: 'Novo alerta: {{disease}}',
             },
         },
-        workbench: { diagnosticsTitle: 'Diagnóstico de fontes de dados' },
         zones: {
             title: 'Zonas de gestão',
             count: '{{count}} zonas',

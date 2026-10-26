@@ -29,6 +29,8 @@ describe('NoActiveCropCard', () => {
     expect(h).toContain('noCrop.last');
     expect(h).toContain('Cebada');
     expect(h).not.toContain('noCrop.next');
+    expect(render({ lastAssessment: { assessedAt: '2026-10-01T00:00:00Z' } })).toContain('noCrop.lastNoCrop');
+    expect(render({ plannedCrop: { species: 'TRZAX', names: { es: 'Trigo' } } })).toContain('"crop":"Trigo"');
     expect(h).toContain('noCrop.plan');
   });
 });

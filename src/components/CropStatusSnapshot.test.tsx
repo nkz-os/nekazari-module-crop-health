@@ -47,7 +47,9 @@ describe('CropStatusSnapshotView', () => {
     expect(render({ freshness: 'aging' })).toContain('text-nkz-warning');
     expect(render({ freshness: 'fresh' })).toContain('text-xs mt-0.5 text-nkz-text-muted');
   });
-  it('renders nothing of the assessment when stale', () => {
-    expect(render({ stale: true })).toBe('');
+  it('still renders the header of a stale active parcel, in the danger tone', () => {
+    const h = render({ stale: true, freshness: 'stale' });
+    expect(h).toContain('worklist.job.irrigate');
+    expect(h).toContain('text-xs mt-0.5 text-nkz-danger');
   });
 });

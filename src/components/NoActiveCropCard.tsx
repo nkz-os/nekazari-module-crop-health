@@ -12,7 +12,7 @@ interface NoActiveCropCardProps {
 const NoActiveCropCard: React.FC<NoActiveCropCardProps> = ({ parcelId, plannedCrop, lastAssessment }) => {
   const { t, i18n } = useTranslation('crop-health');
   const lang = i18n?.language || 'es';
-  const plannedName = plannedCrop ? (plannedCrop.names?.[lang] ?? plannedCrop.species) : '';
+  const plannedName = plannedCrop ? (plannedCrop.names?.[lang] ?? plannedCrop.names?.[lang.split('-')[0]] ?? plannedCrop.species) : '';
 
   return (
     <div className="bg-nkz-surface-raised border border-nkz-border rounded-lg p-3 mb-3 space-y-2">
@@ -29,10 +29,12 @@ const NoActiveCropCard: React.FC<NoActiveCropCardProps> = ({ parcelId, plannedCr
       </button>
       {lastAssessment && (
         <p className="text-xs text-nkz-text-muted">
-          {t('noCrop.last', {
-            date: new Date(lastAssessment.assessedAt).toLocaleString(lang),
-            crop: lastAssessment.cropName ?? '',
-          })}
+          {lastAssessment.cropName
+            ? t('noCrop.last', {
+                date: new Date(lastAssessment.assessedAt).toLocaleString(lang),
+                crop: lastAssessment.cropName,
+              })
+            : t('noCrop.lastNoCrop', { date: new Date(lastAssessment.assessedAt).toLocaleString(lang) })}
         </p>
       )}
     </div>

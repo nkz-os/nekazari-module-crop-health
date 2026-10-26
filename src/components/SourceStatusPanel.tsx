@@ -179,6 +179,7 @@ const SourceStatusPanel: React.FC<SourceStatusPanelProps> = ({ parcelId, parcelN
         <button
           onClick={() => setOpen((v) => !v)}
           aria-expanded={open}
+          aria-label={t('sources.toggle')}
           className="text-xs text-nkz-text-muted cursor-pointer bg-transparent"
         >
           {open ? '▾' : '▸'}

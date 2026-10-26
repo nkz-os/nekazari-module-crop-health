@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useTranslation } from '@nekazari/sdk';
-import { authHeaders, CROP_CONTEXT_URL, cropHealthFetch } from '../api/cropHealthApi';
+import { authHeaders, CROP_CONTEXT_URL } from '../api/cropHealthApi';
 import { SeverityBadge } from './shared/SeverityBadge';
 import { freshnessTone, jobLabelKey, whenLabel } from '../utils/worklist';
 import type { Freshness, NextJob, Surprise } from '../types/assessment';
@@ -67,6 +67,7 @@ interface Assessment {
 interface CropStatusSnapshotProps {
   parcelId: string;
   parcelName?: string;
+  assessment?: Assessment | null;
   nextJob?: NextJob | null;
   surprise?: Surprise | null;
   freshness?: Freshness;
@@ -147,10 +148,9 @@ function MetricChip({ icon, text, intent }: { icon: string; text: string; intent
 }
 
 const CropStatusSnapshot: React.FC<CropStatusSnapshotProps> = ({
-  parcelId, parcelName, nextJob = null, surprise = null, freshness = 'none', stale = false,
+  parcelId, parcelName, assessment = null, nextJob = null, surprise = null, freshness = 'none', stale = false,
 }) => {
   const { t } = useTranslation('crop-health');
-  const [assessment, setAssessment] = useState<Assessment | null>(null);
   const [cropCtx, setCropCtx] = useState<CropContext | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -160,16 +160,12 @@ const CropStatusSnapshot: React.FC<CropStatusSnapshotProps> = ({
 
     const fetchData = async () => {
       try {
-        const [aRes, cRes] = await Promise.allSettled([
-          cropHealthFetch<{ assessments: Assessment[] }>(`/assessments/latest?parcelId=${parcelId}`),
+        const [cRes] = await Promise.allSettled([
           fetch(`${CROP_CONTEXT_URL}?parcel_id=${parcelId}`, {
             credentials: 'include',
             headers: authHeaders(),
           }).then(r => r.ok ? r.json() : null),
         ]);
-
-        const a = aRes.status === 'fulfilled' ? aRes.value?.assessments?.[0] : null;
-        if (a) setAssessment(a);
 
         const c = cRes.status === 'fulfilled' ? cRes.value : null;
         if (c) setCropCtx(c);
@@ -218,8 +214,6 @@ export const CropStatusSnapshotView: React.FC<ViewProps> = ({
 }) => {
   const { t, i18n } = useTranslation('crop-health');
   const lang = i18n?.language || 'es';
-  if (stale) return null;
-
   const cropName = assessment.cropName || cropCtx?.crop?.name || cropCtx?.crop?.eppo;
   const varietyName = assessment.varietyName || cropCtx?.variety?.name;
   const stage = assessment.phenologyStage || cropCtx?.phenology?.stage;

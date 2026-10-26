@@ -6,7 +6,7 @@ import { MAP_LAYER_MODE_KEY, readMapLayerMode, type MapLayerMode } from '../cons
 import type { AssessmentData, ZoneAssessmentData } from '../types/assessment';
 import {
   SEVERITY_COLORS, emphasisStyle, parcelOnlyLabel, polygonRings, readZoneFromLocation, zoneCentroid, zoneEmphasis,
-  zoneFillAlpha, zoneKey, zoneLabelStyle, zoneLabelText, zoneMapLabel, zoneNumbers, zoneSelection, type ZoneRef,
+  zoneFillAlpha, zoneKey, zoneLabelStyle, zoneLabelText, zoneMapLabel, zoneNumbers, zoneOutlineStyle, zoneSelection, type ZoneRef,
 } from '../utils/zones';
 import {
   fetchAssessmentHistory,
@@ -266,6 +266,7 @@ const CropHealthLayer: React.FC = () => {
         const number = numbers.get(zoneKey(zone.parcelId, zone.zoneId));
         const description = zoneMapLabel(number, layerLabel(zone, currentMode));
         const labelStyle = zoneLabelStyle(emphasis);
+        const outlineStyle = zoneOutlineStyle(emphasis, colors.fill);
         const material = Cesium.Color.fromCssColorString(colors.fill)?.withAlpha(style.fillAlpha);
         const outline = (style.outlineWhite ? Cesium.Color.WHITE : Cesium.Color.fromCssColorString(colors.fill))
           ?.withAlpha(style.outlineAlpha);
@@ -284,6 +285,16 @@ const CropHealthLayer: React.FC = () => {
               // No height: the polygon drapes on terrain (a height of 0 buries
               // it under real terrain — IDENA/IGN elevations in the viewer).
               classificationType: Cesium.ClassificationType.TERRAIN,
+            },
+          });
+          // Cesium draws no polygon outline on terrain-clamped polygons: the outline is a ground polyline.
+          viewerEntities!.add({
+            id: `crop-health-zone-outline-${zone.parcelId}-${zone.zoneId}-${i}`,
+            polyline: {
+              positions: [...positions, positions[0]],
+              clampToGround: true,
+              width: outlineStyle.width,
+              material: Cesium.Color.fromCssColorString(outlineStyle.colorHex)?.withAlpha(outlineStyle.alpha),
             },
           });
         }

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { parcelOnlyLabel, readZoneFromLocation, zoneEmphasis, zoneFillAlpha, zoneKey, zoneLabelStyle, zoneLabelText, zoneMapLabel, zoneNumbers, zoneSelection } from './zones';
+import { parcelOnlyLabel, readZoneFromLocation, zoneEmphasis, zoneFillAlpha, zoneKey, zoneLabelStyle, zoneLabelText, zoneMapLabel, zoneNumbers, zoneOutlineStyle, zoneSelection } from './zones';
 
 const sq = (lon: number, lat: number) => ({ type: 'Polygon', coordinates: [[[lon, lat], [lon + 0.001, lat],
   [lon + 0.001, lat + 0.001], [lon, lat + 0.001], [lon, lat]]] });
@@ -119,5 +119,13 @@ describe('map paint helpers', () => {
     expect(readZoneFromLocation('?parcel=p1&zone=z3')).toEqual({ parcelId: 'p1', zoneId: 'z3' });
     expect(readZoneFromLocation('?parcel=p1')).toBeNull();
     expect(readZoneFromLocation('')).toBeNull();
+  });
+});
+
+describe('zoneOutlineStyle', () => {
+  it('keeps the severity colour thin, whitens and thickens the selected, fades the dimmed', () => {
+    expect(zoneOutlineStyle('normal', '#dc2626')).toEqual({ colorHex: '#dc2626', alpha: 1, width: 2 });
+    expect(zoneOutlineStyle('selected', '#dc2626')).toEqual({ colorHex: '#ffffff', alpha: 1, width: 4 });
+    expect(zoneOutlineStyle('dimmed', '#dc2626')).toEqual({ colorHex: '#dc2626', alpha: 0.4, width: 2 });
   });
 });

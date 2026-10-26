@@ -203,3 +203,10 @@ export function readZoneFromLocation(search: string): ZoneRef | null {
   const zoneId = params.get('zone');
   return parcelId && zoneId ? { parcelId, zoneId } : null;
 }
+
+/** Ground outline of a zone (a clamped polyline: Cesium draws no outline on terrain-clamped polygons). */
+export function zoneOutlineStyle(emphasis: ZoneEmphasis, colorHex: string): { colorHex: string; alpha: number; width: number } {
+  if (emphasis === 'selected') return { colorHex: '#ffffff', alpha: 1, width: 4 };
+  if (emphasis === 'dimmed') return { colorHex, alpha: 0.4, width: 2 };
+  return { colorHex, alpha: 1, width: 2 };
+}

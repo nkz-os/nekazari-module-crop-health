@@ -1,12 +1,14 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from '@nekazari/sdk';
 import { SeverityBadge } from './shared/SeverityBadge';
-import type { ZoneAssessmentData } from '../types/assessment';
-import { zoneKey, zoneNumbers, zoneSelection, type ZoneRef } from '../utils/zones';
+import type { ZoneAssessmentData, ZonesResponse } from '../types/assessment';
+import { navigateTo } from '../api/cropHealthApi';
+import { splitZones, zoneKey, zoneNumberList, zoneNumbers, zoneSelection, type ZoneRef } from '../utils/zones';
 
 interface ZoneHealthPanelProps {
   zones: ZoneAssessmentData[];
   isWholeParcel: boolean;
+  parcelValues?: ZonesResponse['parcelValues'];
 }
 
 function actionLabelKey(action: string): string {
@@ -32,13 +34,22 @@ function metricLabel(zone: ZoneAssessmentData): string {
   return '—';
 }
 
-const ZoneHealthPanel: React.FC<ZoneHealthPanelProps> = ({ zones, isWholeParcel }) => {
+// The parcel's value for the same metric the zone row shows.
+function parcelMetricLabel(zone: ZoneAssessmentData, pv: ZonesResponse['parcelValues']): string {
+  if (zone.cwsiValue != null) return pv.cwsiValue != null ? `CWSI ${pv.cwsiValue.toFixed(2)}` : '—';
+  if (zone.compositeStressIndex != null) return pv.compositeStressIndex != null ? `${Math.round(pv.compositeStressIndex)}%` : '—';
+  if (zone.vigorIndex != null) return pv.vigorIndex != null ? `VHI ${Math.round(pv.vigorIndex * 100)}` : '—';
+  return '—';
+}
+
+const ZoneHealthPanel: React.FC<ZoneHealthPanelProps> = ({ zones, isWholeParcel, parcelValues = {} }) => {
   const { t } = useTranslation('crop-health');
   // Same numbers as the map labels; rows listed in that order.
   const numbers = useMemo(() => zoneNumbers(zones), [zones]);
+  const { differing, rest } = useMemo(() => splitZones(zones), [zones]);
   const ordered = useMemo(
-    () => [...zones].sort((a, b) => (numbers.get(zoneKey(a.parcelId, a.zoneId)) ?? 0) - (numbers.get(zoneKey(b.parcelId, b.zoneId)) ?? 0)),
-    [zones, numbers],
+    () => [...differing].sort((a, b) => (numbers.get(zoneKey(a.parcelId, a.zoneId)) ?? 0) - (numbers.get(zoneKey(b.parcelId, b.zoneId)) ?? 0)),
+    [differing, numbers],
   );
   const [selected, setSelected] = useState<ZoneRef | null>(zoneSelection.get());
   useEffect(() => zoneSelection.subscribe(setSelected), []);
@@ -55,55 +66,69 @@ const ZoneHealthPanel: React.FC<ZoneHealthPanelProps> = ({ zones, isWholeParcel 
         <h3 className="text-sm font-semibold text-nkz-text-primary">{t('zones.title')}</h3>
         <span className="text-xs text-nkz-text-muted">{t('zones.count', { count: zones.length })}</span>
       </div>
-      <p className="text-xs text-nkz-text-muted mb-1">{t('zones.hint')}</p>
-      <p className="text-xs text-nkz-text-muted mb-3">{t('zones.selectHint')}</p>
-
-      <div className="space-y-2">
-        {ordered.map((zone) => {
-          const ref = { parcelId: zone.parcelId ?? '', zoneId: zone.zoneId };
-          const isSelected = selected?.parcelId === ref.parcelId && selected?.zoneId === ref.zoneId;
-          return (
-          <button
-            type="button"
-            key={zone.zoneId}
-            aria-pressed={isSelected}
-            onMouseEnter={() => zoneSelection.hover(ref)}
-            onMouseLeave={() => zoneSelection.hover(null)}
-            onFocus={() => zoneSelection.hover(ref)}
-            onBlur={() => zoneSelection.hover(null)}
-            onClick={() => zoneSelection.pin(ref)}
-            className={`w-full text-left rounded-lg border p-3 bg-nkz-surface flex items-start justify-between gap-3 cursor-pointer ${
-              isSelected ? 'border-nkz-accent-base' : 'border-nkz-border'
-            }`}
-          >
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="text-sm font-semibold text-nkz-text-primary">
-                  {t('zones.zoneLabel', { id: numbers.get(zoneKey(zone.parcelId, zone.zoneId)) ?? zone.zoneId })}
-                </span>
-                {zone.sensorNearby && (
-                  <span className="text-[10px] uppercase tracking-wide text-nkz-accent-base font-medium">
-                    {t('zones.sensorNearby')}
-                  </span>
-                )}
-              </div>
-              <p className="text-xs text-nkz-text-muted mt-1">
-                {t('zones.metric')}: {metricLabel(zone)}
-                {zone.dominantStressor && zone.dominantStressor !== 'none' && (
-                  <> · {t('zones.stressor', { value: zone.dominantStressor })}</>
-                )}
-              </p>
-              {zone.recommendedAction && zone.recommendedAction !== 'NO_ACTION' && (
-                <p className="text-xs text-nkz-text-secondary mt-1">
-                  {t(actionLabelKey(zone.recommendedAction), zone.recommendedAction)}
-                </p>
-              )}
-            </div>
-            <SeverityBadge severity={zone.overallSeverity} />
-          </button>
-          );
-        })}
-      </div>
+      {differing.length === 0 ? (
+        <p className="text-xs text-nkz-text-muted">{t('zones.noDifference', { count: zones.length })}</p>
+      ) : (
+        <>
+          <p className="text-xs text-nkz-text-muted mb-3">{t('zones.hint')}</p>
+          <div className="space-y-2">
+            {ordered.map((zone) => {
+              const ref = { parcelId: zone.parcelId ?? '', zoneId: zone.zoneId };
+              const isSelected = selected?.parcelId === ref.parcelId && selected?.zoneId === ref.zoneId;
+              return (
+                <div
+                  key={zone.zoneId}
+                  onMouseEnter={() => zoneSelection.hover(ref)}
+                  onMouseLeave={() => zoneSelection.hover(null)}
+                  className={`w-full rounded-lg border p-3 bg-nkz-surface flex items-start justify-between gap-3 ${
+                    isSelected ? 'border-nkz-accent-base' : 'border-nkz-border'
+                  }`}
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-sm font-semibold text-nkz-text-primary">
+                        {t('zones.zoneLabel', { id: numbers.get(zoneKey(zone.parcelId, zone.zoneId)) ?? zone.zoneId })}
+                      </span>
+                      {zone.sensorNearby && (
+                        <span className="text-[10px] uppercase tracking-wide text-nkz-accent-base font-medium">
+                          {t('zones.sensorNearby')}
+                        </span>
+                      )}
+                      <SeverityBadge severity={zone.overallSeverity} />
+                    </div>
+                    <p className="text-xs text-nkz-text-muted mt-1">
+                      {t('zones.metric')}: {metricLabel(zone)} · {t('zones.parcelValue', { value: parcelMetricLabel(zone, parcelValues) })}
+                      {zone.dominantStressor && zone.dominantStressor !== 'none' && (
+                        <> · {t('zones.stressor', { value: zone.dominantStressor })}</>
+                      )}
+                    </p>
+                    {zone.recommendedAction && zone.recommendedAction !== 'NO_ACTION' && (
+                      <p className="text-xs text-nkz-text-secondary mt-1">
+                        {t(actionLabelKey(zone.recommendedAction), zone.recommendedAction)}
+                      </p>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onFocus={() => zoneSelection.hover(ref)}
+                    onBlur={() => zoneSelection.hover(null)}
+                    onClick={() => {
+                      zoneSelection.pin(ref);
+                      navigateTo(`/viewer?parcel=${ref.parcelId}&zone=${ref.zoneId}`);
+                    }}
+                    className="text-xs text-nkz-accent-base font-medium cursor-pointer"
+                  >
+                    {t('zones.showOnMap')}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
+      {differing.length > 0 && rest.length > 0 && (
+        <p className="text-xs text-nkz-text-muted mt-3">{t('zones.rest', { list: zoneNumberList(rest, numbers) })}</p>
+      )}
     </div>
   );
 };

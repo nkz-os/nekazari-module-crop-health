@@ -71,3 +71,27 @@ describe('emphasisStyle', () => {
     expect(dim.bold).toBe(false);
   });
 });
+
+import { splitZones, zoneNumberList } from './zones';
+
+describe('zoneNumberList', () => {
+  it('compacts consecutive runs and keeps singles', () => {
+    expect(zoneNumberList([{ parcelId: 'p', zoneId: 'a' }], new Map([['p|a', 3]]))).toBe('3');
+    const zs = ['a', 'b', 'c', 'd', 'e', 'f'].map((zoneId) => ({ parcelId: 'p', zoneId }));
+    const nums = new Map([['p|a', 7], ['p|b', 1], ['p|c', 5], ['p|d', 2], ['p|e', 4], ['p|f', 6]]);
+    expect(zoneNumberList(zs, nums)).toBe('1-2, 4-7');
+    expect(zoneNumberList([zs[1], zs[3], zs[4]], nums)).toBe('1-2, 4');
+    expect(zoneNumberList([zs[1], zs[2]], nums)).toBe('1, 5');
+  });
+});
+
+describe('splitZones', () => {
+  it('separates zones that differ from the parcel', () => {
+    const a = { zoneId: 'a', differsFromParcel: true } as never;
+    const b = { zoneId: 'b', differsFromParcel: false } as never;
+    const c = { zoneId: 'c' } as never;
+    const { differing, rest } = splitZones([a, b, c]);
+    expect(differing).toEqual([a]);
+    expect(rest).toEqual([b, c]);
+  });
+});

@@ -51,3 +51,15 @@ describe('detail strings parity', () => {
     });
   }
 });
+
+describe('zone panel strings', () => {
+  for (const [lang, res] of Object.entries(resources)) {
+    it(`${lang} has the differing-zones keys`, () => {
+      const z = (res as any)['crop-health'].zones;
+      for (const k of ['showOnMap', 'rest', 'noDifference', 'parcelValue']) expect(typeof z[k]).toBe('string');
+      expect(z.rest).toContain('{{list}}');
+      expect(z.noDifference).toContain('{{count}}');
+      expect(z.parcelValue).toContain('{{value}}');
+    });
+  }
+});

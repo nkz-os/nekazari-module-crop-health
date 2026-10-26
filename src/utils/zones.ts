@@ -10,6 +10,7 @@ interface ZoneLike {
   parcelId?: string | null;
   zoneId: string;
   geometry?: Geometry;
+  differsFromParcel?: boolean;
 }
 
 export function polygonRings(geometry: Geometry): number[][][] {
@@ -64,6 +65,30 @@ export function zoneNumbers(zones: ZoneLike[]): Map<string, number> {
     keyed.forEach(({ z }, i) => out.set(zoneKey(z.parcelId, z.zoneId), i + 1));
   });
   return out;
+}
+
+/** Zones that differ from the parcel value, and the rest (same as the parcel). */
+export function splitZones<T extends ZoneLike>(zones: T[]): { differing: T[]; rest: T[] } {
+  const differing: T[] = [];
+  const rest: T[] = [];
+  for (const z of zones) (z.differsFromParcel ? differing : rest).push(z);
+  return { differing, rest };
+}
+
+/** Zone numbers as a compact list: "1-2, 4-7" (runs of two or more become ranges). */
+export function zoneNumberList(zones: ZoneLike[], numbers: Map<string, number>): string {
+  const ns = zones
+    .map((z) => numbers.get(zoneKey(z.parcelId, z.zoneId)))
+    .filter((n): n is number => n != null)
+    .sort((a, b) => a - b);
+  const parts: string[] = [];
+  for (let i = 0; i < ns.length; ) {
+    let j = i;
+    while (j + 1 < ns.length && ns[j + 1] === ns[j] + 1) j++;
+    parts.push(j > i ? `${ns[i]}-${ns[j]}` : `${ns[i]}`);
+    i = j + 1;
+  }
+  return parts.join(', ');
 }
 
 /** The map label: zone number and the value of the active layer. */

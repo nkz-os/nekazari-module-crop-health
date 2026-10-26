@@ -77,6 +77,7 @@ const CropHealthDetailTabs: React.FC<CropHealthDetailTabsProps> = ({
   diseases = [],
   zones = [],
   isWholeParcel = true,
+  parcelValues = {},
 }) => {
   const { t, i18n } = useTranslation('crop-health');
   const [activeTab, setActiveTab] = useState<DetailTab>('water');
@@ -123,7 +124,7 @@ const CropHealthDetailTabs: React.FC<CropHealthDetailTabsProps> = ({
       <div className="p-2 space-y-2">
       {activeTab === 'water' && (
         <>
-      <ZoneHealthPanel zones={zones} isWholeParcel={isWholeParcel} />
+      <ZoneHealthPanel zones={zones} isWholeParcel={isWholeParcel} parcelValues={parcelValues} />
       {/* CWSI Section */}
       {assessment.cwsiValue != null && (
         <MetricSection>

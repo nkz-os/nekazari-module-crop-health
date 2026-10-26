@@ -4,26 +4,104 @@ import { cropHealthFetch } from '../api/cropHealthApi';
 import { formatRelativeTime } from '../utils/relativeTime';
 import type { ParcelSummary } from '../types/assessment';
 
-const INDICATOR_COLORS: Record<string, string> = {
-  green: 'var(--nkz-color-success)',
-  blue: 'var(--nkz-color-info)',
-  yellow: 'var(--nkz-color-warning)',
+import { jobLabelKey, whenLabel, freshnessTone, semaphore } from '../utils/worklist';
+
+type TFn = (key: string, opts?: Record<string, unknown>) => string;
+
+const DOT_COLORS: Record<string, string> = {
   red: 'var(--nkz-color-danger)',
+  amber: 'var(--nkz-color-warning)',
+  green: 'var(--nkz-color-success)',
   grey: 'var(--nkz-color-text-muted)',
 };
 
-function relativeTime(iso: string | undefined, t: ReturnType<typeof useTranslation>['t']): string {
-  return formatRelativeTime(iso, t);
+const TONE_CLASS: Record<string, string> = {
+  muted: 'text-nkz-text-muted',
+  warning: 'text-nkz-warning',
+  danger: 'text-nkz-danger',
+};
+
+export interface WorklistSummary {
+  surprises: number;
+  jobsToday: number;
+  noData: number;
 }
+
+function jobLine(p: ParcelSummary, t: TFn, lang: string): string {
+  let job = p.nextJob;
+  if (!job && p.cropStatus === 'active' && !p.hasData) {
+    job = { kind: 'pending_assessment', when: null, detail: {} };
+  }
+  let text = t(jobLabelKey(job), (job?.detail ?? {}) as Record<string, unknown>);
+  const w = job?.kind === 'sow' ? job.detail?.workability : undefined;
+  if (w === 'optimal' || w === 'too_wet' || w === 'too_dry') {
+    text += `: ${t(`worklist.workability.${w}`)}`;
+  }
+  const when = whenLabel(job, t as (k: string) => string, lang);
+  return when ? `${text} · ${when}` : text;
+}
+
+interface ParcelRowsProps {
+  rows: ParcelSummary[];
+  selectedParcelId: string | null;
+  onSelect: (parcelId: string, parcelName: string) => void;
+  t: TFn;
+  lang: string;
+}
+
+export const ParcelRows: React.FC<ParcelRowsProps> = ({ rows, selectedParcelId, onSelect, t, lang }) => (
+  <>
+    {rows.map(p => {
+      const phase = p.phenologyStage ? t(`phenology.stage.${p.phenologyStage}`, { defaultValue: p.phenologyStage }) : '';
+      const cropLine = p.cropStatus === 'none'
+        ? t('worklist.noActiveCrop')
+        : [p.cropName, phase].filter(Boolean).join(' · ');
+      return (
+        <button
+          key={p.parcelId}
+          onClick={() => onSelect(p.parcelId, p.parcelName || '')}
+          className={`w-full text-left p-2.5 border-b border-nkz-border transition-colors cursor-pointer bg-transparent ${
+            selectedParcelId === p.parcelId
+              ? 'bg-nkz-accent-soft border-l-[3px] border-l-nkz-accent-base'
+              : 'hover:bg-nkz-surface-raised border-l-[3px] border-l-transparent'
+          }`}
+        >
+          <div className="flex items-start gap-2">
+            <span
+              className="inline-block flex-shrink-0 mt-1"
+              style={{ width: 10, height: 10, borderRadius: '50%', backgroundColor: DOT_COLORS[semaphore(p)] }}
+            />
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium text-nkz-text-primary truncate">{p.parcelName || p.parcelId}</p>
+              <p className="text-xs text-nkz-text-muted truncate">{cropLine}</p>
+              <p className="text-xs text-nkz-text-primary mt-0.5">{jobLine(p, t, lang)}</p>
+              {p.surprise && (
+                <p className="text-xs text-nkz-warning mt-0.5">
+                  {t(`worklist.surprise.${p.surprise.code}`, p.surprise.detail as Record<string, unknown>)}
+                </p>
+              )}
+            </div>
+            {p.hasData && p.assessedAt && (
+              <span className={`text-xs flex-shrink-0 ${TONE_CLASS[freshnessTone(p.freshness)]}`}>
+                {formatRelativeTime(p.assessedAt, t as never)}
+              </span>
+            )}
+          </div>
+        </button>
+      );
+    })}
+  </>
+);
 
 interface ParcelListProps {
   onSelectParcel: (parcelId: string, parcelName: string) => void;
   selectedParcelId: string | null;
   onParcelsLoaded?: (parcels: ParcelSummary[]) => void;
+  onSummary?: (s: WorklistSummary) => void;
 }
 
-const ParcelList: React.FC<ParcelListProps> = ({ onSelectParcel, selectedParcelId, onParcelsLoaded }) => {
-  const { t } = useTranslation('crop-health');
+const ParcelList: React.FC<ParcelListProps> = ({ onSelectParcel, selectedParcelId, onParcelsLoaded, onSummary }) => {
+  const { t, i18n } = useTranslation('crop-health');
   const [parcels, setParcels] = useState<ParcelSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -32,29 +110,11 @@ const ParcelList: React.FC<ParcelListProps> = ({ onSelectParcel, selectedParcelI
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const [parcelsResp, sourcesResp] = await Promise.all([
-          cropHealthFetch<{ parcels: ParcelSummary[] }>('/parcels'),
-          cropHealthFetch<{ parcels: Array<{ parcelId: string; healthIndicator: string; sourcesActive: number; sourcesDegraded: number; sourcesDown: number }> }>('/sources'),
-        ]);
-
-        const parcelsData = parcelsResp ?? { parcels: [] };
-        const sourcesData = sourcesResp ?? { parcels: [] };
-
-        const sourceMap: Record<string, { healthIndicator: string; sourcesActive: number; sourcesDegraded: number; sourcesDown: number }> = {};
-        for (const s of sourcesData.parcels || []) {
-          sourceMap[s.parcelId] = s;
-        }
-
-        const merged = (parcelsData.parcels || []).map((p: ParcelSummary) => ({
-          ...p,
-          healthIndicator: sourceMap[p.parcelId]?.healthIndicator || 'grey',
-          sourcesActive: sourceMap[p.parcelId]?.sourcesActive || 0,
-          sourcesDegraded: sourceMap[p.parcelId]?.sourcesDegraded || 0,
-          sourcesDown: sourceMap[p.parcelId]?.sourcesDown || 0,
-        }));
-
-        setParcels(merged);
-        onParcelsLoaded?.(merged);
+        const resp = await cropHealthFetch<{ parcels: ParcelSummary[]; summary?: WorklistSummary }>('/parcels');
+        const rows = resp?.parcels ?? [];
+        setParcels(rows);
+        onParcelsLoaded?.(rows);
+        onSummary?.(resp?.summary ?? { surprises: 0, jobsToday: 0, noData: 0 });
       } catch (e: any) {
         setError(e.message);
       } finally {
@@ -121,59 +181,13 @@ const ParcelList: React.FC<ParcelListProps> = ({ onSelectParcel, selectedParcelI
         {filtered.length === 0 && (
           <p className="text-sm text-nkz-text-muted text-center p-4">{t('parcelList.noParcels')}</p>
         )}
-        {filtered.map(p => (
-          <button
-            key={p.parcelId}
-            onClick={() => onSelectParcel(p.parcelId, p.parcelName || "")}
-            className={`w-full text-left p-2.5 border-b border-nkz-border transition-colors cursor-pointer bg-transparent ${
-              selectedParcelId === p.parcelId
-                ? 'bg-nkz-accent-soft border-l-[3px] border-l-nkz-accent-base'
-                : 'hover:bg-nkz-surface-raised border-l-[3px] border-l-transparent'
-            }`}
-          >
-            <div className="flex items-start gap-2">
-              <span
-                title={p.healthIndicator || 'grey'}
-                className="inline-block flex-shrink-0 mt-1"
-                style={{
-                  width: 10,
-                  height: 10,
-                  borderRadius: '50%',
-                  backgroundColor: INDICATOR_COLORS[p.healthIndicator || 'grey'] || 'var(--nkz-color-text-muted)',
-                }}
-              />
-              <div className="min-w-0 flex-1">
-                <p className="text-sm font-medium text-nkz-text-primary truncate">
-                  {p.parcelName || p.parcelId}
-                </p>
-                <div className="flex items-center gap-2 text-xs text-nkz-text-muted mt-0.5">
-                  {p.cropName && <span>🌾 {p.cropName}</span>}
-                  {p.phenologyStage && <span>🌸 {p.phenologyStage}</span>}
-                  {p.areaHa != null && <span>📐 {p.areaHa.toFixed(1)} ha</span>}
-                </div>
-              </div>
-              <div className="text-right flex-shrink-0">
-                {p.hasData ? (
-                  <>
-                    {p.cwsiValue != null && (
-                      <span
-                        className="text-xs font-mono"
-                        style={{ color: p.cwsiValue > 0.6 ? 'var(--nkz-color-danger)' : p.cwsiValue > 0.3 ? 'var(--nkz-color-warning)' : 'var(--nkz-color-success)' }}
-                      >
-                        CWSI {p.cwsiValue.toFixed(2)}
-                      </span>
-                    )}
-                    <p className="text-xs text-nkz-text-muted">{relativeTime(p.assessedAt, t)}</p>
-                  </>
-                ) : (
-                  <span className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium leading-4 bg-nkz-surface-sunken text-nkz-text-secondary border border-nkz-border">
-                    {t('parcelList.noData')}
-                  </span>
-                )}
-              </div>
-            </div>
-          </button>
-        ))}
+        <ParcelRows
+          rows={filtered}
+          selectedParcelId={selectedParcelId}
+          onSelect={onSelectParcel}
+          t={t as TFn}
+          lang={i18n?.language || 'es'}
+        />
       </div>
     </div>
   );

@@ -25,3 +25,15 @@ describe('zone strings', () => {
     });
   }
 });
+
+describe('worklist and fleet parity', () => {
+  const en = (resources.en as any)['crop-health'];
+  for (const [lang, res] of Object.entries(resources)) {
+    it(`${lang} has the worklist and fleet keys of en`, () => {
+      const ns = (res as any)['crop-health'];
+      expect(keys(ns.worklist).sort()).toEqual(keys(en.worklist).sort());
+      expect(keys(ns.fleet).sort()).toEqual(['jobsToday', 'noData', 'surprises']);
+      expect(keys(en.worklist).length).toBe(16);
+    });
+  }
+});

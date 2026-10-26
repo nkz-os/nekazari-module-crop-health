@@ -258,7 +258,15 @@ async def _detail_sources(request: Request, parcelId: str) -> dict:
         "status": "ok" if soil_ok else "unavailable",
         "freshness": _freshness(assessment.get("assessedAt")),
         "lastDataAt": assessment.get("assessedAt"),
-        "summary": f"{soil_texture or '?'} · pH {soil_ph or '?'} · AWC {soil_awc or '?'}mm",
+        "summary": " · ".join(
+            part
+            for part in (
+                soil_texture,
+                f"pH {soil_ph}" if soil_ph else None,
+                f"AWC {soil_awc}mm" if soil_awc else None,
+            )
+            if part
+        ),
         "details": {
             "texture": soil_texture,
             "fieldCapacity": soil_fc,
@@ -404,11 +412,12 @@ async def _detail_sources(request: Request, parcelId: str) -> dict:
     phenology_source = assessment.get("phenologySource", "default")
     kc_val = assessment.get("kc")
     bio_ok = phenology_source != "default" or kc_val is not None
+    bio_generic = phenology_source == "default"
     bio = {
         "status": "ok" if bio_ok else "unavailable",
         "freshness": _freshness(assessment.get("assessedAt")),
         "lastDataAt": assessment.get("assessedAt"),
-        "summary": f"Kc={kc_val}" if kc_val else "sin parámetros",
+        "summary": "generic" if bio_generic else (f"Kc={kc_val}" if kc_val else "sin parámetros"),
         "matchLevel": "SPECIES" if phenology_source == "bioorchestrator" else "NONE",
         "details": {
             "kc": kc_val,
@@ -417,6 +426,7 @@ async def _detail_sources(request: Request, parcelId: str) -> dict:
             "ky": None,
             "mdsRef": None,
             "provenance": None,
+            "generic": bio_generic,
         },
     }
 

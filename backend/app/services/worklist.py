@@ -4,11 +4,13 @@ from __future__ import annotations
 from datetime import date, datetime, timezone
 from typing import Any, Optional
 
+from app.schemas import RecommendedAction
+
 ACTIVE_PROVENANCES = ("actual", "declared")
 ALERT_SEVERITIES = frozenset({"HIGH", "CRITICAL"})
 FRESH_HOURS = 48
 AGING_HOURS = 7 * 24
-VIGOR_SURPRISE = frozenset({"below_expected", "stressed", "BELOW_EXPECTED"})
+VIGOR_SURPRISE = frozenset({"below_expected", "anomalous_senescence"})
 PHENOLOGY_SURPRISE = frozenset({"ahead", "behind", "early", "late"})
 CWSI_RISE_THRESHOLD = 0.2
 BALANCE_DROP_MM = 10.0
@@ -21,6 +23,30 @@ DEFAULT_LANG = "es"
 def _cycle_date(cycle: Optional[dict]) -> Optional[str]:
     start = (cycle or {}).get("start") or {}
     return start.get("date") or None
+
+
+_CLOSED_STATUSES = frozenset({"harvested", "terminated", "cancelled"})
+_FACT_PROVENANCES = frozenset(ACTIVE_PROVENANCES)
+
+
+def planned_cycle(timeline: Optional[dict]) -> Optional[dict]:
+    """The crop still to be sown: overdue plan, else the next planned cycle, else an undated plan."""
+    tl = timeline or {}
+    pending = tl.get("pending")
+    if pending:
+        return pending
+    nxt = tl.get("next")
+    if nxt and (nxt.get("start") or {}).get("provenance") == "planned":
+        return nxt
+    for cy in tl.get("cycles") or []:
+        start = cy.get("start") or {}
+        # ASSUMPTION: the SDK leaves provenance None on a cycle with no dates at all;
+        # an undated plan is any main crop with no start date and no field fact.
+        if (cy.get("role") == "main_crop" and not start.get("date")
+                and start.get("provenance") not in _FACT_PROVENANCES
+                and cy.get("status") not in _CLOSED_STATUSES):
+            return cy
+    return None
 
 
 def crop_status(timeline: Optional[dict]) -> str:
@@ -84,34 +110,39 @@ def next_job(*, assessment: Optional[dict], timeline: Optional[dict], agro: Opti
         return {"kind": "treat", "when": "today", "detail": {"disease": high[0].get("disease")}}
 
     action = str((assessment or {}).get("recommendedAction") or "")
-    if action.startswith("IRRIGATE"):
+    if action == RecommendedAction.IRRIGATE_IMMEDIATE.value:
         return {"kind": "irrigate", "when": "today", "detail": {}}
+    if action == RecommendedAction.IRRIGATE_SCHEDULED.value:
+        return {"kind": "irrigate", "when": None, "detail": {"scheduled": True}}
 
     status = crop_status(timeline)
-    pending = (timeline or {}).get("pending") or {}
-    pending_date = _cycle_date(pending)
+    planned = planned_cycle(timeline) or {}
+    planned_date = _cycle_date(planned)
 
-    if status == "none" and (pending.get("species") or pending.get("crop_id") or pending.get("crop")):
+    if status == "none" and (planned.get("species") or planned.get("crop_id") or planned.get("crop")):
         detail: dict[str, Any] = {
-            "crop": _pending_crop(pending, lang),
-            "species": pending.get("species") or pending.get("crop_id") or pending.get("crop"),
+            "crop": _pending_crop(planned, lang),
+            "species": planned.get("species") or planned.get("crop_id") or planned.get("crop"),
         }
         if agro:
             detail["workability"] = ((agro.get("semaphores") or {}).get("workability"))
-        return {"kind": "sow", "when": _when(pending_date, today), "detail": detail}
+        return {"kind": "sow", "when": _when(planned_date, today), "detail": detail}
 
     harvest_date = ((forecast or {}).get("season") or {}).get("harvest_date")
     if (forecast or {}).get("status") == "done" and harvest_date:
-        return {"kind": "harvest", "when": _when(harvest_date, today), "detail": {"date": harvest_date}}
+        season_start = _cycle_date((timeline or {}).get("current"))
+        if not season_start or str(harvest_date)[:10] >= season_start:
+            return {"kind": "harvest", "when": _when(harvest_date, today), "detail": {"date": harvest_date}}
 
     if status == "active" and assessment is None:
         return {"kind": "pending_assessment", "when": None, "detail": {}}
 
     # ASSUMPTION: "none_until" = nothing to do now; reached for an active crop with an
-    # assessment, or a crop-less parcel whose pending cycle has a date but no species.
-    if status == "active" or pending_date:
-        return {"kind": "none_until", "when": pending_date,
-                "detail": {"date": pending_date} if pending_date else {}}
+    # assessment, or a crop-less parcel whose planned cycle has a date but no species.
+    until = planned_date or _cycle_date((timeline or {}).get("next"))
+    if status == "active" or until:
+        return {"kind": "none_until", "when": until,
+                "detail": {"date": until} if until else {}}
     return None
 
 

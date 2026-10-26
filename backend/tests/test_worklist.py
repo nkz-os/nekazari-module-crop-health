@@ -1,6 +1,8 @@
 from datetime import date, datetime, timedelta, timezone
 
-from app.services.worklist import crop_status, freshness, next_job, rank, surprise
+from nkz_platform_sdk.crop_cycles import resolve_crop_cycles
+
+from app.services.worklist import crop_status, freshness, next_job, planned_cycle, rank, surprise
 
 TODAY = date(2026, 10, 26)
 NOW = datetime(2026, 10, 26, 12, 0, tzinfo=timezone.utc)
@@ -17,7 +19,7 @@ def _active():
 
 
 def test_treat_wins_over_irrigate():
-    job = _job(assessment={"recommendedAction": "IRRIGATE_NOW"},
+    job = _job(assessment={"recommendedAction": "IRRIGATE_IMMEDIATE"},
                alerts=[{"id": "a1", "disease": "roya", "risk_level": "HIGH"}])
     assert job["kind"] == "treat" and job["detail"]["disease"] == "roya"
 
@@ -32,7 +34,7 @@ def test_low_or_missing_severity_is_not_a_job():
 
 
 def test_irrigate_from_assessment():
-    job = _job(assessment={"recommendedAction": "IRRIGATE_NOW"})
+    job = _job(assessment={"recommendedAction": "IRRIGATE_IMMEDIATE"})
     assert job["kind"] == "irrigate" and job["when"] == "today"
 
 
@@ -104,7 +106,7 @@ def test_water_drop_from_balance_and_none_values():
 
 
 def test_surprise_vigor_phenology_alert_precedence():
-    assert surprise(assessment={"vigorCondition": "stressed", "phenologyDeviation": "late"},
+    assert surprise(assessment={"vigorCondition": "below_expected", "phenologyDeviation": "late"},
                     history=[], alerts=[])["code"] == "vigor_below_expected"
     assert surprise(assessment={"phenologyDeviation": "late"}, history=[], alerts=[])["code"] == "phenology_deviation"
     alerts = [{"id": "n1", "risk_level": "HIGH", "disease": "roya"}]
@@ -183,7 +185,7 @@ def test_cropless_dated_pending_without_species_is_none_until():
 def test_irrigate_beats_sow_and_sow_beats_harvest():
     tl = {"current": None, "pending": {"species": "TRZDU", "start": {"date": "2026-11-10", "provenance": "planned"}}}
     fc = {"status": "done", "season": {"harvest_date": "2026-12-01"}}
-    assert _job(assessment={"recommendedAction": "IRRIGATE_NOW"}, timeline=tl)["kind"] == "irrigate"
+    assert _job(assessment={"recommendedAction": "IRRIGATE_IMMEDIATE"}, timeline=tl)["kind"] == "irrigate"
     assert _job(timeline=tl, forecast=fc)["kind"] == "sow"
 
 
@@ -205,3 +207,87 @@ def test_rank_pending_assessment_is_no_data_group():
             _row("calm"),
             _row("future", nextJob={"kind": "sow", "when": "2026-11-10"})]
     assert [r["name"] for r in sorted(rows, key=rank)] == ["future", "calm", "nocrop", "pend"]
+
+
+# ---- timelines built by the real SDK resolver (resolve_crop_cycles(...).to_dict()) ----
+PID = "urn:ngsi-ld:AgriParcel:p1"
+
+
+def _crop(cid, **kw):
+    return {"id": f"urn:ngsi-ld:AgriCrop:{cid}", "hasAgriParcel": PID, "species": "TRZAX",
+            "cropRole": "main_crop", **kw}
+
+
+def _sdk(*crops, at=TODAY):
+    return resolve_crop_cycles(PID, list(crops), [], at).to_dict()
+
+
+def test_sdk_future_plan_is_sow_with_iso_date():
+    tl = _sdk(_crop("a", sowingWindowStart="2026-11-10"))
+    assert tl["pending"] is None and tl["next"]["start"]["provenance"] == "planned"
+    job = _job(timeline=tl)
+    assert (job["kind"], job["when"]) == ("sow", "2026-11-10")
+
+
+def test_sdk_overdue_plan_is_sow_today():
+    tl = _sdk(_crop("a", sowingWindowStart="2026-10-20"))
+    assert tl["pending"] is not None
+    assert (_job(timeline=tl)["kind"], _job(timeline=tl)["when"]) == ("sow", "today")
+
+
+def test_sdk_overdue_plan_beats_future_plan():
+    tl = _sdk(_crop("a", sowingWindowStart="2026-10-20", species="HORVU"),
+              _crop("b", sowingWindowStart="2026-12-01"))
+    job = _job(timeline=tl)
+    assert (job["kind"], job["when"], job["detail"]["species"]) == ("sow", "today", "HORVU")
+    assert planned_cycle(tl)["crop_id"].endswith(":a")
+
+
+def test_sdk_undated_plan_is_sow_without_when():
+    tl = _sdk(_crop("a"))
+    assert tl["pending"] is None and tl["next"] is None
+    job = _job(timeline=tl)
+    assert (job["kind"], job["when"]) == ("sow", None)
+
+
+def test_sdk_active_crop_with_next_plan_is_none_until_next_date():
+    tl = _sdk(_crop("a", plantingDate="2026-03-01", plantingDateSource="manual", species="HORVU"),
+              _crop("b", sowingWindowStart="2027-03-15"))
+    assert crop_status(tl) == "active"
+    job = _job(timeline=tl, assessment={"recommendedAction": "NO_ACTION"})
+    assert (job["kind"], job["when"]) == ("none_until", "2027-03-15")
+
+
+def test_sdk_declared_sowing_is_active():
+    tl = _sdk(_crop("a", plantingDate="2026-03-01", plantingDateSource="manual"))
+    assert tl["current"]["start"]["provenance"] == "declared"
+    assert crop_status(tl) == "active"
+
+
+def test_planned_cycle_ignores_closed_undated_and_non_main():
+    tl = {"pending": None, "next": None, "cycles": [
+        {"role": "cover_crop", "status": "planned", "start": {"date": None, "provenance": None}},
+        {"role": "main_crop", "status": "harvested", "start": {"date": None, "provenance": None}},
+    ]}
+    assert planned_cycle(tl) is None
+    assert planned_cycle(None) is None
+
+
+def test_harvest_before_current_sowing_is_ignored():
+    fc = {"status": "done", "season": {"harvest_date": "2026-01-15"}}
+    job = _job(timeline=_active(), assessment={}, forecast=fc)
+    assert job["kind"] != "harvest"
+
+
+def test_scheduled_irrigation_is_future_work():
+    job = _job(assessment={"recommendedAction": "IRRIGATE_SCHEDULED"})
+    assert (job["kind"], job["when"], job["detail"]) == ("irrigate", None, {"scheduled": True})
+    assert _job(assessment={"recommendedAction": "IRRIGATE_IMMEDIATE"})["when"] == "today"
+    row = _row("s", nextJob=job)
+    assert rank(row)[0] == 2
+
+
+def test_anomalous_senescence_is_a_vigor_surprise():
+    assert surprise(assessment={"vigorCondition": "anomalous_senescence"}, history=[], alerts=[])["code"] \
+        == "vigor_below_expected"
+    assert surprise(assessment={"vigorCondition": "stressed"}, history=[], alerts=[]) is None

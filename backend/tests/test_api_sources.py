@@ -327,3 +327,15 @@ async def test_bioorchestrator_real_kc_keeps_summary():
     src = await _bio_soil_sources({"phenologySource": "bioorchestrator", "kc": 1.1})
     assert src["bioorchestrator"]["details"]["generic"] is False
     assert src["bioorchestrator"]["summary"] == "Kc=1.1"
+
+
+@pytest.mark.anyio
+async def test_bioorchestrator_without_kc_uses_neutral_literal():
+    src = await _bio_soil_sources({"phenologySource": "bioorchestrator"})
+    assert src["bioorchestrator"]["summary"] == "no_parameters"
+
+
+@pytest.mark.anyio
+async def test_soil_summary_empty_without_texture_even_with_ph():
+    src = await _bio_soil_sources({"soilPh": 6.5, "soilAWCmm": 46})
+    assert src["soil"]["summary"] == "" and src["soil"]["status"] == "unavailable"

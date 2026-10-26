@@ -20,10 +20,15 @@ def test_manual_zone_without_geometry_is_not_management():
     assert not is_management_zone({"id": "z3", "name": "Cuadrante NO"})
 
 
-def test_explicit_zone_type_wins_over_heuristics():
-    rows = [{"id": "a", "location": POLY, "nkz:zoneId": "a", "nkz:zoneType": "management"},
-            {"id": "b", "location": POLY, "nkz:zoneId": "b", "nkz:centroid": [0, 0]}]
-    assert [r["id"] for r in select_management_zones(rows)] == ["a"]
+def test_zone_type_is_judged_per_row_not_per_batch():
+    rows = [{"id": "a", "location": POLY, "nkz:zoneId": "a", "nkz:zoneType": "hydrology"},
+            {"id": "b", "location": POLY, "nkz:zoneId": "b", "nkz:centroid": [0, 0]},
+            {"id": "c", "location": POLY, "nkz:zoneId": "c", "nkz:zoneType": "management"}]
+    assert [r["id"] for r in select_management_zones(rows)] == ["b", "c"]
+
+
+def test_empty_multipolygon_is_not_management():
+    assert not is_management_zone({"id": "e", "location": _multi(0), "nkz:zoneType": "management"})
 
 
 def test_multipolygon_part_limit_is_five():

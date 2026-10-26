@@ -81,7 +81,7 @@ def _has_management_geometry(row: dict) -> bool:
     if gtype == "Polygon":
         return True
     if gtype == "MultiPolygon":
-        return len(geom.get("coordinates") or []) <= MAX_MANAGEMENT_PARTS
+        return 1 <= len(geom.get("coordinates") or []) <= MAX_MANAGEMENT_PARTS
     return False
 
 
@@ -95,28 +95,23 @@ def _is_management_by_heuristic(row: dict) -> bool:
     )
 
 
-def is_management_zone(row: dict, *, use_heuristic: bool = True) -> bool:
+def is_management_zone(row: dict) -> bool:
     """True if ``row`` is a management zone (not a TWI class or geometry-less zone).
 
-    ``use_heuristic=False`` applies only the explicit ``zoneType`` rule; used by
-    ``select_management_zones`` when any row of the batch declares a type.
+    A row that declares ``zoneType`` is a management zone only if it says so; a
+    row without one goes through the weather-map heuristic. Decided per row.
     """
     if not _has_management_geometry(row):
         return False
     zone_type = _attr(row, "nkz:zoneType", "zoneType")
     if zone_type is not None:
         return zone_type == "management"
-    return use_heuristic and _is_management_by_heuristic(row)
+    return _is_management_by_heuristic(row)
 
 
 def select_management_zones(rows: list[dict]) -> list[dict]:
-    """Management zones among a parcel's rows.
-
-    If any row declares ``zoneType``, the heuristic is disabled for the batch.
-    """
-    dict_rows = [r for r in rows if isinstance(r, dict)]
-    any_typed = any(_attr(r, "nkz:zoneType", "zoneType") is not None for r in dict_rows)
-    return [r for r in dict_rows if is_management_zone(r, use_heuristic=not any_typed)]
+    """Management zones among a parcel's rows, each judged on its own."""
+    return [r for r in rows if isinstance(r, dict) and is_management_zone(r)]
 
 
 async def resolve_zones(parcel_id: str, tenant_id: str, parcel_geometry: dict) -> list[Zone]:

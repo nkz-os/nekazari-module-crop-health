@@ -266,7 +266,7 @@ async def _detail_sources(request: Request, parcelId: str) -> dict:
                 f"AWC {soil_awc}mm" if soil_awc else None,
             )
             if part
-        ),
+        ) if soil_texture else "",
         "details": {
             "texture": soil_texture,
             "fieldCapacity": soil_fc,
@@ -417,7 +417,7 @@ async def _detail_sources(request: Request, parcelId: str) -> dict:
         "status": "ok" if bio_ok else "unavailable",
         "freshness": _freshness(assessment.get("assessedAt")),
         "lastDataAt": assessment.get("assessedAt"),
-        "summary": "generic" if bio_generic else (f"Kc={kc_val}" if kc_val else "sin parámetros"),
+        "summary": "generic" if bio_generic else (f"Kc={kc_val}" if kc_val else "no_parameters"),
         "matchLevel": "SPECIES" if phenology_source == "bioorchestrator" else "NONE",
         "details": {
             "kc": kc_val,

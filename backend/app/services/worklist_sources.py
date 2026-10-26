@@ -71,12 +71,14 @@ async def fetch_history(request, parcel_short: str, days: int = 4) -> list[dict]
 
 async def gather_parcel_inputs(request, state, tenant_id: str, parcel_short: str, *, with_history: bool) -> dict:
     urn = parcel_urn(parcel_short)
-    names = ["timeline", "agro", "forecast"]
+    names = ["timeline", "agro"]
     calls = [
         fetch_timeline(tenant_id, urn),
         fetch_agro_status(tenant_id, parcel_short),
-        fetch_forecast(state, tenant_id, urn),
     ]
+    if state is not None:
+        names.append("forecast")
+        calls.append(fetch_forecast(state, tenant_id, urn))
     if with_history:
         names.append("history")
         calls.append(fetch_history(request, parcel_short))

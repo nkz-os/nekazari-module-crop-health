@@ -24,7 +24,7 @@ class TestParcels:
             resp = client.get("/api/crop-health/parcels")
             assert resp.status_code == 200
             data = resp.json()
-            assert data == {"parcels": []}
+            assert data == {"parcels": [], "summary": {"surprises": 0, "jobsToday": 0, "noData": 0}}
 
     def test_parcels_includes_assessment_data(self, client):
         call_count = [0]
@@ -137,7 +137,7 @@ class TestParcels:
             resp = client.get("/api/crop-health/parcels")
             assert resp.status_code == 200
             data = resp.json()
-            assert data == {"parcels": []}
+            assert data == {"parcels": [], "summary": {"surprises": 0, "jobsToday": 0, "noData": 0}}
 
     def test_parcels_excludes_ghost_without_agriparcel(self, client):
         """An assessment referencing a parcel with no live AgriParcel must NOT appear."""
@@ -161,4 +161,4 @@ class TestParcels:
         with patch("httpx.AsyncClient.get", side_effect=mock_get):
             resp = client.get("/api/crop-health/parcels")
             assert resp.status_code == 200
-            assert resp.json() == {"parcels": []}
+            assert resp.json() == {"parcels": [], "summary": {"surprises": 0, "jobsToday": 0, "noData": 0}}

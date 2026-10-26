@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import date, datetime, timedelta, timezone
 
@@ -21,6 +22,7 @@ from app.api.assessment_mapper import (
     prop_value,
 )
 from app.config import get_settings
+from app.services import worklist
 from app.services.zonation import is_whole_parcel, resolve_zones
 from nkz_platform_sdk.orion import OrionClient
 
@@ -31,6 +33,72 @@ logger = logging.getLogger(__name__)
 # Gateway-injected identity the timeseries-reader needs to authorize a call
 # made on behalf of the user (its routes sit behind require_auth).
 _READER_FORWARDED_HEADERS = ("Authorization", "X-Tenant-ID", "X-Auth-Signature")
+
+_WORKLIST_KEYS = ("recommendedAction", "vigorCondition", "phenologyDeviation")
+
+
+def get_redis_state():
+    """Late import: app.main imports this package. None when the app is not started."""
+    try:
+        from app.main import get_redis_state as _get
+
+        return _get()
+    except Exception as exc:  # noqa: BLE001 — forecast is optional input to the work list
+        logger.warning("worklist: redis state unavailable: %s", exc)
+        return None
+
+
+def _flat(entity: dict | None) -> dict | None:
+    """Plain values of the assessment attributes the work-list rules read."""
+    if not entity:
+        return None
+    return {k: prop_value(entity, k, None) for k in _WORKLIST_KEYS}
+
+
+def _planned_crop(timeline: dict | None) -> dict | None:
+    pending = (timeline or {}).get("pending") or {}
+    species = pending.get("species")
+    if not species:
+        return None
+    out: dict = {"species": species}
+    if pending.get("names"):
+        out["names"] = pending["names"]
+    sowing = (pending.get("start") or {}).get("date")
+    out["sowingDate"] = sowing or None
+    return out
+
+
+def _worklist_fields(*, assessment: dict | None, assessed_at: str | None, crop_name: str | None,
+                     inputs: dict, alerts: list[dict], now: datetime) -> dict:
+    """Crop status, freshness, next job and surprise of one parcel (pure over its inputs)."""
+    timeline = inputs.get("timeline")
+    status = worklist.crop_status(timeline)
+    fresh = worklist.freshness(assessed_at, now)
+    return {
+        "cropStatus": status,
+        "freshness": fresh,
+        "stale": fresh == "stale" or (status == "none" and assessed_at is not None),
+        "nextJob": worklist.next_job(
+            assessment=assessment, timeline=timeline, agro=inputs.get("agro"),
+            alerts=alerts, forecast=inputs.get("forecast"), today=now.date(),
+        ),
+        "surprise": worklist.surprise(
+            assessment=assessment, history=inputs.get("history") or [], alerts=alerts,
+        ),
+        "plannedCrop": _planned_crop(timeline),
+        "lastAssessment": (
+            {"assessedAt": assessed_at, "cropName": crop_name}
+            if status == "none" and assessed_at is not None else None
+        ),
+    }
+
+
+async def _alerts_safe(tenant_id: str) -> list[dict]:
+    try:
+        return await _active_alert_rows(tenant_id)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("worklist: alerts failed tenant=%s: %s", tenant_id, exc)
+        return []
 
 
 def _reader_headers(request: Request) -> dict[str, str]:
@@ -292,6 +360,29 @@ def _linear_regression_stats(pairs: list[dict]) -> dict:
     }
 
 
+async def _latest_worklist(request: Request, tenant_id: str, parcel_id: str,
+                           entity: dict, mapped: dict) -> dict:
+    """Work-list fields for the single-parcel answer; never raises."""
+    try:
+        from app.services.worklist_sources import gather_parcel_inputs  # lazy: avoids an import cycle
+
+        inputs, alerts = await asyncio.gather(
+            gather_parcel_inputs(request, get_redis_state(), tenant_id, parcel_id, with_history=True),
+            _alerts_safe(tenant_id),
+        )
+        fields = _worklist_fields(
+            assessment=_flat(entity), assessed_at=mapped.get("assessedAt"),
+            crop_name=mapped.get("cropName"), inputs=inputs,
+            alerts=[a for a in alerts if a.get("parcelId") == parcel_id],
+            now=datetime.now(timezone.utc),
+        )
+        fields.pop("lastAssessment")
+        return fields
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("worklist: latest fields failed tenant=%s parcel=%s: %s", tenant_id, parcel_id, exc)
+        return {}
+
+
 @router.get("/assessments/latest")
 async def latest_assessments(
     request: Request,
@@ -301,11 +392,13 @@ async def latest_assessments(
     tenant_id = getattr(request.state, "tenant_id", "")
     entities = await _fetch_assessment_entities(tenant_id, parcel_id=parcelId, limit=100 if parcelId else 100)
 
+    extra: dict = {}
     if parcelId:
         if not entities:
             return {"assessments": []}
         latest = max(entities, key=lambda e: prop_value(e, "assessedAt", ""))
         assessments = [map_entity_to_assessment(latest)]
+        extra = await _latest_worklist(request, tenant_id, parcelId, latest, assessments[0])
     else:
         latest_entities = dedupe_latest_per_parcel(entities)
         assessments = [map_entity_to_assessment(e) for e in latest_entities]
@@ -319,7 +412,7 @@ async def latest_assessments(
         if pid and pid in parcel_names:
             a["parcelName"] = parcel_names[pid]
 
-    return {"assessments": assessments}
+    return {"assessments": assessments, **extra}
 
 
 @router.get("/assessments/all")
@@ -652,14 +745,33 @@ async def list_parcels(request: Request):
             "hasData": False,
         })
 
-    # Sort: parcels with data first (by severity priority), then without data
-    severity_order = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
-    parcels.sort(key=lambda p: (
-        0 if p.get("hasData") else 1,
-        severity_order.get(p.get("overallSeverity", "LOW"), 3),
-    ))
+    # Work-list fields: inputs of every parcel gathered in parallel, alerts once per request.
+    from app.services.worklist_sources import gather_parcel_inputs  # lazy: avoids an import cycle
 
-    return {"parcels": parcels}
+    state = get_redis_state()
+    now = datetime.now(timezone.utc)
+    alerts, inputs_list = await asyncio.gather(
+        _alerts_safe(tenant_id),
+        asyncio.gather(*(
+            gather_parcel_inputs(request, state, tenant_id, p["parcelId"], with_history=True)
+            for p in parcels
+        )),
+    )
+    for p, inputs in zip(parcels, inputs_list):
+        p.update(_worklist_fields(
+            assessment=_flat(assessment_by_parcel.get(p["parcelId"])),
+            assessed_at=p.get("assessedAt"), crop_name=p.get("cropName"), inputs=inputs,
+            alerts=[a for a in alerts if a.get("parcelId") == p["parcelId"]], now=now,
+        ))
+
+    parcels.sort(key=worklist.rank)
+    summary = {
+        "surprises": sum(1 for p in parcels if p["surprise"]),
+        "jobsToday": sum(1 for p in parcels if (p["nextJob"] or {}).get("when") == "today"),
+        "noData": sum(1 for p in parcels
+                      if not p.get("hasData") or (p["nextJob"] or {}).get("kind") == "pending_assessment"),
+    }
+    return {"parcels": parcels, "summary": summary}
 
 
 async def _active_alert_rows(tenant_id: str) -> list[dict]:

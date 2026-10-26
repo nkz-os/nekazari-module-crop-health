@@ -62,6 +62,63 @@ def _centroid_from(row: dict) -> tuple[float, float] | None:
     return None
 
 
+MAX_MANAGEMENT_PARTS = 5
+
+
+def _geometry_of(row: dict) -> dict | None:
+    """Row geometry as a GeoJSON dict (keyValues or GeoProperty-wrapped)."""
+    geom = _attr(row, "location")
+    if isinstance(geom, dict) and geom.get("type") == "GeoProperty":
+        geom = geom.get("value")
+    return geom if isinstance(geom, dict) else None
+
+
+def _has_management_geometry(row: dict) -> bool:
+    geom = _geometry_of(row)
+    if not geom:
+        return False
+    gtype = geom.get("type")
+    if gtype == "Polygon":
+        return True
+    if gtype == "MultiPolygon":
+        return len(geom.get("coordinates") or []) <= MAX_MANAGEMENT_PARTS
+    return False
+
+
+def _is_management_by_heuristic(row: dict) -> bool:
+    """Weather-map zones: centroid/aspect sector and no TWI statistic."""
+    if _attr(row, "nkz:twiMean", "twiMean") is not None:
+        return False
+    return (
+        _attr(row, "nkz:centroid", "centroid") is not None
+        or _attr(row, "nkz:aspectSector", "aspectSector") is not None
+    )
+
+
+def is_management_zone(row: dict, *, use_heuristic: bool = True) -> bool:
+    """True if ``row`` is a management zone (not a TWI class or geometry-less zone).
+
+    ``use_heuristic=False`` applies only the explicit ``zoneType`` rule; used by
+    ``select_management_zones`` when any row of the batch declares a type.
+    """
+    if not _has_management_geometry(row):
+        return False
+    zone_type = _attr(row, "nkz:zoneType", "zoneType")
+    if zone_type is not None:
+        return zone_type == "management"
+    return use_heuristic and _is_management_by_heuristic(row)
+
+
+def select_management_zones(rows: list[dict]) -> list[dict]:
+    """Management zones among a parcel's rows.
+
+    If any row declares ``zoneType``, the heuristic is disabled for the batch.
+    """
+    dict_rows = [r for r in rows if isinstance(r, dict)]
+    any_typed = any(_attr(r, "nkz:zoneType", "zoneType") is not None for r in dict_rows)
+    return [r for r in dict_rows if is_management_zone(r, use_heuristic=not any_typed)]
+
+
 async def resolve_zones(parcel_id: str, tenant_id: str, parcel_geometry: dict) -> list[Zone]:
     """Return the parcel's ``AgriParcelZone`` zones, or a whole-parcel fallback.
 
@@ -85,16 +142,11 @@ async def resolve_zones(parcel_id: str, tenant_id: str, parcel_geometry: dict) -
         await client.close()
 
     zones: list[Zone] = []
-    for r in rows:
-        if not isinstance(r, dict):
-            continue
+    for r in select_management_zones(rows):
         zid = _zone_id_from(r)
         if not zid:
             continue
-        geom = _attr(r, "location") or parcel_geometry
-        # keyValues GeoProperty → geometry dict directly; normalized → {value: geom}
-        if isinstance(geom, dict) and geom.get("type") == "GeoProperty":
-            geom = geom.get("value") or parcel_geometry
+        geom = _geometry_of(r) or parcel_geometry
         sensor_nearby = bool(_attr(r, "nkz:sensorNearby", "sensorNearby") or False)
         zones.append(Zone(
             zone_id=zid,

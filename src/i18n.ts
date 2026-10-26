@@ -106,7 +106,14 @@ const en = {
             noParcels: 'No parcels found',
             noData: 'No data',
         },
+        noCrop: {
+            title: 'No active crop',
+            next: 'Next: sow {{crop}}',
+            plan: 'Go to planning',
+            last: 'Last assessment: {{date}} ({{crop}})',
+        },
         sources: {
+            generic: 'generic',
             title: 'Data Sources: {{parcel}}',
             refresh: 'Refresh',
             retry: 'Retry',
@@ -171,8 +178,7 @@ const en = {
         tabs: {
             water: 'Water',
             plant: 'Plant',
-            yield: 'Yield & action',
-            analytics: 'Analytics',
+            risks: 'Risks',
         },
         phenologyTimeline: {
             title: 'Phenology timeline',
@@ -242,6 +248,7 @@ const en = {
             CRITICAL: 'Critical waterlogging risk ({{hours}}h) — anoxia danger',
         },
         yieldForecast: {
+            "none": "No forecast: {{reason}}",
             "title": "Expected harvest",
             "loading": "Loading forecast…",
             "notComputed": "Not computed yet",
@@ -475,7 +482,14 @@ const es = {
             noParcels: 'No se encontraron parcelas',
             noData: 'Sin datos',
         },
+        noCrop: {
+            title: 'Sin cultivo activo',
+            next: 'Siguiente: sembrar {{crop}}',
+            plan: 'Ir a planificación',
+            last: 'Última evaluación: {{date}} ({{crop}})',
+        },
         sources: {
+            generic: 'genérico',
             title: 'Fuentes de datos: {{parcel}}',
             refresh: 'Actualizar',
             retry: 'Reintentar',
@@ -535,7 +549,7 @@ const es = {
             metric: 'Métrica principal',
             stressor: 'Dominante: {{value}}',
         },
-        tabs: { water: 'Agua', plant: 'Planta', yield: 'Rendimiento y acción', analytics: 'Analítica' },
+        tabs: { water: 'Agua', plant: 'Planta', risks: 'Riesgos' },
         phenologyTimeline: { title: 'Línea fenológica', deviation: 'Desviación fenológica: {{value}}' },
         mapLayer: { title: 'Capa del mapa', severity: 'Severidad', cwsi: 'CWSI', composite: 'Compuesto', vigor: 'Vigor', off: 'Apagar' },
         metrics: { cwsi: 'CWSI', stress: 'Estrés', yield: 'Rendimiento', bioSource: 'BioOrchestrator' },
@@ -576,6 +590,7 @@ const es = {
             CRITICAL: 'Riesgo crítico de encharcamiento ({{hours}}h) — peligro de anoxia',
         },
         yieldForecast: {
+            "none": "Sin previsión: {{reason}}",
             "title": "Cosecha prevista",
             "loading": "Cargando previsión…",
             "notComputed": "Aún no se ha calculado",
@@ -808,7 +823,14 @@ const ca = {
             noParcels: 'No s\'han trobat parcel·les',
             noData: 'Sense dades',
         },
+        noCrop: {
+            title: 'Sense cultiu actiu',
+            next: 'Següent: sembrar {{crop}}',
+            plan: 'Anar a planificació',
+            last: 'Darrera avaluació: {{date}} ({{crop}})',
+        },
         sources: {
+            generic: 'genèric',
             title: 'Fonts de dades: {{parcel}}',
             refresh: 'Actualitzar',
             retry: 'Reintentar',
@@ -868,7 +890,7 @@ const ca = {
             metric: 'Mètrica principal',
             stressor: 'Dominant: {{value}}',
         },
-        tabs: { water: 'Aigua', plant: 'Planta', yield: 'Rendiment i acció', analytics: 'Analítica' },
+        tabs: { water: 'Aigua', plant: 'Planta', risks: 'Riscos' },
         phenologyTimeline: { title: 'Línia fenològica', deviation: 'Desviació fenològica: {{value}}' },
         mapLayer: { title: 'Capa del mapa', severity: 'Severitat', cwsi: 'CWSI', composite: 'Compost', vigor: 'Vigor' },
         metrics: { cwsi: 'CWSI', stress: 'Estrès', yield: 'Rendiment', bioSource: 'BioOrchestrator' },
@@ -909,6 +931,7 @@ const ca = {
             CRITICAL: 'Risc crític d\'embassament ({{hours}}h) — perill d\'anòxia',
         },
         yieldForecast: {
+            "none": "Sense previsió: {{reason}}",
             "title": "Collita prevista",
             "loading": "Carregant previsió…",
             "notComputed": "Encara no s'ha calculat",
@@ -1110,7 +1133,14 @@ const eu = {
             noParcels: 'Ez da partzelarik aurkitu',
             noData: 'Daturik ez',
         },
+        noCrop: {
+            title: 'Laborantza aktiborik gabe',
+            next: 'Hurrengoa: {{crop}} ereitea',
+            plan: 'Joan planifikaziora',
+            last: 'Azken ebaluazioa: {{date}} ({{crop}})',
+        },
         sources: {
+            generic: 'generikoa',
             title: 'Datu-iturriak: {{parcel}}',
             refresh: 'Eguneratu',
             retry: 'Saiatu berriro',
@@ -1170,7 +1200,7 @@ const eu = {
             metric: 'Metrika nagusia',
             stressor: 'Nagusia: {{value}}',
         },
-        tabs: { water: 'Ura', plant: 'Landare', yield: 'Emekortasuna eta ekintza', analytics: 'Analitika' },
+        tabs: { water: 'Ura', plant: 'Landare', risks: 'Arriskuak' },
         phenologyTimeline: { title: 'Fenologia lerroa', deviation: 'Fenologia desbideratzea: {{value}}' },
         mapLayer: { title: 'Mapa geruza', severity: 'Larritasuna', cwsi: 'CWSI', composite: 'Konposatua', vigor: 'Bizitasuna' },
         metrics: { cwsi: 'CWSI', stress: 'Estresa', yield: 'Emekortasuna', bioSource: 'BioOrchestrator' },
@@ -1211,6 +1241,7 @@ const eu = {
             CRITICAL: 'Ur-pilatze arrisku kritikoa ({{hours}}h) — anoxia arriskua',
         },
         yieldForecast: {
+            "none": "Aurreikuspenik ez: {{reason}}",
             "title": "Aurreikusitako uzta",
             "loading": "Aurreikuspena kargatzen…",
             "notComputed": "Oraindik ez da kalkulatu",
@@ -1412,7 +1443,14 @@ const fr = {
             noParcels: 'Aucune parcelle trouvée',
             noData: 'Pas de données',
         },
+        noCrop: {
+            title: 'Aucune culture active',
+            next: 'Prochaine étape : semer {{crop}}',
+            plan: 'Aller à la planification',
+            last: 'Dernière évaluation : {{date}} ({{crop}})',
+        },
         sources: {
+            generic: 'générique',
             title: 'Sources de données : {{parcel}}',
             refresh: 'Actualiser',
             retry: 'Réessayer',
@@ -1472,7 +1510,7 @@ const fr = {
             metric: 'Métrique principale',
             stressor: 'Dominant : {{value}}',
         },
-        tabs: { water: 'Eau', plant: 'Plante', yield: 'Rendement et action', analytics: 'Analytique' },
+        tabs: { water: 'Eau', plant: 'Plante', risks: 'Risques' },
         phenologyTimeline: { title: 'Chronologie phénologique', deviation: 'Déviation phénologique : {{value}}' },
         mapLayer: { title: 'Couche cartographique', severity: 'Sévérité', cwsi: 'CWSI', composite: 'Composite', vigor: 'Vigueur' },
         metrics: { cwsi: 'CWSI', stress: 'Stress', yield: 'Rendement', bioSource: 'BioOrchestrator' },
@@ -1513,6 +1551,7 @@ const fr = {
             CRITICAL: 'Risque critique d\'engorgement ({{hours}}h) — danger d\'anoxie',
         },
         yieldForecast: {
+            "none": "Pas de prévision : {{reason}}",
             "title": "Récolte prévue",
             "loading": "Chargement de la prévision…",
             "notComputed": "Pas encore calculée",
@@ -1714,7 +1753,14 @@ const pt = {
             noParcels: 'Nenhuma parcela encontrada',
             noData: 'Sem dados',
         },
+        noCrop: {
+            title: 'Sem cultura ativa',
+            next: 'Seguinte: semear {{crop}}',
+            plan: 'Ir para o planeamento',
+            last: 'Última avaliação: {{date}} ({{crop}})',
+        },
         sources: {
+            generic: 'genérico',
             title: 'Fontes de dados: {{parcel}}',
             refresh: 'Atualizar',
             retry: 'Tentar novamente',
@@ -1774,7 +1820,7 @@ const pt = {
             metric: 'Métrica principal',
             stressor: 'Dominante: {{value}}',
         },
-        tabs: { water: 'Água', plant: 'Planta', yield: 'Rendimento e ação', analytics: 'Analítica' },
+        tabs: { water: 'Água', plant: 'Planta', risks: 'Riscos' },
         phenologyTimeline: { title: 'Linha fenológica', deviation: 'Desvio fenológico: {{value}}' },
         mapLayer: { title: 'Camada do mapa', severity: 'Severidade', cwsi: 'CWSI', composite: 'Composto', vigor: 'Vigor' },
         metrics: { cwsi: 'CWSI', stress: 'Stress', yield: 'Rendimento', bioSource: 'BioOrchestrator' },
@@ -1815,6 +1861,7 @@ const pt = {
             CRITICAL: 'Risco crítico de encharcamento ({{hours}}h) — perigo de anóxia',
         },
         yieldForecast: {
+            "none": "Sem previsão: {{reason}}",
             "title": "Colheita prevista",
             "loading": "A carregar previsão…",
             "notComputed": "Ainda não calculada",

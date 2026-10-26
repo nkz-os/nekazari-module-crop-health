@@ -5,17 +5,22 @@ import { Sparkline } from './shared/Sparkline';
 import { SeverityBadge, SEVERITY_STYLES } from './shared/SeverityBadge';
 import { Badge, MetricSection, ProgressBar } from './detail/MetricPrimitives';
 import YieldForecastSection from './YieldForecastSection';
+import ZoneHealthPanel from './ZoneHealthPanel';
+import CropHealthRisksPanel from './CropHealthRisksPanel';
 import { formatRelativeTime } from '../utils/relativeTime';
 import type { TFunction } from 'i18next';
 import type {
   AssessmentData,
   CorrelationPoint,
   CorrelationStats,
+  DiseaseRisk,
   PhenologyParams,
   TrendPoint,
+  ZoneAssessmentData,
+  ZonesResponse,
 } from '../types/assessment';
 
-type DetailTab = 'water' | 'plant' | 'yield' | 'analytics';
+type DetailTab = 'water' | 'plant' | 'risks';
 
 interface CropHealthDetailTabsProps {
   parcelId: string;
@@ -24,6 +29,10 @@ interface CropHealthDetailTabsProps {
   trend: TrendPoint[];
   correlation: CorrelationPoint[];
   correlationStats: CorrelationStats | null;
+  diseases?: DiseaseRisk[];
+  zones?: ZoneAssessmentData[];
+  isWholeParcel?: boolean;
+  parcelValues?: ZonesResponse['parcelValues'];
 }
 
 const actionLabels: Record<string, string> = {
@@ -35,7 +44,7 @@ const actionLabels: Record<string, string> = {
 
 const KNOWN_FIDELITIES: string[] = ['iot_sensor', 'parcel_weather', 'regional_proxy', 'unavailable'];
 
-const TAB_KEYS: DetailTab[] = ['water', 'plant', 'yield', 'analytics'];
+const TAB_KEYS: DetailTab[] = ['water', 'plant', 'risks'];
 
 // The open-field index is a model value (parcel) unless a probe produced it.
 function openFieldWaterStressLabelKey(fidelity: string, hasUnderPanel: boolean): string {
@@ -65,6 +74,9 @@ const CropHealthDetailTabs: React.FC<CropHealthDetailTabsProps> = ({
   trend,
   correlation,
   correlationStats,
+  diseases = [],
+  zones = [],
+  isWholeParcel = true,
 }) => {
   const { t, i18n } = useTranslation('crop-health');
   const [activeTab, setActiveTab] = useState<DetailTab>('water');
@@ -111,6 +123,7 @@ const CropHealthDetailTabs: React.FC<CropHealthDetailTabsProps> = ({
       <div className="p-2 space-y-2">
       {activeTab === 'water' && (
         <>
+      <ZoneHealthPanel zones={zones} isWholeParcel={isWholeParcel} />
       {/* CWSI Section */}
       {assessment.cwsiValue != null && (
         <MetricSection>
@@ -382,11 +395,6 @@ const CropHealthDetailTabs: React.FC<CropHealthDetailTabsProps> = ({
           )}
         </MetricSection>
       )}
-        </>
-      )}
-
-      {activeTab === 'yield' && (
-        <>
       <YieldForecastSection parcelId={parcelId} />
       {/* Composite Stress */}
       {assessment.compositeStressIndex != null && (
@@ -493,11 +501,9 @@ const CropHealthDetailTabs: React.FC<CropHealthDetailTabsProps> = ({
           </div>
         </div>
       </div>
-        </>
-      )}
-
-      {activeTab === 'analytics' && (
-        <>
+      <details className="border border-nkz-border rounded-lg p-2">
+        <summary className="text-xs text-nkz-text-secondary font-medium cursor-pointer">{t('contextPanel.correlationLabel')}</summary>
+        <div className="space-y-2 mt-2">
       {/* Correlation */}
       {correlation.length >= 3 && (
         <MetricSection>
@@ -528,7 +534,13 @@ const CropHealthDetailTabs: React.FC<CropHealthDetailTabsProps> = ({
           📥 {t('contextPanel.exportCsv')}
         </a>
       </p>
+        </div>
+      </details>
         </>
+      )}
+
+      {activeTab === 'risks' && (
+        <CropHealthRisksPanel diseases={diseases} assessment={assessment} />
       )}
       </div>
     </div>

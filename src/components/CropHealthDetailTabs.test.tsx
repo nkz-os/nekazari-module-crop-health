@@ -5,6 +5,9 @@ import { renderToStaticMarkup } from 'react-dom/server';
 vi.mock('@nekazari/sdk', () => ({
   useTranslation: () => ({ t: (k: string) => k }),
 }));
+vi.mock('./YieldForecastSection', () => ({ default: () => null }));
+vi.mock('./CropHealthRisksPanel', () => ({ default: () => null }));
+vi.mock('./ZoneHealthPanel', () => ({ default: () => null }));
 
 import CropHealthDetailTabs from './CropHealthDetailTabs';
 
@@ -53,5 +56,16 @@ describe('CropHealthDetailTabs water stress lines', () => {
     });
     expect(html).toContain('detail.waterStressParcel 0.30');
     expect(html).toContain('detail.waterStressUnderPanel 0.50');
+  });
+});
+
+describe('CropHealthDetailTabs tabs', () => {
+  it('has exactly water, plant and risks', () => {
+    const html = render({});
+    expect(html).toContain('tabs.water');
+    expect(html).toContain('tabs.plant');
+    expect(html).toContain('tabs.risks');
+    expect(html).not.toContain('tabs.yield');
+    expect(html).not.toContain('tabs.analytics');
   });
 });

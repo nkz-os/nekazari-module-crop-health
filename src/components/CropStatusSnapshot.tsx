@@ -2,6 +2,8 @@ import React, { useEffect, useState } from 'react';
 import { useTranslation } from '@nekazari/sdk';
 import { authHeaders, CROP_CONTEXT_URL, cropHealthFetch } from '../api/cropHealthApi';
 import { SeverityBadge } from './shared/SeverityBadge';
+import { freshnessTone, jobLabelKey, whenLabel } from '../utils/worklist';
+import type { Freshness, NextJob, Surprise } from '../types/assessment';
 
 interface CropContext {
   crop?: { eppo?: string; name?: string; scientific_name?: string };
@@ -65,7 +67,27 @@ interface Assessment {
 interface CropStatusSnapshotProps {
   parcelId: string;
   parcelName?: string;
+  nextJob?: NextJob | null;
+  surprise?: Surprise | null;
+  freshness?: Freshness;
+  stale?: boolean;
 }
+
+interface ViewProps {
+  parcelName?: string;
+  assessment: Assessment;
+  cropCtx: CropContext | null;
+  nextJob: NextJob | null;
+  surprise: Surprise | null;
+  freshness: Freshness;
+  stale: boolean;
+}
+
+const AGE_TONE_CLASS = {
+  muted: 'text-nkz-text-muted',
+  warning: 'text-nkz-warning',
+  danger: 'text-nkz-danger',
+} as const;
 
 function cwsiPhrase(cwsi: number): string {
   if (cwsi < 0.2) return 'summary.cwsi.none';
@@ -124,8 +146,10 @@ function MetricChip({ icon, text, intent }: { icon: string; text: string; intent
   return <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${cls}`}>{icon} {text}</span>;
 }
 
-const CropStatusSnapshot: React.FC<CropStatusSnapshotProps> = ({ parcelId, parcelName }) => {
-  const { t, i18n } = useTranslation('crop-health');
+const CropStatusSnapshot: React.FC<CropStatusSnapshotProps> = ({
+  parcelId, parcelName, nextJob = null, surprise = null, freshness = 'none', stale = false,
+}) => {
+  const { t } = useTranslation('crop-health');
   const [assessment, setAssessment] = useState<Assessment | null>(null);
   const [cropCtx, setCropCtx] = useState<CropContext | null>(null);
   const [loading, setLoading] = useState(true);
@@ -176,6 +200,26 @@ const CropStatusSnapshot: React.FC<CropStatusSnapshotProps> = ({ parcelId, parce
     );
   }
 
+  return (
+    <CropStatusSnapshotView
+      parcelName={parcelName}
+      assessment={assessment}
+      cropCtx={cropCtx}
+      nextJob={nextJob}
+      surprise={surprise}
+      freshness={freshness}
+      stale={stale}
+    />
+  );
+};
+
+export const CropStatusSnapshotView: React.FC<ViewProps> = ({
+  parcelName, assessment, cropCtx, nextJob, surprise, freshness, stale,
+}) => {
+  const { t, i18n } = useTranslation('crop-health');
+  const lang = i18n?.language || 'es';
+  if (stale) return null;
+
   const cropName = assessment.cropName || cropCtx?.crop?.name || cropCtx?.crop?.eppo;
   const varietyName = assessment.varietyName || cropCtx?.variety?.name;
   const stage = assessment.phenologyStage || cropCtx?.phenology?.stage;
@@ -211,15 +255,30 @@ const CropStatusSnapshot: React.FC<CropStatusSnapshotProps> = ({ parcelId, parce
 
   return (
     <div className="bg-nkz-surface-raised border border-nkz-border rounded-lg p-3 mb-3 shadow-sm">
-      {/* Header: severity + action */}
-      <div className="flex items-center justify-between mb-2">
-        <div className="flex items-center gap-2">
-          <SeverityBadge severity={assessment.overallSeverity} />
-          <span className="text-sm font-semibold text-nkz-text-primary">
-            {t(actionLabelKey(assessment.recommendedAction))}
-          </span>
+      {/* Header: the next job, why, and how old the data is */}
+      <div className="mb-2">
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-lg font-semibold text-nkz-text-primary">
+            {t(jobLabelKey(nextJob), (nextJob?.detail ?? {}) as Record<string, unknown>)}
+            {whenLabel(nextJob, t, lang) && (
+              <span className="ml-2 text-sm font-medium text-nkz-text-secondary">{whenLabel(nextJob, t, lang)}</span>
+            )}
+          </p>
+          <FidelityBadge fidelity={fidelity} />
         </div>
-        <FidelityBadge fidelity={fidelity} />
+        <p className="text-sm text-nkz-text-secondary flex items-center gap-2 mt-0.5">
+          <SeverityBadge severity={assessment.overallSeverity} />
+          <span>
+            {surprise
+              ? t(`worklist.surprise.${surprise.code}`, surprise.detail as Record<string, unknown>)
+              : t(actionLabelKey(assessment.recommendedAction))}
+          </span>
+        </p>
+        {assessment.assessedAt && (
+          <p className={`text-xs mt-0.5 ${AGE_TONE_CLASS[freshnessTone(freshness)]}`}>
+            {t('summary.updated')}: {new Date(assessment.assessedAt).toLocaleString(lang)}
+          </p>
+        )}
       </div>
 
       {/* Identity & Phenology */}
@@ -265,13 +324,6 @@ const CropStatusSnapshot: React.FC<CropStatusSnapshotProps> = ({ parcelId, parce
             💦 {t('waterlogging.' + assessment.waterloggingRisk.riskLevel, { hours: assessment.waterloggingRisk.saturationHours.toFixed(0) })}
           </p>
         </div>
-      )}
-
-      {/* Timestamp */}
-      {assessment.assessedAt && (
-        <p className="text-xs text-nkz-text-muted mt-2 pt-2 border-t border-nkz-border">
-          {t('summary.updated')}: {new Date(assessment.assessedAt).toLocaleString(i18n?.language || 'es')}
-        </p>
       )}
     </div>
   );

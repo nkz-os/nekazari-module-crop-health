@@ -49,6 +49,7 @@ interface SourceStatusPanelProps {
   parcelId: string;
   parcelName?: string;
   embedded?: boolean;
+  defaultOpen?: boolean;
 }
 
 const STATUS_DOT: Record<string, string> = {
@@ -74,12 +75,17 @@ function StatusBadge({ status, label }: { status: string; label: string }) {
   );
 }
 
+function isGeneric(block: SourceBlock): boolean {
+  return block.details?.generic === true || block.summary === 'generic';
+}
+
 function relativeTime(iso: string | null, t: ReturnType<typeof useTranslation>['t']): string {
   return formatRelativeTime(iso, t);
 }
 
-const SourceStatusPanel: React.FC<SourceStatusPanelProps> = ({ parcelId, parcelName, embedded = false }) => {
+const SourceStatusPanel: React.FC<SourceStatusPanelProps> = ({ parcelId, parcelName, embedded = false, defaultOpen = false }) => {
   const { t } = useTranslation('crop-health');
+  const [open, setOpen] = useState(defaultOpen);
   const [data, setData] = useState<SourcesData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -169,6 +175,14 @@ const SourceStatusPanel: React.FC<SourceStatusPanelProps> = ({ parcelId, parcelN
             {countDown > 0 && <StatusBadge status="error" label={`🔴 ${countDown} ${t('sources.downCount')}`} />}
           </div>
         </div>
+        <div className="flex items-center gap-1">
+        <button
+          onClick={() => setOpen((v) => !v)}
+          aria-expanded={open}
+          className="text-xs text-nkz-text-muted cursor-pointer bg-transparent"
+        >
+          {open ? '▾' : '▸'}
+        </button>
         <button
           onClick={() => fetchData(true)}
           disabled={refreshing}
@@ -177,19 +191,21 @@ const SourceStatusPanel: React.FC<SourceStatusPanelProps> = ({ parcelId, parcelN
         >
           {refreshing ? '⏳' : '🔄'}
         </button>
+        </div>
       </div>
 
       {/* Source rows */}
+      {open && (
       <div className="space-y-1.5 mt-2">
         <SourceRow icon="🌍" label={t('sources.soil.label')} status={src.soil.status}
           freshness={src.soil.freshness} lastDataAt={src.soil.lastDataAt}
-          summary={src.soil.summary || t('sources.noData')} t={t} />
+          summary={src.soil.summary || t('sources.noData')} generic={isGeneric(src.soil)} t={t} />
         <SourceRow icon="🌡️" label={t('sources.iot.label', { count: src.iot.sensors?.length || 0 })}
           status={src.iot.status} freshness={src.iot.freshness} lastDataAt={src.iot.lastDataAt}
-          summary={src.iot.summary || t('sources.noData')} t={t} />
+          summary={src.iot.summary || t('sources.noData')} generic={isGeneric(src.iot)} t={t} />
         <SourceRow icon="☁️" label={t('sources.weather.label')} status={src.weather.status}
           freshness={src.weather.freshness} lastDataAt={src.weather.lastDataAt}
-          summary={src.weather.summary || t('sources.noData')} t={t} />
+          summary={src.weather.summary || t('sources.noData')} generic={isGeneric(src.weather)} t={t} />
         <SourceRow icon="🛰️" label={t('sources.satellite.ndvi')} status={src.satellite.ndvi.status}
           freshness={src.satellite.ndvi.freshness} lastDataAt={src.satellite.ndvi.lastDataAt}
           summary={src.satellite.ndvi.lastValue != null ? `NDVI ${src.satellite.ndvi.lastValue.toFixed(2)}` : t('sources.noData')} t={t} />
@@ -199,11 +215,11 @@ const SourceStatusPanel: React.FC<SourceStatusPanelProps> = ({ parcelId, parcelN
         <SourceRow icon="🌾" label={t('sources.crop.label')} status={src.crop.status}
           freshness={src.crop.freshness} lastDataAt={src.crop.lastDataAt}
           summary={src.crop.species
-            ? `${src.crop.species} · ${src.crop.variety || '?'}${src.crop.phenologyStage ? ` · ${src.crop.phenologyStage}` : ''}`
+            ? [src.crop.species, src.crop.variety, src.crop.phenologyStage].filter(Boolean).join(' · ')
             : t('sources.crop.notSet')} t={t} />
         <SourceRow icon="📚" label={t('sources.bioorchestrator.label')} status={src.bioorchestrator.status}
           freshness={src.bioorchestrator.freshness} lastDataAt={src.bioorchestrator.lastDataAt}
-          summary={src.bioorchestrator.summary || t('sources.noData')} t={t} />
+          summary={src.bioorchestrator.summary || t('sources.noData')} generic={isGeneric(src.bioorchestrator)} t={t} />
 
         {src.risks.alerts && src.risks.alerts.length > 0 && (
           <div className="text-xs mt-2 pt-2 border-t border-nkz-border">
@@ -217,6 +233,7 @@ const SourceStatusPanel: React.FC<SourceStatusPanelProps> = ({ parcelId, parcelN
           </div>
         )}
       </div>
+      )}
     </div>
   );
 };
@@ -230,15 +247,18 @@ interface SourceRowProps {
   freshness: string;
   lastDataAt: string | null;
   summary: string;
+  generic?: boolean;
 }
 
-const SourceRow: React.FC<SourceRowProps & { t: ReturnType<typeof useTranslation>['t'] }> = ({ icon, label, status, lastDataAt, summary, t }) => (
+const SourceRow: React.FC<SourceRowProps & { t: ReturnType<typeof useTranslation>['t'] }> = ({ icon, label, status, lastDataAt, summary, generic, t }) => (
   <div className="flex items-center gap-2 text-sm">
     <span className="w-5 text-center flex-shrink-0">{icon}</span>
     <span className="text-nkz-text-primary w-28 flex-shrink-0 truncate text-xs">{label}</span>
     <span className="flex-shrink-0 text-xs">{STATUS_DOT[status] || '❓'}</span>
     <span className="text-nkz-text-muted text-xs flex-shrink-0 w-16">{relativeTime(lastDataAt, t)}</span>
-    <span className="text-nkz-text-secondary text-xs truncate">{summary}</span>
+    {generic
+      ? <span className="text-nkz-text-muted text-xs truncate">{t('sources.generic')}</span>
+      : <span className="text-nkz-text-secondary text-xs truncate">{summary}</span>}
   </div>
 );
 

@@ -45,7 +45,9 @@ export function YieldForecastView({ parcelId, record, loading, onRefresh, onRegi
       case 'unavailable':
         return (
           <div className="space-y-1">
-            <p className="text-xs text-nkz-text-muted">{label('reason', record.reason ?? 'generic', { reason: record.reason ?? '', code: record.code ?? '' })}</p>
+            <p className="text-xs text-nkz-text-muted">
+              {t('yieldForecast.none', { reason: label('reason', record.reason ?? 'generic', { reason: record.reason ?? '', code: record.code ?? '' }) })}
+            </p>
             {record.reason === 'no_regime' && (
               <div className="flex items-center gap-2">
                 <span className="text-xs text-nkz-text-primary">{t('yieldForecast.askRegime')}</span>

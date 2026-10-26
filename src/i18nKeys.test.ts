@@ -37,3 +37,16 @@ describe('worklist and fleet parity', () => {
     });
   }
 });
+
+describe('detail strings parity', () => {
+  const en = (resources.en as any)['crop-health'];
+  for (const [lang, res] of Object.entries(resources)) {
+    it(`${lang} has the noCrop and tabs keys of en`, () => {
+      const ns = (res as any)['crop-health'];
+      expect(keys(ns.noCrop).sort()).toEqual(keys(en.noCrop).sort());
+      expect(keys(ns.tabs).sort()).toEqual(['plant', 'risks', 'water']);
+      expect(typeof ns.sources.generic).toBe('string');
+      expect(typeof ns.yieldForecast.none).toBe('string');
+    });
+  }
+});

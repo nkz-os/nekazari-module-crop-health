@@ -135,6 +135,7 @@ const en = {
             noData: 'No data',
         },
         worklist: {
+            state: { red: 'critical', amber: 'attention', green: 'fine', grey: 'no data' },
             job: {
                 irrigate: 'Irrigate today',
                 sow: 'Sow {{crop}}',
@@ -503,6 +504,7 @@ const es = {
             noData: 'Sin datos',
         },
         worklist: {
+            state: { red: 'crítico', amber: 'atención', green: 'bien', grey: 'sin datos' },
             job: {
                 irrigate: 'Regar hoy',
                 sow: 'Sembrar {{crop}}',
@@ -835,6 +837,7 @@ const ca = {
             noData: 'Sense dades',
         },
         worklist: {
+            state: { red: 'crític', amber: 'atenció', green: 'bé', grey: 'sense dades' },
             job: {
                 irrigate: 'Regar avui',
                 sow: 'Sembrar {{crop}}',
@@ -851,7 +854,7 @@ const ca = {
                 vigor_below_expected: 'Vigor per sota de l\'esperat',
                 water_drop: 'Caiguda brusca de la reserva d\'aigua',
                 phenology_deviation: 'Fenologia desviada',
-                new_high_alert: 'Alerta nova: {{disease}}',
+                new_high_alert: 'Novo alerta: {{disease}}',
             },
         },
         workbench: { diagnosticsTitle: 'Diagnòstic de fonts de dades' },
@@ -1136,6 +1139,7 @@ const eu = {
             noData: 'Daturik gabe',
         },
         worklist: {
+            state: { red: 'kritikoa', amber: 'arreta', green: 'ondo', grey: 'daturik gabe' },
             job: {
                 irrigate: 'Gaur ureztatu',
                 sow: '{{crop}} ereitea',
@@ -1149,7 +1153,7 @@ const eu = {
             noActiveCrop: 'Laborantza aktiborik ez',
             workability: { optimal: 'lurra lantzeko egoeran', too_wet: 'lurra oso hezea', too_dry: 'lurra oso lehorra' },
             surprise: {
-                vigor_below_expected: 'Espero baino bigor txikiagoa',
+                vigor_below_expected: 'Espero baino bizitasun txikiagoa',
                 water_drop: 'Ur-erreserbaren jaitsiera bortitza',
                 phenology_deviation: 'Fenologia desbideratua',
                 new_high_alert: 'Alerta berria: {{disease}}',
@@ -1437,6 +1441,7 @@ const fr = {
             noData: 'Sans données',
         },
         worklist: {
+            state: { red: 'critique', amber: 'attention', green: 'correct', grey: 'sans données' },
             job: {
                 irrigate: 'Irriguer aujourd\'hui',
                 sow: 'Semer {{crop}}',
@@ -1738,6 +1743,7 @@ const pt = {
             noData: 'Sem dados',
         },
         worklist: {
+            state: { red: 'crítico', amber: 'atenção', green: 'bem', grey: 'sem dados' },
             job: {
                 irrigate: 'Regar hoje',
                 sow: 'Semear {{crop}}',
@@ -1749,12 +1755,12 @@ const pt = {
             },
             when: { today: 'hoje' },
             noActiveCrop: 'Sem cultura ativa',
-            workability: { optimal: 'solo em tempera', too_wet: 'solo demasiado húmido', too_dry: 'solo demasiado seco' },
+            workability: { optimal: 'solo em condições de ser trabalhado', too_wet: 'solo demasiado húmido', too_dry: 'solo demasiado seco' },
             surprise: {
                 vigor_below_expected: 'Vigor abaixo do esperado',
                 water_drop: 'Queda brusca da reserva de água',
                 phenology_deviation: 'Fenologia desviada',
-                new_high_alert: 'Alerta nova: {{disease}}',
+                new_high_alert: 'Novo alerta: {{disease}}',
             },
         },
         workbench: { diagnosticsTitle: 'Diagnóstico de fontes de dados' },

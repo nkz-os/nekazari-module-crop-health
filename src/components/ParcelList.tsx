@@ -27,13 +27,14 @@ export interface WorklistSummary {
   noData: number;
 }
 
-function jobLine(p: ParcelSummary, t: TFn, lang: string): string {
+function jobLine(p: ParcelSummary, t: TFn, lang: string): string | null {
   let job = p.nextJob;
   if (!job && p.cropStatus === 'active' && !p.hasData) {
     job = { kind: 'pending_assessment', when: null, detail: {} };
   }
-  let text = t(jobLabelKey(job), (job?.detail ?? {}) as Record<string, unknown>);
-  const w = job?.kind === 'sow' ? job.detail?.workability : undefined;
+  if (!job) return null;
+  let text = t(jobLabelKey(job), (job.detail ?? {}) as Record<string, unknown>);
+  const w = job.kind === 'sow' ? job.detail?.workability : undefined;
   if (w === 'optimal' || w === 'too_wet' || w === 'too_dry') {
     text += `: ${t(`worklist.workability.${w}`)}`;
   }
@@ -53,6 +54,8 @@ export const ParcelRows: React.FC<ParcelRowsProps> = ({ rows, selectedParcelId, 
   <>
     {rows.map(p => {
       const phase = p.phenologyStage ? t(`phenology.stage.${p.phenologyStage}`, { defaultValue: p.phenologyStage }) : '';
+      const sem = semaphore(p);
+      const job = jobLine(p, t, lang);
       const cropLine = p.cropStatus === 'none'
         ? t('worklist.noActiveCrop')
         : [p.cropName, phase].filter(Boolean).join(' · ');
@@ -69,12 +72,14 @@ export const ParcelRows: React.FC<ParcelRowsProps> = ({ rows, selectedParcelId, 
           <div className="flex items-start gap-2">
             <span
               className="inline-block flex-shrink-0 mt-1"
-              style={{ width: 10, height: 10, borderRadius: '50%', backgroundColor: DOT_COLORS[semaphore(p)] }}
+              style={{ width: 10, height: 10, borderRadius: '50%', backgroundColor: DOT_COLORS[sem] }}
+              role="img"
+              aria-label={t(`worklist.state.${sem}`)}
             />
             <div className="min-w-0 flex-1">
               <p className="text-sm font-medium text-nkz-text-primary truncate">{p.parcelName || p.parcelId}</p>
               <p className="text-xs text-nkz-text-muted truncate">{cropLine}</p>
-              <p className="text-xs text-nkz-text-primary mt-0.5">{jobLine(p, t, lang)}</p>
+              {job && <p className="text-xs text-nkz-text-primary mt-0.5">{job}</p>}
               {p.surprise && (
                 <p className="text-xs text-nkz-warning mt-0.5">
                   {t(`worklist.surprise.${p.surprise.code}`, p.surprise.detail as Record<string, unknown>)}

@@ -33,7 +33,7 @@ describe('worklist and fleet parity', () => {
       const ns = (res as any)['crop-health'];
       expect(keys(ns.worklist).sort()).toEqual(keys(en.worklist).sort());
       expect(keys(ns.fleet).sort()).toEqual(['jobsToday', 'noData', 'surprises']);
-      expect(keys(en.worklist).length).toBe(16);
+      expect(keys(en.worklist).length).toBe(20);
     });
   }
 });

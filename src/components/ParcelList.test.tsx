@@ -46,7 +46,9 @@ describe('ParcelRows', () => {
     expect(html).toContain('worklist.surprise.water_drop');
     expect(html).toContain('phenology.stage.tillering');
     expect(html.indexOf('Acme North')).toBeLessThan(html.indexOf('Acme South'));
-    expect(html).toContain('worklist.job.none');
+    const calmHtml = render([calm]);
+    expect(calmHtml).not.toContain('worklist.job.none');
+    expect(calmHtml.match(/<p /g)?.length).toBe(2);
   });
   it('no active crop shows the sow job with workability', () => {
     const html = render([noCrop]);
@@ -59,6 +61,15 @@ describe('ParcelRows', () => {
   });
 });
 
+describe('row details', () => {
+  it('colours a stale age as danger and labels the dot', () => {
+    const stale = { ...(calm as object), freshness: 'stale', stale: true } as never;
+    const html = render([stale]);
+    expect(html).toMatch(/text-nkz-danger[^>]*>relativeTime/);
+    expect(html).toContain('aria-label="worklist.state.green"');
+  });
+});
+
 describe('FleetOverview', () => {
   it('shows only the three counters', () => {
     const html = renderToStaticMarkup(<FleetOverview summary={{ surprises: 2, jobsToday: 5, noData: 1 }} />);
@@ -66,5 +77,6 @@ describe('FleetOverview', () => {
     expect(html).toContain('fleet.jobsToday');
     expect(html).toContain('fleet.noData');
     expect(html).not.toContain('fleet.monitored');
+    expect(html).toMatch(/>2<[\s\S]*>5<[\s\S]*>1</);
   });
 });

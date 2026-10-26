@@ -134,3 +134,25 @@ async def test_latest_with_parcel_id_adds_root_fields_and_without_does_not():
     assert one["cropStatus"] == "none" and one["stale"] is True and one["nextJob"]["kind"] == "sow"
     assert {"freshness", "surprise", "plannedCrop"} <= set(one) and one["assessments"]
     assert set(allr) == {"assessments"}
+
+
+@pytest.mark.anyio
+async def test_old_assessment_of_cropless_parcel_does_not_drive_job_or_surprise():
+    old = _assessment("p1", hours=24 * 30, recommendedAction="IRRIGATE_NOW", vigorCondition="below_expected")
+    with respx.mock as mock, patch("app.services.worklist_sources.fetch_crop_timeline",
+                                   _timelines({"p1": SOW_TL})):
+        _setup(mock, [old], ["p1"])
+        row = (await _get("/api/crop-health/parcels")).json()["parcels"][0]
+    assert row["nextJob"]["kind"] == "sow" and row["surprise"] is None
+    assert row["stale"] is True and row["lastAssessment"]["cropName"] == "SECCE"
+
+
+@pytest.mark.anyio
+async def test_malformed_timeline_degrades_row_not_endpoint():
+    with respx.mock as mock, patch("app.services.worklist_sources.fetch_crop_timeline",
+                                   _timelines({"p1": "garbage"})):
+        _setup(mock, [_assessment("p1", hours=2)], ["p1"])
+        resp = await _get("/api/crop-health/parcels")
+    assert resp.status_code == 200
+    row = resp.json()["parcels"][0]
+    assert (row["cropStatus"], row["nextJob"], row["surprise"], row["freshness"]) == ("none", None, None, "fresh")

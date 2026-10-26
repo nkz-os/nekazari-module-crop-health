@@ -74,16 +74,18 @@ def _worklist_fields(*, assessment: dict | None, assessed_at: str | None, crop_n
     timeline = inputs.get("timeline")
     status = worklist.crop_status(timeline)
     fresh = worklist.freshness(assessed_at, now)
+    # An old assessment of a crop-less parcel must not drive its job or surprise.
+    live = assessment if status == "active" else None
     return {
         "cropStatus": status,
         "freshness": fresh,
         "stale": fresh == "stale" or (status == "none" and assessed_at is not None),
         "nextJob": worklist.next_job(
-            assessment=assessment, timeline=timeline, agro=inputs.get("agro"),
+            assessment=live, timeline=timeline, agro=inputs.get("agro"),
             alerts=alerts, forecast=inputs.get("forecast"), today=now.date(),
         ),
         "surprise": worklist.surprise(
-            assessment=assessment, history=inputs.get("history") or [], alerts=alerts,
+            assessment=live, history=inputs.get("history") or [], alerts=alerts,
         ),
         "plannedCrop": _planned_crop(timeline),
         "lastAssessment": (
@@ -758,11 +760,17 @@ async def list_parcels(request: Request):
         )),
     )
     for p, inputs in zip(parcels, inputs_list):
-        p.update(_worklist_fields(
-            assessment=_flat(assessment_by_parcel.get(p["parcelId"])),
-            assessed_at=p.get("assessedAt"), crop_name=p.get("cropName"), inputs=inputs,
-            alerts=[a for a in alerts if a.get("parcelId") == p["parcelId"]], now=now,
-        ))
+        try:
+            p.update(_worklist_fields(
+                assessment=_flat(assessment_by_parcel.get(p["parcelId"])),
+                assessed_at=p.get("assessedAt"), crop_name=p.get("cropName"), inputs=inputs,
+                alerts=[a for a in alerts if a.get("parcelId") == p["parcelId"]], now=now,
+            ))
+        except Exception as exc:  # noqa: BLE001 — one malformed parcel degrades to defaults
+            logger.warning("worklist: row degraded tenant=%s parcel=%s: %s", tenant_id, p["parcelId"], exc)
+            fresh = worklist.freshness(p.get("assessedAt"), now)
+            p.update({"cropStatus": "none", "freshness": fresh, "stale": fresh == "stale",
+                      "nextJob": None, "surprise": None, "plannedCrop": None, "lastAssessment": None})
 
     parcels.sort(key=worklist.rank)
     summary = {

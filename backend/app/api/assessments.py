@@ -173,15 +173,61 @@ async def _map_zone_entities_with_geometry(
     return mapped, is_whole
 
 
+async def _parcel_values(tenant_id: str, parcel_id: str) -> dict:
+    """Four headline values of the parcel's latest assessment ({} if none)."""
+    entities = await _fetch_assessment_entities(tenant_id, parcel_id=parcel_id, limit=100)
+    if not entities:
+        return {}
+    latest = map_entity_to_assessment(max(entities, key=lambda e: prop_value(e, "assessedAt", "")))
+    return {k: latest.get(k) for k in PARCEL_VALUE_KEYS}
+
+
+def _live_zone_assessments(entities: list[dict], live: list, parcel_values: dict) -> list[dict]:
+    """Latest assessment per live zone, mapped and flagged against the parcel.
+
+    Assessments of zones not in ``live`` are dropped before deduplicating.
+    """
+    live_keys = {z.zone_id for z in live} | {z.urn for z in live if z.urn}
+    kept = [
+        e for e in entities
+        if extract_zone_id(e) in live_keys or extract_zone_urn(e) in live_keys
+    ]
+    lookup = _zone_geometry_lookup(live)
+    zones: list[dict] = []
+    for entity in dedupe_latest_per_zone(kept):
+        meta = lookup.get(extract_zone_urn(entity)) or lookup.get(extract_zone_id(entity)) or {}
+        zone = map_entity_to_zone_assessment(
+            entity,
+            geometry=meta.get("geometry"),
+            sensor_nearby=meta.get("sensorNearby"),
+        )
+        zone["differsFromParcel"] = differs_from_parcel(zone, parcel_values)
+        zones.append(zone)
+    return zones
+
+
 @router.get("/assessments/zones/all")
 async def all_zone_assessments(request: Request):
-    """Latest zone assessment per (parcel, zone) — map-layer compat."""
+    """Latest assessment per live zone of every parcel — map-layer compat."""
     tenant_id = getattr(request.state, "tenant_id", "")
     entities = await _fetch_zone_assessment_entities(tenant_id, limit=200)
-    latest = dedupe_latest_per_zone(entities)
-    zones, _ = await _map_zone_entities_with_geometry(tenant_id, latest)
+    by_parcel: dict[str, list[dict]] = {}
+    for e in entities:
+        pid = extract_parcel_id(e)
+        if pid:
+            by_parcel.setdefault(pid, []).append(e)
+
+    zones: list[dict] = []
+    parcel_values: dict[str, dict] = {}
+    for pid in sorted(by_parcel):
+        live = await resolve_zones(f"urn:ngsi-ld:AgriParcel:{pid}", tenant_id, {})
+        values = await _parcel_values(tenant_id, pid)
+        parcel_values[pid] = values
+        if is_whole_parcel(live):
+            continue
+        zones.extend(_live_zone_assessments(by_parcel[pid], live, values))
     zones.sort(key=lambda z: (z.get("parcelId", ""), z.get("zoneId", "")))
-    return {"zones": zones}
+    return {"zones": zones, "parcelValues": parcel_values}
 
 
 @router.get("/assessments/zones")
@@ -199,34 +245,13 @@ async def zone_assessments(
     tenant_id = getattr(request.state, "tenant_id", "")
     live = await resolve_zones(f"urn:ngsi-ld:AgriParcel:{parcelId}", tenant_id, {})
 
-    parcel_entities = await _fetch_assessment_entities(tenant_id, parcel_id=parcelId, limit=100)
-    parcel_values: dict = {}
-    if parcel_entities:
-        latest_parcel = map_entity_to_assessment(
-            max(parcel_entities, key=lambda e: prop_value(e, "assessedAt", ""))
-        )
-        parcel_values = {k: latest_parcel.get(k) for k in PARCEL_VALUE_KEYS}
+    parcel_values = await _parcel_values(tenant_id, parcelId)
 
     if is_whole_parcel(live):
         return {"zones": [], "isWholeParcel": True, "parcelValues": parcel_values}
 
-    live_keys = {z.zone_id for z in live} | {z.urn for z in live if z.urn}
     entities = await _fetch_zone_assessment_entities(tenant_id, parcel_id=parcelId, limit=100)
-    entities = [
-        e for e in entities
-        if extract_zone_id(e) in live_keys or extract_zone_urn(e) in live_keys
-    ]
-    lookup = _zone_geometry_lookup(live)
-    zones: list[dict] = []
-    for entity in dedupe_latest_per_zone(entities):
-        meta = lookup.get(extract_zone_urn(entity)) or lookup.get(extract_zone_id(entity)) or {}
-        zone = map_entity_to_zone_assessment(
-            entity,
-            geometry=meta.get("geometry"),
-            sensor_nearby=meta.get("sensorNearby"),
-        )
-        zone["differsFromParcel"] = differs_from_parcel(zone, parcel_values)
-        zones.append(zone)
+    zones = _live_zone_assessments(entities, live, parcel_values)
     zones.sort(key=lambda z: z.get("zoneId", ""))
     return {"zones": zones, "isWholeParcel": not zones, "parcelValues": parcel_values}
 

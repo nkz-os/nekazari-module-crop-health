@@ -16,10 +16,10 @@ def anyio_backend():
     return "asyncio"
 
 
-def _zone(zid, sensor=False):
+def _zone(zid, sensor=False, parcel="p-1"):
     row = {
-        "id": f"urn:ngsi-ld:AgriParcelZone:test-tenant:p-1:{zid}",
-        "hasAgriParcel": PARCEL,
+        "id": f"urn:ngsi-ld:AgriParcelZone:test-tenant:{parcel}:{zid}",
+        "hasAgriParcel": f"urn:ngsi-ld:AgriParcel:{parcel}",
         "nkz:zoneId": zid,
         "nkz:centroid": [0.5, 0.5],
         "location": POLY,
@@ -29,10 +29,10 @@ def _zone(zid, sensor=False):
     return row
 
 
-def _zone_assessment(zid, cwsi, composite, at="2026-10-25T10:00:00Z", vigor=0.6):
+def _zone_assessment(zid, cwsi, composite, at="2026-10-25T10:00:00Z", vigor=0.6, parcel="p-1"):
     return {
-        "id": f"urn:ngsi-ld:CropHealthZoneAssessment:{zid}:{at}",
-        "hasAgriParcel": PARCEL,
+        "id": f"urn:ngsi-ld:CropHealthZoneAssessment:{parcel}:{zid}:{at}",
+        "hasAgriParcel": f"urn:ngsi-ld:AgriParcel:{parcel}",
         "zoneId": zid,
         "cwsiValue": cwsi,
         "compositeStressIndex": composite,
@@ -42,11 +42,11 @@ def _zone_assessment(zid, cwsi, composite, at="2026-10-25T10:00:00Z", vigor=0.6)
     }
 
 
-def _parcel_assessment():
+def _parcel_assessment(parcel="p-1", cwsi=0.5):
     return {
-        "id": "urn:ngsi-ld:CropHealthAssessment:a1",
-        "hasAgriParcel": PARCEL,
-        "cwsiValue": 0.5,
+        "id": f"urn:ngsi-ld:CropHealthAssessment:a-{parcel}",
+        "hasAgriParcel": f"urn:ngsi-ld:AgriParcel:{parcel}",
+        "cwsiValue": cwsi,
         "compositeStressIndex": 60,
         "vigorIndex": 0.6,
         "overallSeverity": "LOW",
@@ -155,6 +155,44 @@ async def test_no_parcel_assessment_gives_empty_parcel_values():
     assert data["parcelValues"] == {}
     assert [z["zoneId"] for z in data["zones"]] == ["z-a"]
     assert data["zones"][0]["differsFromParcel"] is False
+
+
+@pytest.mark.anyio
+async def test_all_endpoint_hides_deleted_zones_and_flags_per_parcel():
+    """Two parcels: p-1 has a deleted zone; p-2 has no parcel assessment."""
+    p1_zones = [_zone("z-a"), _zone("z-b")]
+    p2_zones = [_zone("z-c", parcel="p-2")]
+    zone_assessments = [
+        _zone_assessment("z-a", 0.5, 61),
+        _zone_assessment("z-b", 0.8, 60),
+        _zone_assessment("z-old", 0.9, 90),
+        _zone_assessment("z-c", 0.3, 20, parcel="p-2"),
+    ]
+
+    def zone_rows(request):
+        import httpx
+        return httpx.Response(200, json=p2_zones if "p-2" in str(request.url) else p1_zones)
+
+    def parcel_rows(request):
+        import httpx
+        return httpx.Response(200, json=[_parcel_assessment()] if "p-2" not in str(request.url) else [])
+
+    with respx.mock as mock:
+        mock.get(url__regex=r".*type=AgriParcelZone.*").mock(side_effect=zone_rows)
+        mock.get(url__regex=r".*type=CropHealthZoneAssessment.*").respond(json=zone_assessments)
+        mock.get(url__regex=r".*type=CropHealthAssessment(&|$).*").mock(side_effect=parcel_rows)
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test", headers=GATEWAY_HEADERS) as client:
+            resp = await client.get("/api/crop-health/assessments/zones/all")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert [(z["parcelId"], z["zoneId"]) for z in data["zones"]] == [
+        ("p-1", "z-a"), ("p-1", "z-b"), ("p-2", "z-c"),
+    ]
+    flags = {z["zoneId"]: z["differsFromParcel"] for z in data["zones"]}
+    assert flags == {"z-a": False, "z-b": True, "z-c": False}
+    assert data["parcelValues"]["p-1"]["cwsiValue"] == 0.5
+    assert data["parcelValues"]["p-2"] == {}
 
 
 P = {"cwsiValue": 0.5, "compositeStressIndex": 60, "vigorIndex": 0.6, "overallSeverity": "LOW"}

@@ -66,7 +66,7 @@ const CropHealthDetailTabs: React.FC<CropHealthDetailTabsProps> = ({
   correlation,
   correlationStats,
 }) => {
-  const { t } = useTranslation('crop-health');
+  const { t, i18n } = useTranslation('crop-health');
   const [activeTab, setActiveTab] = useState<DetailTab>('water');
 
   if (!assessment) {
@@ -522,7 +522,7 @@ const CropHealthDetailTabs: React.FC<CropHealthDetailTabsProps> = ({
       )}
 
       <p className="text-xs text-nkz-text-muted">
-        {t('contextPanel.updated')} {assessment.assessedAt ? new Date(assessment.assessedAt).toLocaleString() : '—'}
+        {t('contextPanel.updated')} {assessment.assessedAt ? new Date(assessment.assessedAt).toLocaleString(i18n?.language || 'es') : '—'}
         {' · '}
         <a href={`${API_ORIGIN}/api/crop-health/assessments/export?parcelId=${parcelId}&days=30`} className="text-nkz-accent-base underline" download>
           📥 {t('contextPanel.exportCsv')}

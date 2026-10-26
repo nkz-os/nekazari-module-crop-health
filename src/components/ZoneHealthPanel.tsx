@@ -26,7 +26,8 @@ function actionLabelKey(action: string): string {
 
 function metricLabel(zone: ZoneAssessmentData): string {
   if (zone.cwsiValue != null) return `CWSI ${zone.cwsiValue.toFixed(2)}`;
-  if (zone.compositeStressIndex != null) return `${Math.round(zone.compositeStressIndex * 100)}%`;
+  // compositeStressIndex is already on a 0-100 scale (engines/composite.py).
+  if (zone.compositeStressIndex != null) return `${Math.round(zone.compositeStressIndex)}%`;
   if (zone.vigorIndex != null) return `VHI ${Math.round(zone.vigorIndex * 100)}`;
   return '—';
 }

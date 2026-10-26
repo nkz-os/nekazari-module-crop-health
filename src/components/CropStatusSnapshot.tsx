@@ -125,7 +125,7 @@ function MetricChip({ icon, text, intent }: { icon: string; text: string; intent
 }
 
 const CropStatusSnapshot: React.FC<CropStatusSnapshotProps> = ({ parcelId, parcelName }) => {
-  const { t } = useTranslation('crop-health');
+  const { t, i18n } = useTranslation('crop-health');
   const [assessment, setAssessment] = useState<Assessment | null>(null);
   const [cropCtx, setCropCtx] = useState<CropContext | null>(null);
   const [loading, setLoading] = useState(true);
@@ -270,7 +270,7 @@ const CropStatusSnapshot: React.FC<CropStatusSnapshotProps> = ({ parcelId, parce
       {/* Timestamp */}
       {assessment.assessedAt && (
         <p className="text-xs text-nkz-text-muted mt-2 pt-2 border-t border-nkz-border">
-          {t('summary.updated')}: {new Date(assessment.assessedAt).toLocaleString()}
+          {t('summary.updated')}: {new Date(assessment.assessedAt).toLocaleString(i18n?.language || 'es')}
         </p>
       )}
     </div>

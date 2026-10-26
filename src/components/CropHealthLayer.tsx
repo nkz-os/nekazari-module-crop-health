@@ -53,7 +53,7 @@ function layerLabel(a: AssessmentData, mode: MapLayerMode): string {
   return value != null ? value.toFixed(mode === 'vigor' ? 0 : 2) : '—';
 }
 
-function layerColor(a: AssessmentData, mode: MapLayerMode): { fill: string; alpha: number } {
+export function layerColor(a: AssessmentData, mode: MapLayerMode): { fill: string; alpha: number } {
   if (mode === 'severity') {
     return SEVERITY_COLORS[a.overallSeverity] || SEVERITY_COLORS.LOW;
   }
@@ -64,8 +64,10 @@ function layerColor(a: AssessmentData, mode: MapLayerMode): { fill: string; alph
     if (value >= 40) return { fill: '#d97706', alpha: 0.45 };
     return { fill: '#dc2626', alpha: 0.5 };
   }
-  if (value >= 0.6) return { fill: '#dc2626', alpha: 0.5 };
-  if (value >= 0.3) return { fill: '#d97706', alpha: 0.45 };
+  // CWSI is 0-1; the composite index is 0-100 (engines/composite.py).
+  const [high, mid] = mode === 'composite' ? [60, 30] : [0.6, 0.3];
+  if (value >= high) return { fill: '#dc2626', alpha: 0.5 };
+  if (value >= mid) return { fill: '#d97706', alpha: 0.45 };
   return { fill: '#16a34a', alpha: 0.35 };
 }
 

@@ -51,6 +51,11 @@ class Settings(BaseSettings):
     phenology_cache_ttl: int = 3600  # 1h — phenology params change slowly
     weather_cache_ttl: int = 300     # 5min — weather data refreshes hourly
 
+    # ── Parent parcels ───────────────────────────────────────────────────────
+    # Subparcels are assessed as independent parcels; an area-weighted parent
+    # composite stays off until parent aggregation is designed.
+    parent_composite_enabled: bool = False  # env PARENT_COMPOSITE_ENABLED
+
     # ── Service-to-service auth ──────────────────────────────────────────────
     module_management_key: str = ""
     internal_service_secret: str = ""

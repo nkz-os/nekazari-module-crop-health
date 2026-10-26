@@ -1312,11 +1312,12 @@ async def _emit_assessment_side_effects(
     except Exception as exc:
         logger.warning("pipeline: redis event publish failed for parcel %s — event dropped: %s", effective_parcel, exc)
 
-    # ── 6. Aggregate parent parcel if this is a child ──────────────────
+    # ── 6. Aggregate parent parcel if this is a child (off by default) ──
+    if not get_settings().parent_composite_enabled:
+        return
     try:
-        from app.config import get_settings as _gs
         from nkz_platform_sdk.orion import OrionClient
-        _settings = _gs()
+        _settings = get_settings()
         _client = OrionClient(
             tenant_id,
             base_url=_settings.orion_ld_url,

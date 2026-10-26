@@ -111,6 +111,8 @@ export interface AssessmentData {
     advisory?: string;
   };
   soilSensors?: { ph?: number; ec?: number; moisturePct?: number; temperatureC?: number };
+  kc?: number;
+  management?: string;
   soilProperties?: {
     sandPct?: number;
     clayPct?: number;
@@ -171,6 +173,35 @@ export interface ZoneAssessmentData extends AssessmentData {
     coordinates: number[][][] | number[][][][];
   };
   sensorNearby?: boolean;
+  differsFromParcel?: boolean;
+}
+
+export interface ZonesResponse {
+  zones: ZoneAssessmentData[];
+  isWholeParcel: boolean;
+  parcelValues: Partial<
+    Pick<AssessmentData, 'cwsiValue' | 'compositeStressIndex' | 'vigorIndex' | 'overallSeverity'>
+  >;
+}
+
+export type CropStatus = 'active' | 'none';
+export type Freshness = 'none' | 'fresh' | 'aging' | 'stale';
+
+export interface NextJob {
+  kind: 'irrigate' | 'sow' | 'treat' | 'harvest' | 'pending_assessment' | 'none_until';
+  when: 'today' | string | null;
+  detail: Record<string, unknown>;
+}
+
+export interface Surprise {
+  code: string;
+  detail: Record<string, unknown>;
+}
+
+export interface PlannedCrop {
+  species: string;
+  names?: Record<string, string>;
+  sowingDate?: string | null;
 }
 
 export interface ParcelSummary {
@@ -188,6 +219,13 @@ export interface ParcelSummary {
   sourcesActive?: number;
   sourcesDegraded?: number;
   sourcesDown?: number;
+  cropStatus: CropStatus;
+  freshness: Freshness;
+  stale: boolean;
+  nextJob: NextJob | null;
+  surprise: Surprise | null;
+  plannedCrop: PlannedCrop | null;
+  lastAssessment: { assessedAt: string; cropName?: string } | null;
 }
 
 export interface DiseaseRisk {

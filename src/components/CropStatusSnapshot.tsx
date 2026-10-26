@@ -1,7 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { useTranslation } from '@nekazari/sdk';
-import { authHeaders, CROP_CONTEXT_URL, cropHealthFetch } from '../api/cropHealthApi';
+import { authHeaders, CROP_CONTEXT_URL } from '../api/cropHealthApi';
 import { SeverityBadge } from './shared/SeverityBadge';
+import { freshnessTone, jobText } from '../utils/worklist';
+import type { AssessmentData, Freshness, NextJob, Surprise } from '../types/assessment';
 
 interface CropContext {
   crop?: { eppo?: string; name?: string; scientific_name?: string };
@@ -16,56 +18,29 @@ interface CropContext {
   };
 }
 
-interface Assessment {
-  cwsiValue?: number;
-  mdsValue?: number;
-  mdsSeverity?: string;
-  waterBalanceDeficit?: number;
-  overallSeverity: string;
-  recommendedAction: string;
-  assessedAt?: string;
-  thermalCondition?: string;
-  thermalSeverity?: string;
-  vigorIndex?: number;
-  vigorCondition?: string;
-  compositeStressIndex?: number;
-  dominantStressor?: string;
-  dataFidelity?: string;
-  phenologySource?: string;
-  cropSpecies?: string;
-  cropName?: string;
-  varietyName?: string;
-  phenologyStage?: string;
-  gddAccumulated?: number;
-  kc?: number;
-  management?: string;
-  soilProperties?: {
-    sandPct: number;
-    fieldCapacity: number;
-    wiltingPoint: number;
-    ksatMmH: number;
-    scsHydrologicGroup: string;
-    usdaTextureClass: string;
-    source: string;
-    hasData: boolean;
-  };
-  soilWaterBalance?: {
-    swMm: number;
-    awcMm: number;
-    swRatio: number;
-    stressLevel: string;
-    soilMoistureConfidence: string;
-  };
-  waterloggingRisk?: {
-    riskLevel: string;
-    saturationHours: number;
-  };
-}
-
 interface CropStatusSnapshotProps {
   parcelId: string;
   parcelName?: string;
+  assessment?: AssessmentData | null;
+  nextJob?: NextJob | null;
+  surprise?: Surprise | null;
+  freshness?: Freshness;
 }
+
+interface ViewProps {
+  parcelName?: string;
+  assessment: AssessmentData;
+  cropCtx: CropContext | null;
+  nextJob: NextJob | null;
+  surprise: Surprise | null;
+  freshness: Freshness;
+}
+
+const AGE_TONE_CLASS = {
+  muted: 'text-nkz-text-muted',
+  warning: 'text-nkz-warning',
+  danger: 'text-nkz-danger',
+} as const;
 
 function cwsiPhrase(cwsi: number): string {
   if (cwsi < 0.2) return 'summary.cwsi.none';
@@ -124,9 +99,24 @@ function MetricChip({ icon, text, intent }: { icon: string; text: string; intent
   return <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${cls}`}>{icon} {text}</span>;
 }
 
-const CropStatusSnapshot: React.FC<CropStatusSnapshotProps> = ({ parcelId, parcelName }) => {
+/** A parcel without an assessment still shows its next job above the no-data hint. */
+export const NoAssessmentView: React.FC<{ nextJob: NextJob | null }> = ({ nextJob }) => {
   const { t, i18n } = useTranslation('crop-health');
-  const [assessment, setAssessment] = useState<Assessment | null>(null);
+  const line = nextJob ? jobText(nextJob, t as never, i18n?.language || 'es') : null;
+  return (
+    <div className="bg-nkz-surface-raised border border-nkz-border rounded-lg p-3 mb-3 text-center">
+      {line && <p className="text-lg font-semibold text-nkz-text-primary mb-1">{line}</p>}
+      <span className="text-xl">🌱</span>
+      <p className="text-sm text-nkz-text-muted">{t('summary.noData')}</p>
+      <p className="text-xs text-nkz-text-muted mt-1">{t('summary.noDataHint')}</p>
+    </div>
+  );
+};
+
+const CropStatusSnapshot: React.FC<CropStatusSnapshotProps> = ({
+  parcelId, parcelName, assessment = null, nextJob = null, surprise = null, freshness = 'none',
+}) => {
+  const { t } = useTranslation('crop-health');
   const [cropCtx, setCropCtx] = useState<CropContext | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -136,18 +126,11 @@ const CropStatusSnapshot: React.FC<CropStatusSnapshotProps> = ({ parcelId, parce
 
     const fetchData = async () => {
       try {
-        const [aRes, cRes] = await Promise.allSettled([
-          cropHealthFetch<{ assessments: Assessment[] }>(`/assessments/latest?parcelId=${parcelId}`),
-          fetch(`${CROP_CONTEXT_URL}?parcel_id=${parcelId}`, {
-            credentials: 'include',
-            headers: authHeaders(),
-          }).then(r => r.ok ? r.json() : null),
-        ]);
-
-        const a = aRes.status === 'fulfilled' ? aRes.value?.assessments?.[0] : null;
-        if (a) setAssessment(a);
-
-        const c = cRes.status === 'fulfilled' ? cRes.value : null;
+        const r = await fetch(`${CROP_CONTEXT_URL}?parcel_id=${parcelId}`, {
+          credentials: 'include',
+          headers: authHeaders(),
+        });
+        const c = r.ok ? await r.json() : null;
         if (c) setCropCtx(c);
       } catch { /* degrade gracefully */ }
       finally { setLoading(false); }
@@ -166,16 +149,25 @@ const CropStatusSnapshot: React.FC<CropStatusSnapshotProps> = ({ parcelId, parce
     );
   }
 
-  if (!assessment) {
-    return (
-      <div className="bg-nkz-surface-raised border border-nkz-border rounded-lg p-3 mb-3 text-center">
-        <span className="text-xl">🌱</span>
-        <p className="text-sm text-nkz-text-muted">{t('summary.noData')}</p>
-        <p className="text-xs text-nkz-text-muted mt-1">{t('summary.noDataHint')}</p>
-      </div>
-    );
-  }
+  if (!assessment) return <NoAssessmentView nextJob={nextJob} />;
 
+  return (
+    <CropStatusSnapshotView
+      parcelName={parcelName}
+      assessment={assessment}
+      cropCtx={cropCtx}
+      nextJob={nextJob}
+      surprise={surprise}
+      freshness={freshness}
+    />
+  );
+};
+
+export const CropStatusSnapshotView: React.FC<ViewProps> = ({
+  parcelName, assessment, cropCtx, nextJob, surprise, freshness,
+}) => {
+  const { t, i18n } = useTranslation('crop-health');
+  const lang = i18n?.language || 'es';
   const cropName = assessment.cropName || cropCtx?.crop?.name || cropCtx?.crop?.eppo;
   const varietyName = assessment.varietyName || cropCtx?.variety?.name;
   const stage = assessment.phenologyStage || cropCtx?.phenology?.stage;
@@ -211,15 +203,27 @@ const CropStatusSnapshot: React.FC<CropStatusSnapshotProps> = ({ parcelId, parce
 
   return (
     <div className="bg-nkz-surface-raised border border-nkz-border rounded-lg p-3 mb-3 shadow-sm">
-      {/* Header: severity + action */}
-      <div className="flex items-center justify-between mb-2">
-        <div className="flex items-center gap-2">
-          <SeverityBadge severity={assessment.overallSeverity} />
-          <span className="text-sm font-semibold text-nkz-text-primary">
-            {t(actionLabelKey(assessment.recommendedAction))}
-          </span>
+      {/* Header: the next job, why, and how old the data is */}
+      <div className="mb-2">
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-lg font-semibold text-nkz-text-primary">
+            {jobText(nextJob, t as never, lang) ?? t('worklist.job.none')}
+          </p>
+          <FidelityBadge fidelity={fidelity} />
         </div>
-        <FidelityBadge fidelity={fidelity} />
+        <p className="text-sm text-nkz-text-secondary flex items-center gap-2 mt-0.5">
+          <SeverityBadge severity={assessment.overallSeverity} />
+          <span>
+            {surprise
+              ? t(`worklist.surprise.${surprise.code}`, surprise.detail as Record<string, unknown>)
+              : t(actionLabelKey(assessment.recommendedAction))}
+          </span>
+        </p>
+        {assessment.assessedAt && (
+          <p className={`text-xs mt-0.5 ${AGE_TONE_CLASS[freshnessTone(freshness)]}`}>
+            {t('summary.updated')}: {new Date(assessment.assessedAt).toLocaleString(lang)}
+          </p>
+        )}
       </div>
 
       {/* Identity & Phenology */}
@@ -249,10 +253,10 @@ const CropStatusSnapshot: React.FC<CropStatusSnapshotProps> = ({ parcelId, parce
       {assessment.soilWaterBalance && assessment.soilWaterBalance.stressLevel !== 'none' && (
         <div className="pt-2 border-t border-nkz-border">
           <p className="text-xs text-nkz-text-muted">
-            🪣 {t('soil.reservoir.' + assessment.soilWaterBalance.stressLevel, {
-              current: assessment.soilWaterBalance.swMm.toFixed(0),
-              capacity: assessment.soilWaterBalance.awcMm.toFixed(0),
-              ratio: (assessment.soilWaterBalance.swRatio * 100).toFixed(0),
+            🪣 {t('soil.reservoir.' + (assessment.soilWaterBalance.stressLevel ?? 'none'), {
+              current: (assessment.soilWaterBalance.swMm ?? 0).toFixed(0),
+              capacity: (assessment.soilWaterBalance.awcMm ?? 0).toFixed(0),
+              ratio: ((assessment.soilWaterBalance.swRatio ?? 0) * 100).toFixed(0),
             })}
           </p>
         </div>
@@ -262,16 +266,9 @@ const CropStatusSnapshot: React.FC<CropStatusSnapshotProps> = ({ parcelId, parce
       {assessment.waterloggingRisk && assessment.waterloggingRisk.riskLevel !== 'LOW' && (
         <div className="mt-1">
           <p className="text-xs" style={{ color: 'var(--nkz-color-info)' }}>
-            💦 {t('waterlogging.' + assessment.waterloggingRisk.riskLevel, { hours: assessment.waterloggingRisk.saturationHours.toFixed(0) })}
+            💦 {t('waterlogging.' + (assessment.waterloggingRisk.riskLevel ?? 'LOW'), { hours: (assessment.waterloggingRisk.saturationHours ?? 0).toFixed(0) })}
           </p>
         </div>
-      )}
-
-      {/* Timestamp */}
-      {assessment.assessedAt && (
-        <p className="text-xs text-nkz-text-muted mt-2 pt-2 border-t border-nkz-border">
-          {t('summary.updated')}: {new Date(assessment.assessedAt).toLocaleString(i18n?.language || 'es')}
-        </p>
       )}
     </div>
   );

@@ -58,4 +58,9 @@ describe('YieldForecastView', () => {
     const h = html(r({ estimates: [], unavailable: [{ provider_id: 'aquacrop', reason: 'expected_missing' }] }));
     expect(h).toContain('yieldForecast.reason.expected_missing');
   });
+  it('unavailable renders a single line with the localised reason', () => {
+    const h = html(r({ status: 'unavailable', reason: 'not_sown' })).replace(/&quot;/g, '"');
+    expect(h).toContain('yieldForecast.none:{"reason":"yieldForecast.reason.not_sown');
+    expect((h.match(/<p /g) ?? []).length).toBe(1);
+  });
 });

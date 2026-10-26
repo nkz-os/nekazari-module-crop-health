@@ -270,3 +270,72 @@ async def test_sources_detail_skips_daily_weather_entity():
             weather = resp.json()["sources"]["weather"]
             assert weather["status"] == "ok"
             assert "12.5°C" in weather["summary"]
+
+
+_parcel_seq = iter(range(1000))
+
+
+async def _bio_soil_sources(assessment_fields):
+    """Fetch /sources for a fresh parcel whose only data is one assessment.
+
+    A new parcel id per call: the endpoint caches its response by parcel id.
+    """
+    pid = f"Parcela-w{next(_parcel_seq)}"
+    with respx.mock as mock:
+        mock.get(url__regex=r".*type=CropHealthAssessment.*hasAgriParcel.*").respond(json=[
+            {
+                "id": f"urn:ngsi-ld:CropHealthAssessment:{pid}-20260607",
+                "assessedAt": "2026-06-07T10:00:00Z",
+                **assessment_fields,
+            }
+        ])
+        mock.get().respond(json=[])
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test", headers=GATEWAY_HEADERS) as client:
+            resp = await client.get(f"/api/crop-health/sources?parcelId={pid}")
+            assert resp.status_code == 200
+            return resp.json()["sources"]
+
+
+@pytest.mark.anyio
+async def test_soil_summary_has_no_placeholders_when_fields_missing():
+    src = await _bio_soil_sources({"soilTexture": "sandy-loam"})
+    assert src["soil"]["summary"] == "sandy-loam"
+    assert "?" not in src["soil"]["summary"]
+    src = await _bio_soil_sources({"soilTexture": "sandy-loam", "soilAWCmm": 46})
+    assert src["soil"]["summary"] == "sandy-loam · AWC 46mm"
+    src = await _bio_soil_sources({"soilTexture": "sandy-loam", "soilPh": 6.5, "soilAWCmm": 46})
+    assert src["soil"]["summary"] == "sandy-loam · pH 6.5 · AWC 46mm"
+
+
+@pytest.mark.anyio
+async def test_soil_summary_empty_when_nothing_present():
+    src = await _bio_soil_sources({})
+    assert src["soil"]["summary"] == ""
+    assert src["soil"]["status"] == "unavailable"
+
+
+@pytest.mark.anyio
+async def test_bioorchestrator_generic_kc_is_flagged():
+    src = await _bio_soil_sources({"phenologySource": "default", "kc": 0.85})
+    assert src["bioorchestrator"]["details"]["generic"] is True
+    assert src["bioorchestrator"]["summary"] == "generic"
+
+
+@pytest.mark.anyio
+async def test_bioorchestrator_real_kc_keeps_summary():
+    src = await _bio_soil_sources({"phenologySource": "bioorchestrator", "kc": 1.1})
+    assert src["bioorchestrator"]["details"]["generic"] is False
+    assert src["bioorchestrator"]["summary"] == "Kc=1.1"
+
+
+@pytest.mark.anyio
+async def test_bioorchestrator_without_kc_uses_neutral_literal():
+    src = await _bio_soil_sources({"phenologySource": "bioorchestrator"})
+    assert src["bioorchestrator"]["summary"] == "no_parameters"
+
+
+@pytest.mark.anyio
+async def test_soil_summary_empty_without_texture_even_with_ph():
+    src = await _bio_soil_sources({"soilPh": 6.5, "soilAWCmm": 46})
+    assert src["soil"]["summary"] == "" and src["soil"]["status"] == "unavailable"

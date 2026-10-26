@@ -41,7 +41,7 @@ async def test_resolve_zones_from_agriparcelzone(monkeypatch):
 async def test_resolve_zones_compacted_keys(monkeypatch):
     # If the @context compacts nkz: away, the unprefixed keys must also work,
     # and zoneId falls back to the URN's last colon segment.
-    z = [{"id": "urn:ngsi-ld:AgriParcelZone:t:p1:z0", "location": _PARCEL_GEOM}]
+    z = [{"id": "urn:ngsi-ld:AgriParcelZone:t:p1:z0", "location": _PARCEL_GEOM, "zoneType": "management"}]
     monkeypatch.setattr("app.services.zonation._orion", lambda t: _FakeOrion(z))
     zones = await resolve_zones("urn:ngsi-ld:AgriParcel:p1", "t", _PARCEL_GEOM)
     assert len(zones) == 1 and zones[0].zone_id == "z0"
@@ -59,8 +59,8 @@ async def test_resolve_zones_fallback_whole_parcel(monkeypatch):
 @pytest.mark.asyncio
 async def test_resolve_zones_sorted_deterministic(monkeypatch):
     z = [
-        {"id": "urn:ngsi-ld:AgriParcelZone:t:p1:z2", "nkz:zoneId": "z2", "location": _PARCEL_GEOM},
-        {"id": "urn:ngsi-ld:AgriParcelZone:t:p1:z1", "nkz:zoneId": "z1", "location": _PARCEL_GEOM},
+        {"id": "urn:ngsi-ld:AgriParcelZone:t:p1:z2", "nkz:zoneId": "z2", "nkz:zoneType": "management", "location": _PARCEL_GEOM},
+        {"id": "urn:ngsi-ld:AgriParcelZone:t:p1:z1", "nkz:zoneId": "z1", "nkz:zoneType": "management", "location": _PARCEL_GEOM},
     ]
     monkeypatch.setattr("app.services.zonation._orion", lambda t: _FakeOrion(z))
     zones = await resolve_zones("urn:ngsi-ld:AgriParcel:p1", "t", _PARCEL_GEOM)

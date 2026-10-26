@@ -10,6 +10,7 @@ interface ZoneLike {
   parcelId?: string | null;
   zoneId: string;
   geometry?: Geometry;
+  differsFromParcel?: boolean;
 }
 
 export function polygonRings(geometry: Geometry): number[][][] {
@@ -66,6 +67,30 @@ export function zoneNumbers(zones: ZoneLike[]): Map<string, number> {
   return out;
 }
 
+/** Zones that differ from the parcel value, and the rest (same as the parcel). */
+export function splitZones<T extends ZoneLike>(zones: T[]): { differing: T[]; rest: T[] } {
+  const differing: T[] = [];
+  const rest: T[] = [];
+  for (const z of zones) (z.differsFromParcel ? differing : rest).push(z);
+  return { differing, rest };
+}
+
+/** Zone numbers as a compact list: "1-2, 4-7" (runs of two or more become ranges). */
+export function zoneNumberList(zones: ZoneLike[], numbers: Map<string, number>): string {
+  const ns = zones
+    .map((z) => numbers.get(zoneKey(z.parcelId, z.zoneId)))
+    .filter((n): n is number => n != null)
+    .sort((a, b) => a - b);
+  const parts: string[] = [];
+  for (let i = 0; i < ns.length; ) {
+    let j = i;
+    while (j + 1 < ns.length && ns[j + 1] === ns[j] + 1) j++;
+    parts.push(j > i ? `${ns[i]}-${ns[j]}` : `${ns[i]}`);
+    i = j + 1;
+  }
+  return parts.join(', ');
+}
+
 /** The map label: zone number and the value of the active layer. */
 export function zoneMapLabel(n: number | undefined, value: string): string {
   return n != null ? `${n} · ${value}` : value;
@@ -74,6 +99,20 @@ export function zoneMapLabel(n: number | undefined, value: string): string {
 export interface ZoneRef {
   parcelId: string;
   zoneId: string;
+}
+
+/** The host's viewer route with the zone to light up (`/viewer` is redirected and drops the query). */
+export function zoneViewerPath(ref: ZoneRef): string {
+  return `/entities?parcel=${encodeURIComponent(ref.parcelId)}&zone=${encodeURIComponent(ref.zoneId)}`;
+}
+
+/** Whether a pinned zone (e.g. from a stale deep link) is among the loaded zones. */
+export function pinnedZoneExists(
+  pinned: ZoneRef | null,
+  zones: { parcelId?: string; zoneId: string }[],
+): boolean {
+  if (!pinned) return true;
+  return zones.some((z) => z.parcelId === pinned.parcelId && z.zoneId === pinned.zoneId);
 }
 
 type Listener = (sel: ZoneRef | null) => void;
@@ -94,6 +133,7 @@ function createZoneSelection() {
   };
   return {
     get: current,
+    getPinned: () => pinned,
     hover(ref: ZoneRef | null) {
       const before = current();
       hovered = ref;
@@ -137,4 +177,50 @@ export function emphasisStyle(emphasis: ZoneEmphasis, baseAlpha: number): Emphas
   if (emphasis === 'selected') return { fillAlpha: 0.75, outlineWhite: true, outlineAlpha: 1, labelAlpha: 1, bold: true };
   if (emphasis === 'dimmed') return { fillAlpha: baseAlpha * 0.35, outlineWhite: false, outlineAlpha: 0.4, labelAlpha: 0.45, bold: false };
   return { fillAlpha: baseAlpha, outlineWhite: false, outlineAlpha: 1, labelAlpha: 1, bold: false };
+}
+
+/** Severity colours of the map layer, shared with the legend so both always agree. */
+export const SEVERITY_COLORS: Record<string, { fill: string; alpha: number }> = {
+  LOW: { fill: '#16a34a', alpha: 0.3 },
+  MEDIUM: { fill: '#d97706', alpha: 0.4 },
+  HIGH: { fill: '#ea580c', alpha: 0.5 },
+  CRITICAL: { fill: '#dc2626', alpha: 0.55 },
+};
+
+/** Fill opacity of a zone: only zones that differ from the parcel get the full colour. */
+export function zoneFillAlpha(zone: { differsFromParcel?: boolean }, base: number): number {
+  return zone.differsFromParcel ? base : 0.1;
+}
+
+/** The map label of a zone: just its number (the value goes to the infobox). */
+export function zoneLabelText(n: number | undefined): string {
+  return String(n ?? '');
+}
+
+/** Big, bold numbers that shrink with distance so they never pile up when zoomed out. */
+export function zoneLabelStyle(emphasis: ZoneEmphasis): { font: string; scaleByDistance: [number, number, number, number] } {
+  return {
+    font: emphasis === 'selected' ? 'bold 24px sans-serif' : 'bold 20px sans-serif',
+    scaleByDistance: [500, 1.0, 5000, 0.5],
+  };
+}
+
+/** True when no zone differs from the parcel: the map then shows one value for the whole parcel. */
+export function parcelOnlyLabel(zones: Array<{ differsFromParcel?: boolean }>): boolean {
+  return !zones.some((z) => z.differsFromParcel);
+}
+
+/** The zone a deep link points at (`?parcel=<id>&zone=<id>`), if both are present. */
+export function readZoneFromLocation(search: string): ZoneRef | null {
+  const params = new URLSearchParams(search);
+  const parcelId = params.get('parcel');
+  const zoneId = params.get('zone');
+  return parcelId && zoneId ? { parcelId, zoneId } : null;
+}
+
+/** Ground outline of a zone (a clamped polyline: Cesium draws no outline on terrain-clamped polygons). */
+export function zoneOutlineStyle(emphasis: ZoneEmphasis, colorHex: string): { colorHex: string; alpha: number; width: number } {
+  if (emphasis === 'selected') return { colorHex: '#ffffff', alpha: 1, width: 4 };
+  if (emphasis === 'dimmed') return { colorHex, alpha: 0.4, width: 2 };
+  return { colorHex, alpha: 1, width: 2 };
 }

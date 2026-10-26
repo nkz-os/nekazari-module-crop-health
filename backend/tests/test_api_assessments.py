@@ -331,23 +331,21 @@ class TestAssessmentsAPI:
     def test_zone_assessments_requires_parcel(self, client):
         resp = client.get("/api/crop-health/assessments/zones")
         assert resp.status_code == 200
-        assert resp.json() == {"zones": [], "isWholeParcel": True}
+        assert resp.json() == {"zones": [], "isWholeParcel": True, "parcelValues": {}}
 
     def test_zone_assessments_for_parcel(self, client):
+        from app.services.zonation import Zone
+
+        live = Zone(zone_id="z1", geometry=_PARCEL_GEOM, urn=None, sensor_nearby=False)
         with patch(
             "app.api.assessments._fetch_zone_assessment_entities",
             AsyncMock(return_value=[SAMPLE_ZONE_ENTITY]),
         ), patch(
-            "app.api.assessments.resolve_zones",
+            "app.api.assessments._fetch_assessment_entities",
             AsyncMock(return_value=[]),
         ), patch(
-            "app.api.assessments.is_whole_parcel",
-            return_value=False,
-        ), patch(
-            "app.api.assessments._map_zone_entities_with_geometry",
-            AsyncMock(return_value=([
-                map_entity_to_zone_assessment(SAMPLE_ZONE_ENTITY, geometry=_PARCEL_GEOM),
-            ], False)),
+            "app.api.assessments.resolve_zones",
+            AsyncMock(return_value=[live]),
         ):
             resp = client.get("/api/crop-health/assessments/zones?parcelId=parcel-a")
             assert resp.status_code == 200
@@ -357,14 +355,18 @@ class TestAssessmentsAPI:
             assert body["zones"][0]["zoneId"] == "z1"
 
     def test_zone_assessments_all(self, client):
+        from app.services.zonation import Zone
+
+        live = Zone(zone_id="z1", geometry=_PARCEL_GEOM, urn=None, sensor_nearby=False)
         with patch(
             "app.api.assessments._fetch_zone_assessment_entities",
             AsyncMock(return_value=[SAMPLE_ZONE_ENTITY]),
         ), patch(
-            "app.api.assessments._map_zone_entities_with_geometry",
-            AsyncMock(return_value=([
-                map_entity_to_zone_assessment(SAMPLE_ZONE_ENTITY, geometry=_PARCEL_GEOM),
-            ], False)),
+            "app.api.assessments._fetch_assessment_entities",
+            AsyncMock(return_value=[]),
+        ), patch(
+            "app.api.assessments.resolve_zones",
+            AsyncMock(return_value=[live]),
         ):
             resp = client.get("/api/crop-health/assessments/zones/all")
             assert resp.status_code == 200

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import date, datetime, timedelta, timezone
 
@@ -10,7 +11,9 @@ from fastapi import APIRouter, Query, Request
 
 from app.api.assessment_mapper import (
     dedupe_latest_per_parcel,
+    PARCEL_VALUE_KEYS,
     dedupe_latest_per_zone,
+    differs_from_parcel,
     extract_parcel_id,
     extract_zone_id,
     extract_zone_urn,
@@ -19,6 +22,7 @@ from app.api.assessment_mapper import (
     prop_value,
 )
 from app.config import get_settings
+from app.services import worklist
 from app.services.zonation import is_whole_parcel, resolve_zones
 from nkz_platform_sdk.orion import OrionClient
 
@@ -30,6 +34,132 @@ logger = logging.getLogger(__name__)
 # made on behalf of the user (its routes sit behind require_auth).
 _READER_FORWARDED_HEADERS = ("Authorization", "X-Tenant-ID", "X-Auth-Signature")
 
+_WORKLIST_KEYS = ("recommendedAction", "vigorCondition", "phenologyDeviation")
+
+WORKLIST_MAX_CONCURRENCY = 10
+WORKLIST_PARCEL_TIMEOUT_S = 10.0
+# One deadline for the whole request; the gateway proxy gives up at 30 s.
+WORKLIST_REQUEST_DEADLINE_S = 20
+
+ORION_PAGE_SIZE = 1000
+ORION_MAX_PAGES = 5
+_DEFAULT_INPUTS = {"timeline": None, "agro": None, "forecast": None, "history": []}
+
+
+async def _query_paged(client, **params) -> list[dict]:
+    """All rows of an Orion query: pages of ORION_PAGE_SIZE, at most ORION_MAX_PAGES."""
+    rows: list[dict] = []
+    for page in range(ORION_MAX_PAGES):
+        batch = await client.query_entities(limit=ORION_PAGE_SIZE, offset=page * ORION_PAGE_SIZE, **params)
+        rows.extend(batch)
+        if len(batch) < ORION_PAGE_SIZE:
+            break
+    else:
+        logger.warning("orion: paged query hit the %d-page cap type=%s", ORION_MAX_PAGES, params.get("type"))
+    return rows
+
+
+def _request_budget() -> tuple[asyncio.Semaphore, float]:
+    """A concurrency bound and an absolute deadline (loop time), both owned by one request."""
+    return (asyncio.Semaphore(WORKLIST_MAX_CONCURRENCY),
+            asyncio.get_running_loop().time() + WORKLIST_REQUEST_DEADLINE_S)
+
+
+async def _bounded_inputs(request: Request, state, tenant_id: str, parcel_short: str,
+                          semaphore: asyncio.Semaphore, deadline: float) -> dict:
+    """Inputs of one parcel under the request's concurrency bound and deadline; defaults on timeout."""
+    from app.services.worklist_sources import gather_parcel_inputs  # lazy: avoids an import cycle
+
+    loop = asyncio.get_running_loop()
+    async with semaphore:
+        timeout = min(WORKLIST_PARCEL_TIMEOUT_S, max(0.0, deadline - loop.time()))
+        try:
+            return await asyncio.wait_for(
+                gather_parcel_inputs(request, state, tenant_id, parcel_short, with_history=True),
+                timeout=timeout,
+            )
+        except asyncio.TimeoutError:
+            logger.warning("worklist: inputs timed out tenant=%s parcel=%s after %.1fs",
+                           tenant_id, parcel_short, timeout)
+            return {**_DEFAULT_INPUTS, "history": []}
+
+
+def get_redis_state():
+    """Late import: app.main imports this package. None when the app is not started."""
+    try:
+        from app.main import get_redis_state as _get
+
+        return _get()
+    except Exception as exc:  # noqa: BLE001 — forecast is optional input to the work list
+        logger.warning("worklist: redis state unavailable: %s", exc)
+        return None
+
+
+def _flat(entity: dict | None) -> dict | None:
+    """Plain values of the assessment attributes the work-list rules read."""
+    if not entity:
+        return None
+    return {k: prop_value(entity, k, None) for k in _WORKLIST_KEYS}
+
+
+def _planned_crop(timeline: dict | None, today: date) -> dict | None:
+    planned = worklist.planned_cycle(timeline, today) or {}
+    species = planned.get("species")
+    if not species:
+        return None
+    out: dict = {"species": species}
+    if planned.get("names"):
+        out["names"] = planned["names"]
+    sowing = (planned.get("start") or {}).get("date")
+    out["sowingDate"] = sowing or None
+    return out
+
+
+def _local_today(timeline: dict | None, now: datetime) -> date:
+    """The parcel's local day from the crop timeline, else the UTC date."""
+    try:
+        return date.fromisoformat(str((timeline or {}).get("at"))[:10])
+    except ValueError:
+        return now.date()
+
+
+def _worklist_fields(*, assessment: dict | None, assessed_at: str | None, crop_name: str | None,
+                     inputs: dict, alerts: list[dict], now: datetime) -> dict:
+    """Crop status, freshness, next job and surprise of one parcel (pure over its inputs)."""
+    timeline = inputs.get("timeline")
+    status = worklist.crop_status(timeline)
+    fresh = worklist.freshness(assessed_at, now)
+    # An old assessment of a crop-less parcel must not drive its job or surprise.
+    active = status == "active"
+    live = assessment if active else None
+    today = _local_today(timeline, now)
+    return {
+        "cropStatus": status,
+        "freshness": fresh,
+        "stale": fresh == "stale" or (status == "none" and assessed_at is not None),
+        "nextJob": worklist.next_job(
+            assessment=live, timeline=timeline, agro=inputs.get("agro"),
+            alerts=alerts, forecast=inputs.get("forecast") if active else None,
+            today=today,
+        ),
+        "surprise": worklist.surprise(
+            assessment=live, history=(inputs.get("history") or []) if active else [], alerts=alerts,
+        ),
+        "plannedCrop": _planned_crop(timeline, today),
+        "lastAssessment": (
+            {"assessedAt": assessed_at, "cropName": crop_name}
+            if status == "none" and assessed_at is not None else None
+        ),
+    }
+
+
+async def _alerts_safe(tenant_id: str) -> list[dict]:
+    try:
+        return await _active_alert_rows(tenant_id)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("worklist: alerts failed tenant=%s: %s", tenant_id, exc)
+        return []
+
 
 def _reader_headers(request: Request) -> dict[str, str]:
     """Forward the caller's auth context to the timeseries-reader (only headers present)."""
@@ -40,7 +170,7 @@ def _reader_headers(request: Request) -> dict[str, str]:
     }
 
 
-async def _fetch_assessment_entities(tenant_id: str, parcel_id: str = "", limit: int = 100) -> list[dict]:
+async def _fetch_assessment_entities(tenant_id: str, parcel_id: str = "") -> list[dict]:
     settings = get_settings()
     client = OrionClient(tenant_id, base_url=settings.orion_ld_url, context_url=settings.orion_ld_context)
     try:
@@ -50,12 +180,7 @@ async def _fetch_assessment_entities(tenant_id: str, parcel_id: str = "", limit:
                 f'(hasAgriParcel=="urn:ngsi-ld:AgriParcel:{parcel_id}"'
                 f'|refAgriParcel=="urn:ngsi-ld:AgriParcel:{parcel_id}")'
             )
-        entities = await client.query_entities(
-            type="CropHealthAssessment",
-            q=q,
-            limit=limit,
-            options="keyValues",
-        )
+        entities = await _query_paged(client, type="CropHealthAssessment", q=q, options="keyValues")
         # Exclude activation scaffolding placeholders (provenance == "placeholder"):
         # they carry no data and out-rank real dated assessments by assessedAt.
         return [e for e in entities if e.get("provenance") != "placeholder"]
@@ -99,7 +224,7 @@ async def _fetch_parcel_names(tenant_id: str) -> dict[str, str]:
     return names
 
 
-async def _fetch_zone_assessment_entities(tenant_id: str, parcel_id: str = "", limit: int = 100) -> list[dict]:
+async def _fetch_zone_assessment_entities(tenant_id: str, parcel_id: str = "") -> list[dict]:
     settings = get_settings()
     client = OrionClient(tenant_id, base_url=settings.orion_ld_url, context_url=settings.orion_ld_context)
     try:
@@ -109,12 +234,7 @@ async def _fetch_zone_assessment_entities(tenant_id: str, parcel_id: str = "", l
                 f'(hasAgriParcel=="urn:ngsi-ld:AgriParcel:{parcel_id}"'
                 f'|refAgriParcel=="urn:ngsi-ld:AgriParcel:{parcel_id}")'
             )
-        return await client.query_entities(
-            type="CropHealthZoneAssessment",
-            q=q,
-            limit=limit,
-            options="keyValues",
-        )
+        return await _query_paged(client, type="CropHealthZoneAssessment", q=q, options="keyValues")
     except Exception as e:
         logger.warning("Orion CropHealthZoneAssessment query failed: %s", e)
         return []
@@ -136,50 +256,70 @@ def _zone_geometry_lookup(zones: list) -> dict[str, dict]:
     return by_id
 
 
-async def _map_zone_entities_with_geometry(
-    tenant_id: str,
-    entities: list[dict],
-) -> tuple[list[dict], bool]:
-    """Attach AgriParcelZone geometry to zone assessment entities."""
+async def _parcel_values(tenant_id: str, parcel_id: str) -> dict:
+    """Four headline values of the parcel's latest assessment ({} if none)."""
+    entities = await _fetch_assessment_entities(tenant_id, parcel_id=parcel_id)
     if not entities:
-        return [], False
+        return {}
+    latest = map_entity_to_assessment(max(entities, key=lambda e: prop_value(e, "assessedAt", "")))
+    return {k: latest.get(k) for k in PARCEL_VALUE_KEYS}
 
-    parcel_ids = sorted({extract_parcel_id(e) for e in entities if extract_parcel_id(e)})
-    lookup: dict[str, dict] = {}
-    whole_by_parcel: dict[str, bool] = {}
 
-    for pid in parcel_ids:
-        zones = await resolve_zones(f"urn:ngsi-ld:AgriParcel:{pid}", tenant_id, {})
-        whole_by_parcel[pid] = is_whole_parcel(zones)
-        lookup.update(_zone_geometry_lookup(zones))
+def _live_zone_assessments(entities: list[dict], live: list, parcel_values: dict) -> list[dict]:
+    """Latest assessment per live zone, mapped and flagged against the parcel.
 
-    mapped: list[dict] = []
-    for entity in entities:
-        pid = extract_parcel_id(entity)
-        zid = extract_zone_id(entity)
-        zurn = extract_zone_urn(entity)
-        meta = lookup.get(zurn) or lookup.get(zid) or {}
-        mapped.append(
-            map_entity_to_zone_assessment(
-                entity,
-                geometry=meta.get("geometry"),
-                sensor_nearby=meta.get("sensorNearby"),
-            )
+    Assessments of zones not in ``live`` are dropped before deduplicating.
+    """
+    live_keys = {z.zone_id for z in live} | {z.urn for z in live if z.urn}
+    kept = [
+        e for e in entities
+        if extract_zone_id(e) in live_keys or extract_zone_urn(e) in live_keys
+    ]
+    lookup = _zone_geometry_lookup(live)
+    zones: list[dict] = []
+    for entity in dedupe_latest_per_zone(kept):
+        meta = lookup.get(extract_zone_urn(entity)) or lookup.get(extract_zone_id(entity)) or {}
+        zone = map_entity_to_zone_assessment(
+            entity,
+            geometry=meta.get("geometry"),
+            sensor_nearby=meta.get("sensorNearby"),
         )
-
-    is_whole = len(parcel_ids) == 1 and whole_by_parcel.get(parcel_ids[0], True)
-    return mapped, is_whole
+        zone["differsFromParcel"] = differs_from_parcel(zone, parcel_values)
+        zones.append(zone)
+    return zones
 
 
 @router.get("/assessments/zones/all")
 async def all_zone_assessments(request: Request):
-    """Latest zone assessment per (parcel, zone) — map-layer compat."""
+    """Latest assessment per live zone of every parcel — map-layer compat."""
     tenant_id = getattr(request.state, "tenant_id", "")
-    entities = await _fetch_zone_assessment_entities(tenant_id, limit=200)
-    latest = dedupe_latest_per_zone(entities)
-    zones, _ = await _map_zone_entities_with_geometry(tenant_id, latest)
+    entities = await _fetch_zone_assessment_entities(tenant_id)
+    by_parcel: dict[str, list[dict]] = {}
+    for e in entities:
+        pid = extract_parcel_id(e)
+        if pid:
+            by_parcel.setdefault(pid, []).append(e)
+
+    semaphore = asyncio.Semaphore(WORKLIST_MAX_CONCURRENCY)
+
+    async def _resolve(pid: str):
+        async with semaphore:
+            return await asyncio.gather(
+                resolve_zones(f"urn:ngsi-ld:AgriParcel:{pid}", tenant_id, {}),
+                _parcel_values(tenant_id, pid),
+            )
+
+    pids = sorted(by_parcel)
+    resolved = await asyncio.gather(*(_resolve(pid) for pid in pids))
+    zones: list[dict] = []
+    parcel_values: dict[str, dict] = {}
+    for pid, (live, values) in zip(pids, resolved):
+        parcel_values[pid] = values
+        if is_whole_parcel(live):
+            continue
+        zones.extend(_live_zone_assessments(by_parcel[pid], live, values))
     zones.sort(key=lambda z: (z.get("parcelId", ""), z.get("zoneId", "")))
-    return {"zones": zones}
+    return {"zones": zones, "parcelValues": parcel_values}
 
 
 @router.get("/assessments/zones")
@@ -187,17 +327,25 @@ async def zone_assessments(
     request: Request,
     parcelId: str = Query("", alias="parcelId"),
 ):
-    """Return latest CropHealthZoneAssessment per management zone for one parcel."""
+    """Latest zone assessment per live management zone, flagged against the parcel.
+
+    Assessments of zones that no longer exist are dropped before deduplicating.
+    """
     if not parcelId:
-        return {"zones": [], "isWholeParcel": True}
+        return {"zones": [], "isWholeParcel": True, "parcelValues": {}}
 
     tenant_id = getattr(request.state, "tenant_id", "")
-    entities = await _fetch_zone_assessment_entities(tenant_id, parcel_id=parcelId, limit=100)
-    latest = dedupe_latest_per_zone(entities)
-    zones, _ = await _map_zone_entities_with_geometry(tenant_id, latest)
+    live = await resolve_zones(f"urn:ngsi-ld:AgriParcel:{parcelId}", tenant_id, {})
+
+    parcel_values = await _parcel_values(tenant_id, parcelId)
+
+    if is_whole_parcel(live):
+        return {"zones": [], "isWholeParcel": True, "parcelValues": parcel_values}
+
+    entities = await _fetch_zone_assessment_entities(tenant_id, parcel_id=parcelId)
+    zones = _live_zone_assessments(entities, live, parcel_values)
     zones.sort(key=lambda z: z.get("zoneId", ""))
-    is_whole = not zones or (len(zones) == 1 and zones[0].get("zoneId") == "parcel")
-    return {"zones": zones, "isWholeParcel": is_whole}
+    return {"zones": zones, "isWholeParcel": not zones, "parcelValues": parcel_values}
 
 
 def _linear_regression_stats(pairs: list[dict]) -> dict:
@@ -236,6 +384,28 @@ def _linear_regression_stats(pairs: list[dict]) -> dict:
     }
 
 
+async def _latest_worklist(request: Request, tenant_id: str, parcel_id: str,
+                           entity: dict | None, mapped: dict) -> dict:
+    """Work-list fields for the single-parcel answer; never raises."""
+    try:
+        semaphore, deadline = _request_budget()
+        inputs, alerts = await asyncio.gather(
+            _bounded_inputs(request, get_redis_state(), tenant_id, parcel_id, semaphore, deadline),
+            _alerts_safe(tenant_id),
+        )
+        fields = _worklist_fields(
+            assessment=_flat(entity), assessed_at=mapped.get("assessedAt"),
+            crop_name=mapped.get("cropName"), inputs=inputs,
+            alerts=[a for a in alerts if a.get("parcelId") == parcel_id],
+            now=datetime.now(timezone.utc),
+        )
+        fields.pop("lastAssessment")
+        return fields
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("worklist: latest fields failed tenant=%s parcel=%s: %s", tenant_id, parcel_id, exc)
+        return {}
+
+
 @router.get("/assessments/latest")
 async def latest_assessments(
     request: Request,
@@ -243,13 +413,17 @@ async def latest_assessments(
 ):
     """Return the latest CropHealthAssessment per parcel, or for one parcel if filtered."""
     tenant_id = getattr(request.state, "tenant_id", "")
-    entities = await _fetch_assessment_entities(tenant_id, parcel_id=parcelId, limit=100 if parcelId else 100)
+    entities = await _fetch_assessment_entities(tenant_id, parcel_id=parcelId)
 
+    extra: dict = {}
     if parcelId:
-        if not entities:
-            return {"assessments": []}
-        latest = max(entities, key=lambda e: prop_value(e, "assessedAt", ""))
-        assessments = [map_entity_to_assessment(latest)]
+        if entities:
+            latest = max(entities, key=lambda e: prop_value(e, "assessedAt", ""))
+            assessments = [map_entity_to_assessment(latest)]
+            extra = await _latest_worklist(request, tenant_id, parcelId, latest, assessments[0])
+        else:
+            assessments = []
+            extra = await _latest_worklist(request, tenant_id, parcelId, None, {})
     else:
         latest_entities = dedupe_latest_per_parcel(entities)
         assessments = [map_entity_to_assessment(e) for e in latest_entities]
@@ -263,13 +437,63 @@ async def latest_assessments(
         if pid and pid in parcel_names:
             a["parcelName"] = parcel_names[pid]
 
-    return {"assessments": assessments}
+    return {"assessments": assessments, **extra}
 
 
 @router.get("/assessments/all")
 async def all_assessments(request: Request):
     """Alias for latest assessments without parcel filter (map-layer compat)."""
     return await latest_assessments(request, parcelId="")
+
+
+async def _history_points(
+    request: Request,
+    parcel_id: str,
+    days: int,
+    from_: date | None = None,
+    to: date | None = None,
+) -> list[dict]:
+    """CropHealthAssessment series for a parcel, oldest first; [] on any failure."""
+    try:
+        settings = get_settings()
+        start = from_ or (datetime.now(timezone.utc).date() - timedelta(days=days))
+        params = {
+            "attrs": "cwsiValue,mdsValue,waterBalanceDeficit,compositeStressIndex,overallSeverity",
+            "limit": 500,
+            "from": f"{start.isoformat()}T00:00:00Z",
+        }
+        if to is not None:
+            # Reader's upper bound is exclusive: close the day so `to` is inclusive.
+            params["to"] = f"{to.isoformat()}T23:59:59.999999Z"
+        url = f"{settings.weather_api_url}/api/timeseries/type/CropHealthAssessment/parcel/{parcel_id}/data"
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(url, params=params, headers=_reader_headers(request))
+            resp.raise_for_status()
+            result = resp.json()
+
+        points = [
+            {
+                "date": p.get("observed_at", ""),
+                "cwsi": p.get("cwsiValue"),
+                "mds": p.get("mdsValue"),
+                "balance": p.get("waterBalanceDeficit"),
+                "composite": p.get("compositeStressIndex"),
+                "severity": p.get("overallSeverity"),
+            }
+            for p in result.get("data", [])
+        ]
+        points.sort(key=lambda p: p["date"])
+        return points
+    except httpx.HTTPStatusError as e:
+        logger.error(
+            "History query failed: timeseries-reader returned HTTP %s (parcel=%s)",
+            e.response.status_code,
+            parcel_id,
+        )
+        return []
+    except Exception as e:
+        logger.error("History query failed: %s", e)
+        return []
 
 
 @router.get("/assessments/history")
@@ -288,47 +512,7 @@ async def assessment_history(
     """
     if not parcelId:
         return {"points": []}
-
-    try:
-        settings = get_settings()
-        start = from_ or (datetime.now(timezone.utc).date() - timedelta(days=days))
-        params = {
-            "attrs": "cwsiValue,mdsValue,waterBalanceDeficit,compositeStressIndex,overallSeverity",
-            "limit": 500,
-            "from": f"{start.isoformat()}T00:00:00Z",
-        }
-        if to is not None:
-            # Reader's upper bound is exclusive: close the day so `to` is inclusive.
-            params["to"] = f"{to.isoformat()}T23:59:59.999999Z"
-        url = f"{settings.weather_api_url}/api/timeseries/type/CropHealthAssessment/parcel/{parcelId}/data"
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(url, params=params, headers=_reader_headers(request))
-            resp.raise_for_status()
-            result = resp.json()
-
-        points = [
-            {
-                "date": p.get("observed_at", ""),
-                "cwsi": p.get("cwsiValue"),
-                "mds": p.get("mdsValue"),
-                "balance": p.get("waterBalanceDeficit"),
-                "composite": p.get("compositeStressIndex"),
-                "severity": p.get("overallSeverity"),
-            }
-            for p in result.get("data", [])
-        ]
-        points.sort(key=lambda p: p["date"])
-        return {"points": points}
-    except httpx.HTTPStatusError as e:
-        logger.error(
-            "History query failed: timeseries-reader returned HTTP %s (parcel=%s)",
-            e.response.status_code,
-            parcelId,
-        )
-        return {"points": []}
-    except Exception as e:
-        logger.error("History query failed: %s", e)
-        return {"points": []}
+    return {"points": await _history_points(request, parcelId, days, from_=from_, to=to)}
 
 
 @router.get("/assessments/correlation")
@@ -498,28 +682,20 @@ async def list_parcels(request: Request):
     try:
         # Query 1: CropHealthAssessment entities
         try:
-            assessments_raw = await client.query_entities(
-                type="CropHealthAssessment",
-                limit=100,
-                options="keyValues",
-            )
+            assessments_raw = await _query_paged(client, type="CropHealthAssessment", options="keyValues")
         except Exception as e:
             logger.warning("list_parcels CropHealthAssessment query failed: %s", e)
             assessments_raw = []
 
         # Query 2: AgriParcel entities
         try:
-            parcels_raw = await client.query_entities(
-                type="AgriParcel",
-                limit=100,
-                options="keyValues",
-            )
+            parcels_raw = await _query_paged(client, type="AgriParcel", options="keyValues")
         except Exception as e:
             logger.warning("list_parcels AgriParcel query failed: %s", e)
             parcels_raw = []
     except Exception as e:
         logger.error("Failed to query Orion-LD for parcels: %s", e)
-        return {"parcels": []}
+        return {"parcels": [], "summary": {"surprises": 0, "jobsToday": 0, "noData": 0}}
     finally:
         await client.close()
 
@@ -586,35 +762,46 @@ async def list_parcels(request: Request):
             "hasData": False,
         })
 
-    # Sort: parcels with data first (by severity priority), then without data
-    severity_order = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
-    parcels.sort(key=lambda p: (
-        0 if p.get("hasData") else 1,
-        severity_order.get(p.get("overallSeverity", "LOW"), 3),
-    ))
+    # Work-list fields: inputs of every parcel gathered in parallel, alerts once per request.
+    state = get_redis_state()
+    now = datetime.now(timezone.utc)
+    semaphore, deadline = _request_budget()
+    alerts, inputs_list = await asyncio.gather(
+        _alerts_safe(tenant_id),
+        asyncio.gather(*(
+            _bounded_inputs(request, state, tenant_id, p["parcelId"], semaphore, deadline)
+            for p in parcels
+        )),
+    )
+    for p, inputs in zip(parcels, inputs_list):
+        try:
+            p.update(_worklist_fields(
+                assessment=_flat(assessment_by_parcel.get(p["parcelId"])),
+                assessed_at=p.get("assessedAt"), crop_name=p.get("cropName"), inputs=inputs,
+                alerts=[a for a in alerts if a.get("parcelId") == p["parcelId"]], now=now,
+            ))
+        except Exception as exc:  # noqa: BLE001 — one malformed parcel degrades to defaults
+            logger.warning("worklist: row degraded tenant=%s parcel=%s: %s", tenant_id, p["parcelId"], exc)
+            fresh = worklist.freshness(p.get("assessedAt"), now)
+            p.update({"cropStatus": "none", "freshness": fresh, "stale": fresh == "stale",
+                      "nextJob": None, "surprise": None, "plannedCrop": None, "lastAssessment": None})
 
-    return {"parcels": parcels}
+    parcels.sort(key=worklist.rank)
+    summary = {
+        "surprises": sum(1 for p in parcels if p["surprise"]),
+        "jobsToday": sum(1 for p in parcels if (p["nextJob"] or {}).get("when") == "today"),
+        "noData": sum(1 for p in parcels
+                      if p.get("cropStatus") == "active" and not p.get("hasData")),
+    }
+    return {"parcels": parcels, "summary": summary}
 
 
-@router.get("/diseases/active")
-async def active_disease_risks(
-    request: Request,
-    parcelId: str = "",
-):
-    """Return active disease risks from Orion-LD.
-
-    Disease risks are published by the risk module as Alert entities with
-    category = disease. The disease metadata (code, crop, conditions, model,
-    action) lives in evaluationData. The legacy DiseaseRiskAssessment type is
-    no longer written.
-
-    Optionally filter by parcelId (refEntity relationship).
-    """
-    tenant_id = getattr(request.state, "tenant_id", "")
+async def _active_alert_rows(tenant_id: str) -> list[dict]:
+    """Active disease Alert rows of the tenant (unfiltered by parcel), each with its Alert id."""
     settings = get_settings()
     client = OrionClient(tenant_id, base_url=settings.orion_ld_url, context_url=settings.orion_ld_context)
     try:
-        entities = await client.query_entities(type="Alert", limit=100, options="keyValues")
+        entities = await _query_paged(client, type="Alert", options="keyValues")
     except Exception as e:
         logger.warning("active_disease_risks Orion query failed: %s", e)
         entities = []
@@ -636,9 +823,6 @@ async def active_disease_risks(
             parcel = str(ref.get("object", "")).replace("urn:ngsi-ld:AgriParcel:", "")
         elif isinstance(ref, str):
             parcel = ref.replace("urn:ngsi-ld:AgriParcel:", "")
-
-        if parcelId and parcel != parcelId:
-            continue
 
         eval_data = e.get("evaluationData") or {}
         if isinstance(eval_data, dict) and "value" in eval_data:
@@ -668,6 +852,28 @@ async def active_disease_risks(
             "source_model": eval_data.get("source_model", ""),
             "recommended_action": eval_data.get("recommended_action", ""),
             "parcelId": parcel,
+            "id": e.get("id"),
         })
 
+    return risks
+
+
+@router.get("/diseases/active")
+async def active_disease_risks(
+    request: Request,
+    parcelId: str = "",
+):
+    """Return active disease risks from Orion-LD.
+
+    Disease risks are published by the risk module as Alert entities with
+    category = disease. The disease metadata (code, crop, conditions, model,
+    action) lives in evaluationData. The legacy DiseaseRiskAssessment type is
+    no longer written.
+
+    Optionally filter by parcelId (refEntity relationship).
+    """
+    tenant_id = getattr(request.state, "tenant_id", "")
+    risks = await _active_alert_rows(tenant_id)
+    if parcelId:
+        risks = [r for r in risks if r["parcelId"] == parcelId]
     return {"risks": risks}

@@ -1,11 +1,10 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { useTranslation } from '@nekazari/sdk';
 import SourceStatusPanel from './SourceStatusPanel';
 import CropStatusSnapshot from './CropStatusSnapshot';
 import PhenologyTimeline from './PhenologyTimeline';
-import CropHealthRisksPanel from './CropHealthRisksPanel';
 import CropHealthDetailTabs from './CropHealthDetailTabs';
-import ZoneHealthPanel from './ZoneHealthPanel';
+import NoActiveCropCard from './NoActiveCropCard';
 import { useParcelHealthData } from '../hooks/useParcelHealthData';
 
 interface ParcelHealthWorkbenchProps {
@@ -15,7 +14,6 @@ interface ParcelHealthWorkbenchProps {
 
 const ParcelHealthWorkbench: React.FC<ParcelHealthWorkbenchProps> = ({ parcelId, parcelName }) => {
   const { t } = useTranslation('crop-health');
-  const [showDiagnostics, setShowDiagnostics] = useState(true);
   const data = useParcelHealthData(parcelId);
 
   if (data.loading) {
@@ -43,12 +41,34 @@ const ParcelHealthWorkbench: React.FC<ParcelHealthWorkbenchProps> = ({ parcelId,
     );
   }
 
+  if (data.cropStatus === 'none') {
+    return (
+      <div className="space-y-0">
+        <NoActiveCropCard
+          parcelId={parcelId}
+          plannedCrop={data.plannedCrop}
+          lastAssessment={
+            data.assessment
+              ? { assessedAt: data.assessment.assessedAt, cropName: data.assessment.cropName }
+              : null
+          }
+        />
+        <SourceStatusPanel parcelId={parcelId} parcelName={parcelName} embedded defaultOpen={false} />
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-0">
-      <CropStatusSnapshot parcelId={parcelId} parcelName={parcelName} />
-      <ZoneHealthPanel zones={data.zoneAssessments} isWholeParcel={data.isWholeParcel} />
+      <CropStatusSnapshot
+        parcelId={parcelId}
+        parcelName={parcelName}
+        assessment={data.assessment}
+        nextJob={data.nextJob}
+        surprise={data.surprise}
+        freshness={data.freshness}
+      />
       <PhenologyTimeline status={data.phenologyStatus} />
-      <CropHealthRisksPanel diseases={data.diseases} assessment={data.assessment} />
       <CropHealthDetailTabs
         parcelId={parcelId}
         assessment={data.assessment}
@@ -56,25 +76,12 @@ const ParcelHealthWorkbench: React.FC<ParcelHealthWorkbenchProps> = ({ parcelId,
         trend={data.trend}
         correlation={data.correlation}
         correlationStats={data.correlationStats}
+        diseases={data.diseases}
+        zones={data.zoneAssessments}
+        isWholeParcel={data.isWholeParcel}
+        parcelValues={data.parcelValues}
       />
-
-      <div className="mt-3 border border-nkz-border rounded-lg overflow-hidden bg-nkz-surface-raised">
-        <button
-          type="button"
-          className="w-full flex items-center justify-between px-3 py-2 text-left bg-transparent border-none cursor-pointer"
-          onClick={() => setShowDiagnostics((v) => !v)}
-        >
-          <span className="text-xs font-semibold uppercase tracking-wide text-nkz-text-secondary">
-            {t('workbench.diagnosticsTitle')}
-          </span>
-          <span className="text-xs text-nkz-text-muted">{showDiagnostics ? '▾' : '▸'}</span>
-        </button>
-        {showDiagnostics && (
-          <div className="border-t border-nkz-border px-1 pb-2">
-            <SourceStatusPanel parcelId={parcelId} parcelName={parcelName} embedded />
-          </div>
-        )}
-      </div>
+      <SourceStatusPanel parcelId={parcelId} parcelName={parcelName} embedded defaultOpen={false} />
     </div>
   );
 };

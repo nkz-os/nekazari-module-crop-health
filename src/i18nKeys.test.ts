@@ -18,10 +18,52 @@ describe('i18n parity', () => {
   }
 });
 
-describe('zone strings', () => {
+
+describe('worklist and fleet parity', () => {
+  const en = (resources.en as any)['crop-health'];
   for (const [lang, res] of Object.entries(resources)) {
-    it(`${lang} has the zone selection hint`, () => {
-      expect(typeof (res as any)['crop-health'].zones.selectHint).toBe('string');
+    it(`${lang} has the worklist and fleet keys of en`, () => {
+      const ns = (res as any)['crop-health'];
+      expect(keys(ns.worklist).sort()).toEqual(keys(en.worklist).sort());
+      expect(keys(ns.fleet).sort()).toEqual(['jobsToday', 'noData', 'surprises']);
+      expect(keys(en.worklist).length).toBe(21);
+    });
+  }
+});
+
+describe('detail strings parity', () => {
+  const en = (resources.en as any)['crop-health'];
+  for (const [lang, res] of Object.entries(resources)) {
+    it(`${lang} has the noCrop and tabs keys of en`, () => {
+      const ns = (res as any)['crop-health'];
+      expect(keys(ns.noCrop).sort()).toEqual(keys(en.noCrop).sort());
+      expect(keys(ns.tabs).sort()).toEqual(['plant', 'risks', 'water']);
+      expect(typeof ns.sources.generic).toBe('string');
+      expect(typeof ns.sources.toggle).toBe('string');
+      expect(typeof ns.yieldForecast.none).toBe('string');
+    });
+  }
+});
+
+describe('zone panel strings', () => {
+  for (const [lang, res] of Object.entries(resources)) {
+    it(`${lang} has the differing-zones keys`, () => {
+      const z = (res as any)['crop-health'].zones;
+      for (const k of ['showOnMap', 'rest', 'noDifference', 'parcelValue']) expect(typeof z[k]).toBe('string');
+      expect(z.rest).toContain('{{list}}');
+      expect(z.noDifference).toContain('{{count}}');
+      expect(z.parcelValue).toContain('{{value}}');
+    });
+  }
+});
+
+describe('map legend strings', () => {
+  for (const [lang, res] of Object.entries(resources)) {
+    it(`${lang} has the legend and parcel-only keys`, () => {
+      const ns = (res as any)['crop-health'];
+      expect(typeof ns.zones.parcelOnly).toBe('string');
+      expect(typeof ns.legend.numbers).toBe('string');
+      expect(typeof ns.legend.outline).toBe('string');
     });
   }
 });

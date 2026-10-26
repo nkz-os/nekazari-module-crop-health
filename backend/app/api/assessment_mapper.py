@@ -313,3 +313,29 @@ def map_entity_to_zone_assessment(
     if sensor_nearby is not None:
         result["sensorNearby"] = sensor_nearby
     return result
+
+
+# Scales: CWSI 0-1, composite stress 0-100, vigor 0-1.
+_DIFFER_THRESHOLDS = (
+    ("cwsiValue", 0.1),
+    ("compositeStressIndex", 10.0),
+    ("vigorIndex", 0.1),
+)
+PARCEL_VALUE_KEYS = ("cwsiValue", "compositeStressIndex", "vigorIndex", "overallSeverity")
+
+
+def differs_from_parcel(zone: dict[str, Any], parcel: dict[str, Any]) -> bool:
+    """True if a zone's state is worth calling out against the whole parcel.
+
+    A sensor nearby always counts. A value missing on either side is ignored.
+    """
+    if zone.get("sensorNearby") is True:
+        return True
+    for key, threshold in _DIFFER_THRESHOLDS:
+        z, p = zone.get(key), parcel.get(key)
+        if z is None or p is None:
+            continue
+        if abs(float(z) - float(p)) >= threshold - 1e-9:
+            return True
+    z_sev, p_sev = zone.get("overallSeverity"), parcel.get("overallSeverity")
+    return z_sev is not None and p_sev is not None and z_sev != p_sev

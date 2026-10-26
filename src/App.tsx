@@ -3,7 +3,7 @@ import { useTranslation } from '@nekazari/sdk';
 import { Sprout } from 'lucide-react';
 import ParcelList from './components/ParcelList';
 import ParcelHealthWorkbench from './components/ParcelHealthWorkbench';
-import FleetOverview, { useActiveDiseaseCount, useFleetAssessments } from './components/FleetOverview';
+import FleetOverview, { type FleetSummary } from './components/FleetOverview';
 import { navigateTo, readParcelIdFromLocation } from './api/cropHealthApi';
 import type { ParcelSummary } from './types/assessment';
 
@@ -12,8 +12,7 @@ const App: React.FC = () => {
   const [selectedParcelId, setSelectedParcelId] = useState<string | null>(readParcelIdFromLocation());
   const [selectedParcelName, setSelectedParcelName] = useState('');
   const [parcels, setParcels] = useState<ParcelSummary[]>([]);
-  const fleetAssessments = useFleetAssessments();
-  const diseaseCount = useActiveDiseaseCount();
+  const [summary, setSummary] = useState<FleetSummary>({ surprises: 0, jobsToday: 0, noData: 0 });
 
   useEffect(() => {
     const fromUrl = readParcelIdFromLocation();
@@ -51,13 +50,14 @@ const App: React.FC = () => {
           </div>
         </header>
 
-        <FleetOverview parcels={parcels} assessments={fleetAssessments} diseaseCount={diseaseCount} />
+        <FleetOverview summary={summary} />
 
         <div className="flex-1 overflow-hidden">
           <ParcelList
             onSelectParcel={handleSelectParcel}
             selectedParcelId={selectedParcelId}
             onParcelsLoaded={handleParcelsLoaded}
+            onSummary={setSummary}
           />
         </div>
       </aside>

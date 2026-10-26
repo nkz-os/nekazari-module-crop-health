@@ -29,15 +29,27 @@ _CLOSED_STATUSES = frozenset({"harvested", "terminated", "cancelled"})
 _FACT_PROVENANCES = frozenset(ACTIVE_PROVENANCES)
 
 
-def planned_cycle(timeline: Optional[dict]) -> Optional[dict]:
-    """The crop still to be sown: overdue plan, else the next planned cycle, else an undated plan."""
+def _after(day: Optional[str], today: date) -> bool:
+    try:
+        return date.fromisoformat(str(day)[:10]) > today
+    except ValueError:
+        return False
+
+
+def planned_cycle(timeline: Optional[dict], today: Optional[date] = None) -> Optional[dict]:
+    """The crop still to be sown: overdue plan, else the next cycle (planned, or declared for a
+    future day), else an undated plan."""
     tl = timeline or {}
     pending = tl.get("pending")
     if pending:
         return pending
     nxt = tl.get("next")
-    if nxt and (nxt.get("start") or {}).get("provenance") == "planned":
-        return nxt
+    if nxt:
+        start = nxt.get("start") or {}
+        if start.get("provenance") == "planned":
+            return nxt
+        if start.get("provenance") == "declared" and _after(start.get("date"), today or date.today()):
+            return nxt
     for cy in tl.get("cycles") or []:
         start = cy.get("start") or {}
         # ASSUMPTION: the SDK leaves provenance None on a cycle with no dates at all;
@@ -116,7 +128,7 @@ def next_job(*, assessment: Optional[dict], timeline: Optional[dict], agro: Opti
         return {"kind": "irrigate", "when": None, "detail": {"scheduled": True}}
 
     status = crop_status(timeline)
-    planned = planned_cycle(timeline) or {}
+    planned = planned_cycle(timeline, today) or {}
     planned_date = _cycle_date(planned)
 
     if status == "none" and (planned.get("species") or planned.get("crop_id") or planned.get("crop")):

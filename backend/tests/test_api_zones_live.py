@@ -1,3 +1,4 @@
+from unittest.mock import patch
 """GET /assessments/zones: only live zones, differsFromParcel, parcelValues."""
 import pytest
 import respx
@@ -193,6 +194,29 @@ async def test_all_endpoint_hides_deleted_zones_and_flags_per_parcel():
     assert flags == {"z-a": False, "z-b": True, "z-c": False}
     assert data["parcelValues"]["p-1"]["cwsiValue"] == 0.5
     assert data["parcelValues"]["p-2"] == {}
+
+
+@pytest.mark.anyio
+async def test_all_endpoint_pages_zone_assessments_beyond_two_hundred():
+    import httpx
+    n = 250
+    zones = [_zone(f"z-{i}") for i in range(n)]
+    rows = [_zone_assessment(f"z-{i}", 0.5, 61) for i in range(n)]
+
+    def paged(request):
+        off = int(request.url.params["offset"])
+        lim = int(request.url.params["limit"])
+        return httpx.Response(200, json=rows[off:off + lim])
+
+    with respx.mock as mock, patch("app.api.assessments.ORION_PAGE_SIZE", 100):
+        mock.get(url__regex=r".*type=AgriParcelZone.*").respond(json=zones)
+        mock.get(url__regex=r".*type=CropHealthZoneAssessment.*").mock(side_effect=paged)
+        mock.get(url__regex=r".*type=CropHealthAssessment(&|$).*").respond(json=[_parcel_assessment()])
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test", headers=GATEWAY_HEADERS) as client:
+            resp = await client.get("/api/crop-health/assessments/zones/all")
+    assert resp.status_code == 200
+    assert len(resp.json()["zones"]) == n
 
 
 P = {"cwsiValue": 0.5, "compositeStressIndex": 60, "vigorIndex": 0.6, "overallSeverity": "LOW"}

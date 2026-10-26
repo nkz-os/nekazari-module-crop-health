@@ -291,3 +291,16 @@ def test_anomalous_senescence_is_a_vigor_surprise():
     assert surprise(assessment={"vigorCondition": "anomalous_senescence"}, history=[], alerts=[])["code"] \
         == "vigor_below_expected"
     assert surprise(assessment={"vigorCondition": "stressed"}, history=[], alerts=[]) is None
+
+
+def test_sdk_declared_future_sowing_is_sow_with_that_date():
+    tl = _sdk(_crop("a", plantingDate="2026-11-20", plantingDateSource="manual", species="HORVU"))
+    assert tl["next"]["start"]["provenance"] == "declared"
+    assert planned_cycle(tl, TODAY)["species"] == "HORVU"
+    job = _job(timeline=tl)
+    assert (job["kind"], job["when"], job["detail"]["species"]) == ("sow", "2026-11-20", "HORVU")
+
+
+def test_declared_next_in_the_past_is_not_planned():
+    tl = {"pending": None, "cycles": [], "next": {"species": "X", "start": {"date": "2026-10-01", "provenance": "declared"}}}
+    assert planned_cycle(tl, TODAY) is None

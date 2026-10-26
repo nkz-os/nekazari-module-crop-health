@@ -257,3 +257,34 @@ async def test_orion_down_returns_zero_summary():
         resp = await _get("/api/crop-health/parcels")
     assert resp.json()["parcels"] == []
     assert resp.json()["summary"] == {"surprises": 0, "jobsToday": 0, "noData": 0}
+
+
+@pytest.mark.anyio
+async def test_declared_future_sowing_sets_planned_crop():
+    tl = _sdk({"plantingDate": "2099-11-20", "plantingDateSource": "manual", "species": "HORVU"})
+    with respx.mock as mock, patch("app.services.worklist_sources.fetch_crop_timeline", _timelines({"p1": tl})):
+        _setup(mock, [], ["p1"])
+        mock.get(url__regex=r".*agro-status.*").respond(404)
+        mock.get(url__regex=r".*/api/timeseries/.*").respond(json={"data": []})
+        resp = await _get("/api/crop-health/parcels")
+    row = resp.json()["parcels"][0]
+    assert row["nextJob"]["kind"] == "sow" and row["nextJob"]["when"] == "2099-11-20"
+    assert row["plannedCrop"]["species"] == "HORVU"
+    assert row["plannedCrop"]["sowingDate"] == "2099-11-20"
+
+
+@pytest.mark.anyio
+async def test_request_deadline_bounds_many_hanging_parcels():
+    async def hang(*a, **kw):
+        await asyncio.sleep(30)
+
+    loop = asyncio.get_running_loop()
+    started = loop.time()
+    with respx.mock as mock, patch("app.services.worklist_sources.fetch_crop_timeline", hang), \
+         patch("app.api.assessments.WORKLIST_PARCEL_TIMEOUT_S", 10.0), \
+         patch("app.api.assessments.WORKLIST_REQUEST_DEADLINE_S", 0.5), \
+         patch("app.api.assessments.WORKLIST_MAX_CONCURRENCY", 1):
+        _setup(mock, [_assessment(f"p{i}") for i in range(4)], [f"p{i}" for i in range(4)])
+        resp = await asyncio.wait_for(_get("/api/crop-health/parcels"), timeout=5)
+    assert resp.status_code == 200 and len(resp.json()["parcels"]) == 4
+    assert loop.time() - started < 3

@@ -50,9 +50,9 @@ def test_sow_crop_uses_name_when_present():
 
 
 def test_harvest_from_forecast():
-    fc = {"status": "done", "season": {"harvest_date": "2026-07-01"}}
+    fc = {"status": "done", "season": {"harvest_date": "2027-07-01"}}
     job = _job(timeline=_active(), assessment={"recommendedAction": "NONE"}, forecast=fc)
-    assert (job["kind"], job["when"], job["detail"]) == ("harvest", "2026-07-01", {"date": "2026-07-01"})
+    assert (job["kind"], job["when"], job["detail"]) == ("harvest", "2027-07-01", {"date": "2027-07-01"})
 
 
 def test_unavailable_forecast_is_not_harvest():
@@ -145,3 +145,63 @@ def test_rank_reads_parcel_name():
     rows = [{"parcelName": "b", "cropStatus": "active", "hasData": True},
             {"parcelName": "a", "cropStatus": "active", "hasData": True}]
     assert [r["parcelName"] for r in sorted(rows, key=rank)] == ["a", "b"]
+
+
+def test_sow_overdue_is_today_future_keeps_date():
+    def tl(d):
+        return {"current": None, "pending": {"species": "TRZDU", "start": {"date": d, "provenance": "planned"}}}
+    assert _job(timeline=tl("2026-10-25"))["when"] == "today"
+    assert _job(timeline=tl("2026-10-26"))["when"] == "today"
+    assert _job(timeline=tl("2026-10-27"))["when"] == "2026-10-27"
+
+
+def test_harvest_overdue_is_today_future_keeps_date():
+    def job(d):
+        return _job(timeline=_active(), assessment={}, forecast={"status": "done", "season": {"harvest_date": d}})
+    assert job("2026-10-01")["when"] == "today"
+    assert job("2026-12-01")["when"] == "2026-12-01"
+
+
+def test_sow_without_date_has_no_when():
+    job = _job(timeline={"current": None, "pending": {"species": "TRZDU"}})
+    assert job["kind"] == "sow" and job["when"] is None
+
+
+def test_none_until_with_pending_date():
+    tl = _active()
+    tl["pending"] = {"start": {"date": "2026-12-01", "provenance": "planned"}}
+    job = _job(timeline=tl, assessment={})
+    assert (job["kind"], job["when"], job["detail"]) == ("none_until", "2026-12-01", {"date": "2026-12-01"})
+
+
+def test_cropless_dated_pending_without_species_is_none_until():
+    tl = {"current": None, "pending": {"start": {"date": "2026-12-01", "provenance": "planned"}}}
+    job = _job(timeline=tl)
+    assert (job["kind"], job["when"]) == ("none_until", "2026-12-01")
+
+
+def test_irrigate_beats_sow_and_sow_beats_harvest():
+    tl = {"current": None, "pending": {"species": "TRZDU", "start": {"date": "2026-11-10", "provenance": "planned"}}}
+    fc = {"status": "done", "season": {"harvest_date": "2026-12-01"}}
+    assert _job(assessment={"recommendedAction": "IRRIGATE_NOW"}, timeline=tl)["kind"] == "irrigate"
+    assert _job(timeline=tl, forecast=fc)["kind"] == "sow"
+
+
+def test_lang_selects_name():
+    tl = {"current": None, "pending": {"species": "TRZDU", "names": {"es": "Trigo", "en": "Durum wheat"},
+                                       "start": {"date": "2026-11-10", "provenance": "planned"}}}
+    assert _job(timeline=tl, lang="en")["detail"]["crop"] == "Durum wheat"
+    assert _job(timeline=tl, lang="fr")["detail"]["crop"] == "TRZDU"
+
+
+def test_new_high_alert_with_empty_previous_set_fires():
+    alerts = [{"id": "n1", "risk_level": "HIGH", "disease": "roya"}]
+    assert surprise(assessment={}, history=[], alerts=alerts, previous_alert_ids=set())["code"] == "new_high_alert"
+
+
+def test_rank_pending_assessment_is_no_data_group():
+    rows = [_row("pend", nextJob={"kind": "pending_assessment", "when": None}),
+            _row("nocrop", cropStatus="none"),
+            _row("calm"),
+            _row("future", nextJob={"kind": "sow", "when": "2026-11-10"})]
+    assert [r["name"] for r in sorted(rows, key=rank)] == ["future", "calm", "nocrop", "pend"]

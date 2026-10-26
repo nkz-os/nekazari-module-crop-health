@@ -64,6 +64,17 @@ def _pending_crop(pending: dict, lang: str) -> Optional[str]:
     return names.get(lang) or species
 
 
+def _when(iso: Optional[str], today: date) -> Optional[str]:
+    """Overdue or same-day dates are today's work; later dates stay ISO."""
+    if not iso:
+        return None
+    try:
+        due = date.fromisoformat(str(iso)[:10])
+    except ValueError:
+        return iso
+    return "today" if due <= today else iso
+
+
 def next_job(*, assessment: Optional[dict], timeline: Optional[dict], agro: Optional[dict],
              alerts: list[dict], forecast: Optional[dict], today: date,
              lang: str = DEFAULT_LANG) -> Optional[dict]:
@@ -87,11 +98,11 @@ def next_job(*, assessment: Optional[dict], timeline: Optional[dict], agro: Opti
         }
         if agro:
             detail["workability"] = ((agro.get("semaphores") or {}).get("workability"))
-        return {"kind": "sow", "when": pending_date, "detail": detail}
+        return {"kind": "sow", "when": _when(pending_date, today), "detail": detail}
 
     harvest_date = ((forecast or {}).get("season") or {}).get("harvest_date")
     if (forecast or {}).get("status") == "done" and harvest_date:
-        return {"kind": "harvest", "when": harvest_date, "detail": {"date": harvest_date}}
+        return {"kind": "harvest", "when": _when(harvest_date, today), "detail": {"date": harvest_date}}
 
     if status == "active" and assessment is None:
         return {"kind": "pending_assessment", "when": None, "detail": {}}
@@ -147,6 +158,8 @@ def _group(row: dict) -> int:
     if row.get("surprise"):
         return 0
     job = row.get("nextJob")
+    if job and job.get("kind") == "pending_assessment":
+        return 5
     # ASSUMPTION: a none_until entry is "nothing to do", so it is not work (calm group).
     if job and job.get("kind") != "none_until":
         return 1 if job.get("when") == "today" else 2

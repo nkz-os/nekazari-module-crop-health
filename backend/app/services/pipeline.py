@@ -2320,7 +2320,15 @@ async def _fetch_irrigation(
 
     settings = get_settings()
     urn = parcel_id if parcel_id.startswith("urn:") else f"urn:ngsi-ld:AgriParcel:{parcel_id}"
-    q = f'operationType=="irrigation";status=="completed";hasAgriParcel=="{urn}"'
+    # Orion compares a DateTime only through its @value, as a string: a day of
+    # margin on each side keeps timestamps with offsets inside the window, and
+    # the exact UTC day is checked below.
+    lo = (start - timedelta(days=1)).isoformat()
+    hi = (end + timedelta(days=2)).isoformat()
+    window = "|".join(
+        f'({attr}[@value]>="{lo}";{attr}[@value]<"{hi}")' for attr in ("endedAt", "startedAt")
+    )
+    q = f'operationType=="irrigation";status=="completed";hasAgriParcel=="{urn}";({window})'
     client = OrionClient(
         tenant_id,
         base_url=settings.orion_ld_url,

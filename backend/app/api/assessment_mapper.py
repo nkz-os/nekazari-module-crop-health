@@ -43,6 +43,16 @@ def nkz_value(entity: dict[str, Any], name: str) -> Any:
     return None
 
 
+def _rank_int(value: Any) -> int | None:
+    """A zone rank as int; accepts 3, "3" and "3.0", None on anything else."""
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return int(float(value))
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
 def extract_zone_id(entity: dict[str, Any]) -> str:
     zid = prop_value(entity, "zoneId")
     if zid:
@@ -278,6 +288,9 @@ def map_entity_to_assessment(entity: dict[str, Any]) -> dict[str, Any]:
         "underPanelWaterStressIndex": prop_value(entity, "underPanelWaterStressIndex"),
         "underPanelWaterStressFidelity": prop_value(entity, "underPanelWaterStressFidelity"),
         "underPanelWaterStressObservedAt": datetime_value(entity, "underPanelWaterStressObservedAt"),
+        "worstZoneRank": _rank_int(nkz_value(entity, "worstZoneRank")),
+        "worstZoneId": nkz_value(entity, "worstZoneId"),
+        "zoneSpread": nkz_value(entity, "zoneSpread"),
     }
 
 
@@ -322,7 +335,7 @@ def map_entity_to_zone_assessment(
     fidelity = nkz_value(entity, "inputFidelity")
     result["inputFidelity"] = fidelity if isinstance(fidelity, dict) else {}
     rank = nkz_value(entity, "zoneRank")
-    result["zoneRank"] = int(rank) if rank is not None else None
+    result["zoneRank"] = _rank_int(rank)
     result["zoneVersion"] = nkz_value(entity, "zoneVersion")
     result["wetnessClass"] = nkz_value(entity, "wetnessClass")
     if geometry is not None:

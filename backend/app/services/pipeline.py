@@ -2905,7 +2905,7 @@ async def _zone_eoproduct(tenant_id: str, zone_urn: str, attr: str, extra_q: str
     now = datetime.now(timezone.utc)
     since = (now - timedelta(days=ZONE_PRODUCT_MAX_AGE_DAYS)).strftime("%Y-%m-%d")
     # The date term keeps old products from filling the page; the age check below stays as a guard.
-    q = f'hasAgriParcelZone=="{zone_urn}";sensingDate>={since}' + extra_q
+    q = f'hasAgriParcelZone=="{zone_urn}";sensingDate>="{since}"' + extra_q
     entities = await _query_eoproducts(tenant_id, q, _ZONE_PRODUCT_LIMIT)
     fresh = []
     for e in entities:

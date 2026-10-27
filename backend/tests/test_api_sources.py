@@ -272,6 +272,23 @@ async def test_sources_detail_skips_daily_weather_entity():
             assert "12.5°C" in weather["summary"]
 
 
+@pytest.mark.anyio
+async def test_sources_detail_reads_air_temperature_alias():
+    """temperature and airTemperature share one IRI; the broker may return either name."""
+    with respx.mock as mock:
+        mock.get(url__regex=r".*type=WeatherObserved.*").respond(json=[
+            {"id": "urn:ngsi-ld:WeatherObserved:test-tenant:parcel-Parcela-78",
+             "airTemperature": 9.5, "dateObserved": "2026-06-07T10:00:00Z"},
+        ])
+        mock.get().respond(json=[])
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test", headers=GATEWAY_HEADERS) as client:
+            resp = await client.get("/api/crop-health/sources?parcelId=Parcela-78")
+            assert resp.status_code == 200
+            assert "9.5°C" in resp.json()["sources"]["weather"]["summary"]
+
+
 _parcel_seq = iter(range(1000))
 
 

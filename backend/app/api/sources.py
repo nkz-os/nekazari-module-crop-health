@@ -328,7 +328,10 @@ async def _detail_sources(request: Request, parcelId: str) -> dict:
     # Check WeatherObserved entity (SDM standard)
     if weather_obs:
         wo = weather_obs[0]
+        # temperature and airTemperature share one IRI; compaction picks either alias.
         temp = wo.get("temperature")
+        if temp is None:
+            temp = wo.get("airTemperature")
         if temp is not None:
             weather_parts.append(f"{temp}°C")
         et0 = wo.get("et0")

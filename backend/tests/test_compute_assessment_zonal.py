@@ -206,3 +206,14 @@ async def test_non_numeric_tmin_does_not_sink_the_assessment(monkeypatch):
     assert seen["zA"].gdd_accumulated == pytest.approx(300.0)
     assert seen["zB"].gdd_accumulated == pytest.approx(300.0)
 
+
+
+@pytest.mark.asyncio
+async def test_zone_gdd_clamped_at_zero(monkeypatch):
+    from app.services import zone_gdd
+
+    monkeypatch.setattr(zone_gdd, "zone_gdd_delta", lambda *a, **k: {"zA": -500.0})
+    zones = [Zone("zA", _Z0, urn="urn:ngsi-ld:AgriParcelZone:t:p1:zA", area_ha=1.0),
+             Zone("zB", _Z1, urn="urn:ngsi-ld:AgriParcelZone:t:p1:zB", area_ha=1.0)]
+    seen = await _run_gdd(monkeypatch, zones, {"zA": _day_rows(10, 8, 22), "zB": _day_rows(10, 9, 23)})
+    assert seen["zA"].gdd_accumulated == 0.0

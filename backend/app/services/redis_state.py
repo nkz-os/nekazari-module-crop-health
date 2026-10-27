@@ -387,8 +387,6 @@ class RedisState:
         zone_id: str | None = None,
         zone_version: str | None = None,
         source: str | None = None,
-        deficit_mm: float | None = None,
-        raw_mm: float | None = None,
     ) -> bool:
         """Store the soil water (mm) at the end of ``day``; TTL 40 days.
 
@@ -410,8 +408,6 @@ class RedisState:
             "anchor_root_depth_mm": anchor_root_depth_mm,
             "zone_version": zone_version,
             "source": source,
-            "deficit_mm": deficit_mm,
-            "raw_mm": raw_mm,
         }
         value.update({k: v for k, v in extras.items() if v is not None})
         return await self.set_json(self.balance_key(tenant_id, parcel_id, zone_id), value, 40 * 86400)

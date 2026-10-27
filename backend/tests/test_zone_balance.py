@@ -112,10 +112,7 @@ async def test_zones_with_own_et0_diverge_and_parcel_is_weighted_mean():
     assert parcel["source"] == "zones_weighted"
     assert parcel["date"] == "2026-10-23"
     assert parcel["sw_mm"] == pytest.approx(0.75 * out["zA"].sw_mm + 0.25 * out["zB"].sw_mm, abs=1e-3)
-    assert parcel["deficit_mm"] == pytest.approx(
-        0.75 * out["zA"].deficit_mm + 0.25 * out["zB"].deficit_mm, abs=1e-3
-    )
-    assert parcel["raw_mm"] == pytest.approx(0.75 * out["zA"].raw_mm + 0.25 * out["zB"].raw_mm, abs=1e-3)
+    assert "deficit_mm" not in parcel and "raw_mm" not in parcel
     assert inputs["zA"].fidelity["balance"] == "zone_specific"
 
 
@@ -194,15 +191,57 @@ async def test_probe_in_zone_a_changes_only_zone_a():
 
 
 @pytest.mark.asyncio
-async def test_probe_without_location_corrects_the_parcel_key():
+async def test_unlocated_probe_corrects_every_zone_and_the_parcel_state():
     probe = ParcelReading(device_id="dev-nolocation", ts=NOW_TS - 60, value=15.0, unit_code="P1")
+    ref_redis = ZoneFakeRedis()
+    zones, inputs = _zones_and_inputs()
+    ref = await _run(ref_redis, zones, inputs)
+
     redis = ZoneFakeRedis(readings=[probe])
     zones, inputs = _zones_and_inputs()
     out = await _run(redis, zones, inputs)
+    for zid in ("zA", "zB"):
+        assert out[zid].sw_mm != pytest.approx(ref[zid].sw_mm, abs=0.01)
+        assert redis.store[f"swd:{TENANT}:{PARCEL}:{zid}"]["anchor_sw_mm"] == pytest.approx(out[zid].sw_mm)
+        assert inputs[zid].fidelity["balance"] == "iot_sensor"
     parcel = redis.store[f"swd:{TENANT}:{PARCEL}"]
-    weighted = 0.75 * out["zA"].sw_mm + 0.25 * out["zB"].sw_mm
-    assert parcel["sw_mm"] != pytest.approx(weighted, abs=0.01)
-    assert inputs["zA"].fidelity["balance"] == "zone_specific"
+    assert parcel["sw_mm"] == pytest.approx(0.75 * out["zA"].sw_mm + 0.25 * out["zB"].sw_mm, abs=1e-3)
+
+
+@pytest.mark.asyncio
+async def test_zone_version_change_without_parcel_state_starts_fresh(caplog):
+    redis = ZoneFakeRedis()
+    await redis.set_balance_state(
+        TENANT, PARCEL, "2026-10-23", 10.0, zone_id="zA", zone_version="aaaaaaaa", root_depth_mm=ROOT
+    )
+
+    async def fetch(tenant_id, parcel_id, start, end):
+        fetch.start = start
+        return await _fetch(tenant_id, parcel_id, start, end)
+
+    with caplog.at_level("INFO"):
+        await advance_daily_balance(
+            redis, TENANT, PARCEL, soil=SOIL, root_depth_mm=ROOT, depletion_p=0.5, kc=1.0,
+            today=TODAY, fetch=fetch, zone_id="zA", zone_version="bbbbbbbb",
+        )
+    assert fetch.start == date(2026, 9, 24)  # spin-up, as a zone with no state
+    assert "fallback=fresh" in caplog.text and "zone_version_changed" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_zone_et0_overrides_parcel_et0_on_shared_days():
+    async def run(eto_daily):
+        redis = ZoneFakeRedis()
+        await redis.set_balance_state(TENANT, PARCEL, "2026-10-20", 60.0, zone_id="zA",
+                                      zone_version="aaaaaaaa", root_depth_mm=ROOT)
+        return await advance_daily_balance(
+            redis, TENANT, PARCEL, soil=SOIL, root_depth_mm=ROOT, depletion_p=0.5, kc=1.0,
+            today=TODAY, fetch=_fetch, zone_id="zA", zone_version="aaaaaaaa", eto_daily=eto_daily,
+        )
+
+    base = await run(None)  # parcel ET0 3 mm/day
+    hot = await run({date(2026, 10, 21): 6.0})
+    assert hot.sw_mm < base.sw_mm
 
 
 def test_zone_eto_daily_skips_bad_rows():

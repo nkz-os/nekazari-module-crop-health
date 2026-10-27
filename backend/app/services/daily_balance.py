@@ -36,6 +36,16 @@ def _lock_key(tenant_id: str, parcel_id: str, zone_id: str | None = None) -> str
     return f"{base}:{zone_id}" if zone_id else base
 
 
+def soil_with_overrides(soil, fc: float | None, wp: float | None):
+    """The soil with a zone's own field capacity / wilting point where given."""
+    update = {}
+    if fc is not None:
+        update["field_capacity"] = fc
+    if wp is not None:
+        update["wilting_point"] = wp
+    return soil.model_copy(update=update) if update else soil
+
+
 def _zone_kwargs(zone_id: str | None) -> dict:
     """Extra Redis arguments for a zone's state; none for the parcel's (as before zones)."""
     return {"zone_id": zone_id} if zone_id else {}
@@ -180,11 +190,7 @@ async def advance_daily_balance(
     and root depth stay the parcel's. A stored ``zone_version`` different from
     ``zone_version`` (the zone changed) restarts from the parcel's state.
     """
-    if fc is not None or wp is not None:
-        soil = soil.model_copy(update={
-            **({"field_capacity": fc} if fc is not None else {}),
-            **({"wilting_point": wp} if wp is not None else {}),
-        })
+    soil = soil_with_overrides(soil, fc, wp)
     zkw = _zone_kwargs(zone_id)
     key = _lock_key(tenant_id, parcel_id, zone_id)
     acquired = await redis_state.try_lock(key, BALANCE_LOCK_TTL_S)
@@ -202,8 +208,13 @@ async def advance_daily_balance(
                     tenant_id, parcel_id, zone_id, state.get("zone_version"), zone_version,
                 )
                 parcel_state = await redis_state.get_balance_state(tenant_id, parcel_id)
-                if parcel_state is not None:
-                    state = parcel_state
+                if parcel_state is None:
+                    logger.info(
+                        "daily_balance: reason=zone_version_changed fallback=fresh tenant=%s parcel=%s zone=%s",
+                        tenant_id, parcel_id, zone_id,
+                    )
+                # No parcel state: the old zone state is dropped too (fresh anchor).
+                state = parcel_state
         except StoreError as exc:
             logger.warning(
                 "daily_balance: state unreadable for %s/%s, skipping: %s", tenant_id, parcel_id, exc

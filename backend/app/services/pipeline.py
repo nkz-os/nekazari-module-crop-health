@@ -58,6 +58,7 @@ from app.services.daily_balance import (
     balance_from_stored,
     correct_balance_state,
     day_flows,
+    soil_with_overrides,
 )
 from app.services.fiware_publisher import publish_assessment
 from app.services.meteo_context import resolve_meteo_context
@@ -2207,8 +2208,6 @@ async def _write_weighted_parcel_state(
             min(date.fromisoformat(states[z]["date"]) for z in ids).isoformat(),
             mean({z: float(states[z]["sw_mm"]) for z in ids}),
             root_depth_mm=mean({z: states[z].get("root_depth_mm") for z in ids}),
-            deficit_mm=mean({z: balances[z].deficit_mm for z in ids}),
-            raw_mm=mean({z: balances[z].raw_mm for z in ids}),
             anchor_date=anchors.pop() if anchored else None,
             anchor_sw_mm=mean({z: states[z].get("anchor_sw_mm") for z in ids}) if anchored else None,
             anchor_root_depth_mm=(
@@ -2240,18 +2239,17 @@ async def _scheduled_zone_balances(
     today = crop_ctx["now"].date()
     out: dict[str, SoilWaterBalanceResult] = {}
     zone_states: dict[str, dict] = {}
-    located: set[str] = set()
+    # Probes inside a zone are that zone's; the rest (no location, or outside every
+    # zone) are parcel-representative and correct every zone.
+    located: set[str] = {
+        d["device_id"] for zi in inputs.values() for d in zi.devices if d.get("device_id")
+    }
     for z in zones:
         zi = inputs.get(z.zone_id)
         eto_daily = _zone_eto_daily(zi.weather_daily) if zi else {}
         fc, wp = _zone_soil_values(zi.soil if zi else None)
         zone_specific = bool(eto_daily) or fc is not None or wp is not None
-        soil = parcel_soil
-        if fc is not None or wp is not None:
-            soil = parcel_soil.model_copy(update={
-                **({"field_capacity": fc} if fc is not None else {}),
-                **({"wilting_point": wp} if wp is not None else {}),
-            })
+        soil = soil_with_overrides(parcel_soil, fc, wp)
         try:
             balance = await advance_daily_balance(
                 redis_state, tenant_id, parcel_short,
@@ -2269,12 +2267,16 @@ async def _scheduled_zone_balances(
         if balance is None:
             continue
         device_ids = {d["device_id"] for d in (zi.devices if zi else []) if d.get("device_id")}
-        located |= device_ids
         corrected = None
         if device_ids:
             corrected = await _correct_from_open_field(
                 redis_state, tenant_id, parcel_short, soil, balance.root_depth_mm, now_ts,
                 zone_id=z.zone_id, only_devices=device_ids,
+            )
+        if corrected is None:
+            corrected = await _correct_from_open_field(
+                redis_state, tenant_id, parcel_short, soil, balance.root_depth_mm, now_ts,
+                zone_id=z.zone_id, exclude_devices=located,
             )
         if corrected is not None:
             balance = _corrected_result(balance, corrected, soil, balance.root_depth_mm, depletion_p)
@@ -2296,18 +2298,9 @@ async def _scheduled_zone_balances(
             zone_states[z.zone_id] = state
 
     try:
-        if zone_states and await _write_weighted_parcel_state(
-            redis_state, tenant_id, parcel_short, zone_states, out, zone_weights(zones)
-        ):
-            # Probes outside every zone (no location) still correct the parcel's state.
-            root = next(
-                (float(st["root_depth_mm"]) for st in zone_states.values()
-                 if isinstance(st.get("root_depth_mm"), (int, float)) and st["root_depth_mm"] > 0),
-                crop_ctx["root_depth_mm"],
-            )
-            await _correct_from_open_field(
-                redis_state, tenant_id, parcel_short, parcel_soil, root, now_ts,
-                exclude_devices=located,
+        if zone_states:
+            await _write_weighted_parcel_state(
+                redis_state, tenant_id, parcel_short, zone_states, out, zone_weights(zones)
             )
     except Exception as exc:  # noqa: BLE001 -- the zones' balances stand without the parcel state
         logger.warning("daily_balance: parcel state of %s/%s not written: %s", tenant_id, parcel_short, exc)

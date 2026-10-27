@@ -446,6 +446,10 @@ class CropHealthAssessment(BaseModel):
     input_fidelity: dict[str, str] | None = None
     zone_version: str | None = None
     zone_rank: int | None = None
+    # Zone terrain wetness (hydrology TWI stats); None when the zone has none.
+    twi_mean: float | None = None
+    wet_fraction: float | None = None
+    wetness_class: str | None = None
     # Parcel rollup only (zonal mode): the worst zone and the stress spread across zones.
     worst_zone_id: str | None = None
     worst_zone_rank: int | None = None
@@ -719,6 +723,12 @@ class CropHealthAssessment(BaseModel):
         entity["zoneId"] = {"type": "Property", "value": zone}
         if self.input_fidelity:
             entity["nkz:inputFidelity"] = {"type": "Property", "value": dict(self.input_fidelity)}
+        if self.twi_mean is not None:
+            entity["nkz:twiMean"] = {"type": "Property", "value": self.twi_mean}
+        if self.wet_fraction is not None:
+            entity["nkz:wetFraction"] = {"type": "Property", "value": self.wet_fraction}
+        if self.wetness_class is not None:
+            entity["nkz:wetnessClass"] = {"type": "Property", "value": self.wetness_class}
         if self.zone_version is not None:
             entity["nkz:zoneVersion"] = {"type": "Property", "value": self.zone_version}
         if self.zone_rank is not None:

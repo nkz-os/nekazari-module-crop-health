@@ -773,6 +773,7 @@ async def _run_engines(
     parcel_balance: SoilWaterBalanceResult | None = None,
     zone_urn: str | None = None,
     fidelity_out: dict | None = None,
+    wetness_class: str | None = None,
 ) -> CropHealthAssessment:
     """Shared engine-fusion core.
 
@@ -868,6 +869,7 @@ async def _run_engines(
                 excess_mm=swb.excess_mm,
                 ksat_mm_h=soil.ksat_mm_h,
                 scs_group=soil.scs_hydrologic_group,
+                wetness_class=wetness_class,
             )
             assessment.waterlogging_risk = wlr
 
@@ -1825,6 +1827,8 @@ async def _assess_zone(
     zone_ctx: dict | None = None,
     gdd_delta: float = 0.0,
     input_fidelity: dict[str, str] | None = None,
+    zone_soil: dict | None = None,
+    zone_twi: dict | None = None,
 ) -> CropHealthAssessment:
     """Compute one zone's assessment, reusing the existing engine core.
 
@@ -1871,6 +1875,10 @@ async def _assess_zone(
         zone_version=None if whole else zone.zone_version,
         zone_rank=None if whole else zone.zone_rank,
     )
+    if not whole and zone_twi:
+        assessment.twi_mean = zone_twi.get("twiMean")
+        assessment.wet_fraction = zone_twi.get("wetFraction")
+        assessment.wetness_class = zone_twi.get("wetnessClass")
     used_fidelity: dict[str, str] = {}
 
     if gdd is not None and thresholds:
@@ -1891,12 +1899,13 @@ async def _assess_zone(
         crop_context=None,
         variety_name=variety_name,
         gdd=gdd,
-        soil=crop_ctx["soil"],
+        soil=_zone_soil_model(crop_ctx["soil"], None if whole else zone_soil),
         root_depth_mm=crop_ctx["root_depth_mm"],
         parcel_balance=parcel_balance,
         now=now,
         stage_table=thresholds,
         publish=False,
+        wetness_class=None if whole or not zone_twi else zone_twi.get("wetnessClass"),
         et0_fidelity=meteo.fidelity.get("et0_mm", "unavailable"),
         zone_urn=None if whole else zone.urn,
         fidelity_out=used_fidelity,
@@ -2120,6 +2129,8 @@ async def compute_assessment(
                 zone_ctx=zone_meteo_ctx(z, now),
                 gdd_delta=gdd_deltas.get(z.zone_id, 0.0),
                 input_fidelity=zi.fidelity if zi else None,
+                zone_soil=zi.soil if zi else None,
+                zone_twi=zi.twi if zi else None,
             )
         except Exception as exc:  # best-effort per zone — one bad zone must not sink the rest
             logger.warning("compute_assessment: zone %s failed for %s — skipped: %s", z.zone_id, parcel_short, exc)
@@ -2246,6 +2257,22 @@ def _zone_eto_daily(weather_daily: list[dict]) -> dict[date, float]:
         except (KeyError, ValueError):
             continue
     return out
+
+
+def _zone_soil_model(soil, zone_soil: dict | None):
+    """The parcel soil with the zone's own FC/WP/Ksat/hydrologic group where given."""
+    if not zone_soil:
+        return soil
+    fc, wp = _zone_soil_values(zone_soil)
+    soil = soil_with_overrides(soil, fc, wp)
+    update = {}
+    ksat = zone_soil.get("ksatSaturated")
+    if isinstance(ksat, (int, float)) and not isinstance(ksat, bool) and ksat > 0:
+        update["ksat_mm_h"] = float(ksat)
+    grp = zone_soil.get("hydrologicGroup")
+    if isinstance(grp, str) and grp in ("A", "B", "C", "D"):
+        update["scs_hydrologic_group"] = grp
+    return soil.model_copy(update=update) if update else soil
 
 
 def _zone_soil_values(zone_soil: dict | None) -> tuple[float | None, float | None]:

@@ -15,6 +15,18 @@ def _no_orion_cleanup(monkeypatch):
     monkeypatch.setattr(pipeline, "_clear_stale_water_stress", _noop)
 
 
+@pytest.fixture(autouse=True)
+def _no_zone_soil_twi_calls(monkeypatch):
+    """No real soil/hydrology request from the per-zone inputs."""
+    from app.services import context_client
+
+    async def _empty(*a, **k):
+        return {}
+
+    monkeypatch.setattr(context_client, "get_zone_soil", _empty)
+    monkeypatch.setattr(context_client, "get_zone_twi", _empty)
+
+
 _Z0 = {"type": "Polygon", "coordinates": [[[0, 0], [0, 1], [1, 1], [1, 0], [0, 0]]]}
 _Z1 = {"type": "Polygon", "coordinates": [[[1, 0], [1, 1], [2, 1], [2, 0], [1, 0]]]}
 

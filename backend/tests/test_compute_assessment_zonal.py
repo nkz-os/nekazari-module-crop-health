@@ -195,3 +195,14 @@ async def test_zone_gdd_is_parcel_plus_delta(monkeypatch):
 async def test_whole_parcel_gdd_unchanged(monkeypatch):
     seen = await _run_gdd(monkeypatch, [Zone("parcel", _Z0)], {"parcel": _day_rows(10, 8, 22)})
     assert seen["parcel"].gdd_accumulated == pytest.approx(300.0)
+
+
+@pytest.mark.asyncio
+async def test_non_numeric_tmin_does_not_sink_the_assessment(monkeypatch):
+    zones = [Zone("zA", _Z0, urn="urn:ngsi-ld:AgriParcelZone:t:p1:zA", area_ha=1.0),
+             Zone("zB", _Z1, urn="urn:ngsi-ld:AgriParcelZone:t:p1:zB", area_ha=1.0)]
+    bad = [{"date": "2026-05-01", "tMin": "n/a", "tMax": 22}] * 10
+    seen = await _run_gdd(monkeypatch, zones, {"zA": bad, "zB": _day_rows(10, 9, 23)})
+    assert seen["zA"].gdd_accumulated == pytest.approx(300.0)
+    assert seen["zB"].gdd_accumulated == pytest.approx(300.0)
+

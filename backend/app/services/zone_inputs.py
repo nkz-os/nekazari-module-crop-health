@@ -28,6 +28,8 @@ class ZoneInputs:
     soil: dict | None = None
     twi: dict | None = None
     fidelity: dict[str, str] = field(default_factory=dict)
+    # Raw located sensor items (``device_id``, ``lon``, ``lat``, ...) inside the zone.
+    devices: list[dict] = field(default_factory=list)
 
 
 def zone_meteo_ctx(zone: Zone, now: datetime) -> dict:
@@ -88,11 +90,13 @@ async def gather_zone_inputs(
     for z in zones:
         rows = list(daily.get(z.zone_id) or [])
         weather = zone_meteo_ctx(z, now)
+        in_zone = sensors_in_zone(z, sensors)
         out[z.zone_id] = ZoneInputs(
             zone=z,
+            devices=in_zone,
             weather=weather,
             weather_daily=rows,
-            sensors=consolidate_sensor_readings(sensors_in_zone(z, sensors)),
+            sensors=consolidate_sensor_readings(in_zone),
             fidelity={
                 "meteo": "zone_specific" if weather else "parcel_inherited",
                 "gdd": "zone_specific" if rows else "parcel_inherited",

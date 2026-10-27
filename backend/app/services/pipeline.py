@@ -50,6 +50,7 @@ from app.schemas import (
 from app.services import context_client
 from app.services.context_client import get_phenology_params
 from app.services.daily_balance import (
+    DAY_FLOWS,
     SPINUP_DAYS,
     STATE_EXTRAS,
     advance_daily_balance,
@@ -400,22 +401,38 @@ def _awc_mm(soil, root_depth_mm: float) -> float:
 
 
 async def _correct_from_open_field(
-    redis_state, tenant_id: str, parcel_id: str, soil, root_depth_mm: float, now_ts: float
+    redis_state, tenant_id: str, parcel_id: str, soil, root_depth_mm: float, now_ts: float,
+    zone_id: str | None = None,
+    only_devices: set[str] | None = None,
+    exclude_devices: set[str] | None = None,
 ) -> float | None:
-    """Pull the stored balance toward fresh open-field probes; None when nothing was corrected."""
+    """Pull the stored balance toward fresh open-field probes; None when nothing was corrected.
+
+    ``zone_id`` corrects that zone's state only, with the probes of ``only_devices``
+    (the devices inside the zone); ``exclude_devices`` drops the probes already
+    attributed to a zone. Without them the parcel's state is corrected, as before zones.
+    """
     if redis_state is None:
         return None
     readings = await _read_parcel_readings(
         redis_state, tenant_id, parcel_id, OPEN_FIELD, "soilMoisture", now_ts
     )
+    if only_devices is not None:
+        readings = [r for r in readings if r.device_id in only_devices]
+    if exclude_devices:
+        readings = [r for r in readings if r.device_id not in exclude_devices]
     if not readings:
         return None
     corrected = await correct_balance_state(
         redis_state, tenant_id, parcel_id, readings, soil, root_depth_mm,
         _awc_mm(soil, root_depth_mm), now_ts,
+        **({"zone_id": zone_id} if zone_id else {}),
     )
     if corrected is not None:
-        logger.info("daily_balance: %s/%s corrected by probes to %.2f mm", tenant_id, parcel_id, corrected)
+        logger.info(
+            "daily_balance: %s/%s%s corrected by probes to %.2f mm",
+            tenant_id, parcel_id, f"/{zone_id}" if zone_id else "", corrected,
+        )
     return corrected
 
 
@@ -1807,7 +1824,7 @@ async def _assess_zone(
     # Parcel GDD stays authoritative; the zone adds its topographic deviation.
     gdd = crop_ctx["gdd"]
     if gdd is not None:
-        gdd = gdd + gdd_delta
+        gdd = max(0.0, gdd + gdd_delta)
     species = crop_ctx["species"]
     variety_name = crop_ctx["variety_name"]
     now = crop_ctx["now"]
@@ -1952,11 +1969,6 @@ async def compute_assessment(
     except RuntimeError as exc:
         logger.warning("compute_assessment: no Redis for %s/%s, no daily balance: %s", tenant_id, parcel_short, exc)
         redis_state = None
-    parcel_balance = await _scheduled_balance(
-        redis_state, tenant_id, parcel_short, soil, root_depth_mm, depletion_p,
-        phenology, now.date(), now_ts,
-    )
-
     crop_ctx = {
         "species": species,
         "variety_name": variety_name,
@@ -1983,13 +1995,33 @@ async def compute_assessment(
 
     from app.services.zonation import zone_weights
     from app.services.zone_gdd import zone_gdd_delta
-    gdd_deltas = zone_gdd_delta(
-        {zid: zi.weather_daily for zid, zi in inputs.items() if zi.weather_daily},
-        zone_weights(zones),
-        thresholds.base_temp if thresholds else 10.0,
-        thresholds.upper_cutoff if thresholds and thresholds.upper_cutoff is not None
-        else _DEFAULT_UPPER_CUTOFF,
-    )
+    try:
+        gdd_deltas = zone_gdd_delta(
+            {zid: zi.weather_daily for zid, zi in inputs.items() if zi.weather_daily},
+            zone_weights(zones),
+            thresholds.base_temp if thresholds else 10.0,
+            thresholds.upper_cutoff if thresholds and thresholds.upper_cutoff is not None
+            else _DEFAULT_UPPER_CUTOFF,
+        )
+    except Exception as exc:  # noqa: BLE001 -- a bad series must not sink the assessment
+        logger.warning("compute_assessment: zone GDD delta failed for %s, none applied: %s", parcel_short, exc)
+        gdd_deltas = {}
+
+    # Daily soil water balance: stepped here, once per closed day, before the zones.
+    # Whole-parcel mode steps the parcel's own state; zones each step their own and
+    # the parcel state becomes their area-weighted mean.
+    parcel_balance = None
+    zone_balances: dict[str, SoilWaterBalanceResult] = {}
+    if whole:
+        parcel_balance = await _scheduled_balance(
+            redis_state, tenant_id, parcel_short, soil, root_depth_mm, depletion_p,
+            phenology, now.date(), now_ts,
+        )
+    else:
+        zone_balances = await _scheduled_zone_balances(
+            parcel_id, parcel_short, tenant_id, zones, inputs, crop_ctx,
+            redis_state=redis_state, depletion_p=depletion_p, now_ts=now_ts,
+        )
 
     zone_results: list[CropHealthAssessment] = []
     for z in zones:
@@ -1998,7 +2030,7 @@ async def compute_assessment(
         try:
             za = await _assess_zone(
                 z, parcel_id, parcel_short, tenant_id, crop_ctx, zone_sensor_ctx, whole,
-                parcel_balance=parcel_balance,
+                parcel_balance=parcel_balance if whole else zone_balances.get(z.zone_id),
                 zone_ctx=zone_meteo_ctx(z, now),
                 gdd_delta=gdd_deltas.get(z.zone_id, 0.0),
             )
@@ -2099,6 +2131,13 @@ async def _scheduled_balance(
     corrected = await _correct_from_open_field(redis_state, tenant_id, parcel_id, soil, root, now_ts)
     if corrected is None:
         return balance
+    return _corrected_result(balance, corrected, soil, root, depletion_p)
+
+
+def _corrected_result(
+    balance: SoilWaterBalanceResult, corrected: float, soil, root: float, depletion_p: float
+) -> SoilWaterBalanceResult:
+    """The balance with its water replaced by a probe-corrected value."""
     result = balance_from_state(corrected, soil, root, depletion_p, day_flows(balance))
     # The probe corrects the water left, not the day's drainage: keep its waterlogging input.
     result = dataclasses.replace(result, excess_mm=balance.excess_mm)
@@ -2106,6 +2145,173 @@ async def _scheduled_balance(
         # The probe corrects the water, not the lag of the stored day.
         result = dataclasses.replace(result, soil_moisture_confidence="low")
     return result
+
+
+def _zone_eto_daily(weather_daily: list[dict]) -> dict[date, float]:
+    """The zone's daily ET0 series as ``{day: mm}``; rows without a usable value are skipped."""
+    out: dict[date, float] = {}
+    for row in weather_daily or []:
+        eto = row.get("eto")
+        if isinstance(eto, bool) or not isinstance(eto, (int, float)):
+            continue
+        try:
+            out[date.fromisoformat(str(row["date"])[:10])] = float(eto)
+        except (KeyError, ValueError):
+            continue
+    return out
+
+
+def _zone_soil_values(zone_soil: dict | None) -> tuple[float | None, float | None]:
+    """Zone field capacity and wilting point when the zone has its own soil."""
+    if not zone_soil:
+        return None, None
+    vals = []
+    for key in ("fieldCapacity", "wiltingPoint"):
+        v = zone_soil.get(key)
+        vals.append(float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else None)
+    return vals[0], vals[1]
+
+
+async def _write_weighted_parcel_state(
+    redis_state, tenant_id: str, parcel_id: str, zone_states: dict[str, dict],
+    balances: dict[str, SoilWaterBalanceResult], weights: dict[str, float],
+) -> bool:
+    """Parcel state = area-weighted mean of the zones' states (``source="zones_weighted"``).
+
+    The date is the oldest zone's; the anchor is kept only when every zone shares its day.
+    """
+    from app.services.daily_balance import BALANCE_LOCK_TTL_S, _lock_key
+
+    ids = [z for z in zone_states if z in balances]
+    if not ids:
+        return False
+    total = sum(weights.get(z, 0.0) for z in ids)
+    w = {z: (weights.get(z, 0.0) / total if total > 0 else 1.0 / len(ids)) for z in ids}
+
+    def mean(values: dict[str, float | None]) -> float | None:
+        if any(v is None for v in values.values()):
+            return None
+        return round(sum(w[z] * v for z, v in values.items()), 4)
+
+    states = {z: zone_states[z] for z in ids}
+    anchors = {states[z].get("anchor_date") for z in ids}
+    anchored = len(anchors) == 1 and None not in anchors
+    flows = {k: mean({z: states[z].get(k) for z in ids}) for k in DAY_FLOWS}
+    key = _lock_key(tenant_id, parcel_id)
+    if not await redis_state.try_lock(key, BALANCE_LOCK_TTL_S):
+        logger.info("daily_balance: lock not acquired for %s/%s, parcel state not written", tenant_id, parcel_id)
+        return False
+    try:
+        return await redis_state.set_balance_state(
+            tenant_id, parcel_id,
+            min(date.fromisoformat(states[z]["date"]) for z in ids).isoformat(),
+            mean({z: float(states[z]["sw_mm"]) for z in ids}),
+            root_depth_mm=mean({z: states[z].get("root_depth_mm") for z in ids}),
+            deficit_mm=mean({z: balances[z].deficit_mm for z in ids}),
+            raw_mm=mean({z: balances[z].raw_mm for z in ids}),
+            anchor_date=anchors.pop() if anchored else None,
+            anchor_sw_mm=mean({z: states[z].get("anchor_sw_mm") for z in ids}) if anchored else None,
+            anchor_root_depth_mm=(
+                mean({z: states[z].get("anchor_root_depth_mm") for z in ids}) if anchored else None
+            ),
+            source="zones_weighted",
+            **flows,
+        )
+    finally:
+        await redis_state.unlock(key)
+
+
+async def _scheduled_zone_balances(
+    parcel_id: str, parcel_short: str, tenant_id: str, zones: list, inputs: dict,
+    crop_ctx: dict, *, redis_state, depletion_p: float, now_ts: float,
+) -> dict[str, SoilWaterBalanceResult]:
+    """Step every zone's own balance, correct it with its probes, then write the parcel state.
+
+    Rain, irrigation, Kc and root depth are the parcel's; ET0 and FC/WP are the zone's
+    when it has them. Sets ``inputs[z].fidelity["balance"]``. Fail-safe per zone.
+    """
+    from app.services.zonation import zone_weights
+
+    if redis_state is None:
+        return {}
+    phenology = crop_ctx["phenology"]
+    kc = phenology.kc if phenology else context_client._DEFAULT_PARAMS.kc
+    parcel_soil = crop_ctx["soil"]
+    today = crop_ctx["now"].date()
+    out: dict[str, SoilWaterBalanceResult] = {}
+    zone_states: dict[str, dict] = {}
+    located: set[str] = set()
+    for z in zones:
+        zi = inputs.get(z.zone_id)
+        eto_daily = _zone_eto_daily(zi.weather_daily) if zi else {}
+        fc, wp = _zone_soil_values(zi.soil if zi else None)
+        zone_specific = bool(eto_daily) or fc is not None or wp is not None
+        soil = parcel_soil
+        if fc is not None or wp is not None:
+            soil = parcel_soil.model_copy(update={
+                **({"field_capacity": fc} if fc is not None else {}),
+                **({"wilting_point": wp} if wp is not None else {}),
+            })
+        try:
+            balance = await advance_daily_balance(
+                redis_state, tenant_id, parcel_short,
+                soil=parcel_soil, root_depth_mm=crop_ctx["root_depth_mm"], depletion_p=depletion_p,
+                kc=kc, today=today, fetch=_fetch_daily_water, fetch_irrigation=_fetch_irrigation,
+                zone_id=z.zone_id, zone_version=z.zone_version,
+                eto_daily=eto_daily or None, fc=fc, wp=wp,
+            )
+        except Exception as exc:  # noqa: BLE001 -- fail-safe: no balance for this zone
+            logger.warning(
+                "daily_balance: step failed for %s/%s zone %s, no balance: %s",
+                tenant_id, parcel_short, z.zone_id, exc,
+            )
+            continue
+        if balance is None:
+            continue
+        device_ids = {d["device_id"] for d in (zi.devices if zi else []) if d.get("device_id")}
+        located |= device_ids
+        corrected = None
+        if device_ids:
+            corrected = await _correct_from_open_field(
+                redis_state, tenant_id, parcel_short, soil, balance.root_depth_mm, now_ts,
+                zone_id=z.zone_id, only_devices=device_ids,
+            )
+        if corrected is not None:
+            balance = _corrected_result(balance, corrected, soil, balance.root_depth_mm, depletion_p)
+        if zi is not None:
+            zi.fidelity["balance"] = (
+                "iot_sensor" if corrected is not None
+                else "zone_specific" if zone_specific else "parcel_inherited"
+            )
+        out[z.zone_id] = balance
+        try:
+            state = await redis_state.get_balance_state(tenant_id, parcel_short, zone_id=z.zone_id)
+        except StoreError as exc:
+            logger.warning(
+                "daily_balance: zone state unreadable for %s/%s/%s: %s",
+                tenant_id, parcel_short, z.zone_id, exc,
+            )
+            state = None
+        if state is not None:
+            zone_states[z.zone_id] = state
+
+    try:
+        if zone_states and await _write_weighted_parcel_state(
+            redis_state, tenant_id, parcel_short, zone_states, out, zone_weights(zones)
+        ):
+            # Probes outside every zone (no location) still correct the parcel's state.
+            root = next(
+                (float(st["root_depth_mm"]) for st in zone_states.values()
+                 if isinstance(st.get("root_depth_mm"), (int, float)) and st["root_depth_mm"] > 0),
+                crop_ctx["root_depth_mm"],
+            )
+            await _correct_from_open_field(
+                redis_state, tenant_id, parcel_short, parcel_soil, root, now_ts,
+                exclude_devices=located,
+            )
+    except Exception as exc:  # noqa: BLE001 -- the zones' balances stand without the parcel state
+        logger.warning("daily_balance: parcel state of %s/%s not written: %s", tenant_id, parcel_short, exc)
+    return out
 
 
 async def _build_sensor_ctx(entity_id: str, redis_state) -> dict:

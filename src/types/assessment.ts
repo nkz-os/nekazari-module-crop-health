@@ -79,6 +79,9 @@ export interface AssessmentData {
   vigorIndexUsed?: string;
   vigorDataFidelity?: string;
   dataFidelity?: string;
+  worstZoneRank?: number | null;
+  worstZoneId?: string | null;
+  zoneSpread?: number | null;
   wueStatus?: string;
   wueKgM3?: number;
   wueBiomassKg?: number;
@@ -174,6 +177,10 @@ export interface ZoneAssessmentData extends AssessmentData {
   };
   sensorNearby?: boolean;
   differsFromParcel?: boolean;
+  inputFidelity?: Record<string, string>;
+  zoneRank?: number | null;
+  zoneVersion?: string | number | null;
+  wetnessClass?: 'drained' | 'balanced' | 'wet' | null;
 }
 
 export interface ZonesResponse {

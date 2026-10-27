@@ -75,3 +75,15 @@ describe('NoAssessmentView', () => {
     expect(r(null)).not.toContain('worklist.job');
   });
 });
+
+describe('CropStatusSnapshotView worst zone', () => {
+  const view = (a: object) => renderToStaticMarkup(
+    <CropStatusSnapshotView assessment={{ ...(assessment as object), ...a } as never} cropCtx={null} nextJob={job} surprise={null} freshness="fresh" />,
+  ).replace(/&quot;/g, '"');
+  it('names the worst zone when the assessment carries its rank', () => {
+    expect(view({ worstZoneRank: 3 })).toContain('zones.worst:{"n":3}');
+  });
+  it('shows nothing without it', () => {
+    expect(view({})).not.toContain('zones.worst');
+  });
+});

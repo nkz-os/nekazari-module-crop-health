@@ -219,6 +219,9 @@ export const CropStatusSnapshotView: React.FC<ViewProps> = ({
               : t(actionLabelKey(assessment.recommendedAction))}
           </span>
         </p>
+        {typeof assessment.worstZoneRank === 'number' && (
+          <p className="text-xs text-nkz-text-secondary mt-0.5">{t('zones.worst', { n: assessment.worstZoneRank })}</p>
+        )}
         {assessment.assessedAt && (
           <p className={`text-xs mt-0.5 ${AGE_TONE_CLASS[freshnessTone(freshness)]}`}>
             {t('summary.updated')}: {new Date(assessment.assessedAt).toLocaleString(lang)}

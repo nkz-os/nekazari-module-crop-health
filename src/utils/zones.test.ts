@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { parcelOnlyLabel, readZoneFromLocation, zoneEmphasis, zoneFillAlpha, zoneKey, zoneLabelStyle, zoneLabelText, zoneMapLabel, zoneNumbers, zoneOutlineStyle, zoneSelection, pinnedZoneExists, zoneViewerPath } from './zones';
+import { fidelityLine, zoneNumberList, parcelOnlyLabel, readZoneFromLocation, zoneEmphasis, zoneFillAlpha, zoneKey, zoneLabelStyle, zoneLabelText, zoneMapLabel, zoneNumbers, zoneOutlineStyle, zoneSelection, pinnedZoneExists, zoneViewerPath } from './zones';
 
 const sq = (lon: number, lat: number) => ({ type: 'Polygon', coordinates: [[[lon, lat], [lon + 0.001, lat],
   [lon + 0.001, lat + 0.001], [lon, lat + 0.001], [lon, lat]]] });
@@ -146,5 +146,30 @@ describe('pinnedZoneExists', () => {
 describe('zoneViewerPath', () => {
   it('points at the host viewer route with both ids encoded', () => {
     expect(zoneViewerPath({ parcelId: 'urn:p 1', zoneId: 'a/b' })).toBe('/entities?parcel=urn%3Ap%201&zone=a%2Fb');
+  });
+});
+
+describe('fidelityLine', () => {
+  const t = ((k: string) => k.replace('zones.fidelity.', '')) as never;
+  it('splits own and inherited inputs in a fixed order', () => {
+    expect(fidelityLine({ ndvi: 'iot_sensor', soil: 'parcel_inherited', meteo: 'zone_specific', sar: 'regional_proxy', twi: 'unavailable' }, t))
+      .toEqual({ own: ['meteo', 'ndvi'], inherited: ['soil'] });
+  });
+  it('is empty without fidelity', () => {
+    expect(fidelityLine(undefined, t)).toEqual({ own: [], inherited: [] });
+  });
+});
+
+describe('zoneNumberList with zoneRank', () => {
+  const zs = [{ ...z('p1', 'a', -1, 42.01), zoneRank: 2 }, { ...z('p1', 'b', -1, 42.0), zoneRank: 1 }] as never[];
+  it('uses the backend rank when every zone has one', () => {
+    const nums = zoneNumbers(zs);
+    expect(nums.get(zoneKey('p1', 'a'))).toBe(2);
+    expect(nums.get(zoneKey('p1', 'b'))).toBe(1);
+    expect(zoneNumberList(zs, nums)).toBe('1-2');
+  });
+  it('falls back to north-to-south when a rank is missing', () => {
+    const mixed = [zs[0], { ...(zs[1] as object), zoneRank: undefined }] as never[];
+    expect(zoneNumbers(mixed).get(zoneKey('p1', 'a'))).toBe(1);
   });
 });

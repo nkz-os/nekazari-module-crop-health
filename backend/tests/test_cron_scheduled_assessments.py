@@ -55,3 +55,27 @@ async def test_failing_tenant_does_not_stop_the_others_and_exit_is_non_zero(monk
         await cron.main()
     assert exc.value.code == 1
     assert done == ["good"]
+
+
+@pytest.mark.anyio
+async def test_exit_is_one_when_every_page_raises(monkeypatch):
+    async def fake(tenant, cursor, base_url, secret):
+        raise ConnectionError("down")
+
+    monkeypatch.setattr(cron, "_post_page", fake)
+    monkeypatch.setenv("INTERNAL_SERVICE_SECRET", "s")
+    monkeypatch.setenv("SCHEDULED_TENANTS", "a,b")
+    with pytest.raises(SystemExit) as exc:
+        await cron.main()
+    assert exc.value.code == 1
+
+
+@pytest.mark.anyio
+async def test_exit_is_zero_when_all_pages_succeed(monkeypatch):
+    async def fake(tenant, cursor, base_url, secret):
+        return {"processed": 1, "written": 1, "errors": [{"parcel_id": "p", "error": "x"}], "next_cursor": None}
+
+    monkeypatch.setattr(cron, "_post_page", fake)
+    monkeypatch.setenv("INTERNAL_SERVICE_SECRET", "s")
+    monkeypatch.setenv("SCHEDULED_TENANTS", "a")
+    assert await cron.main() is None

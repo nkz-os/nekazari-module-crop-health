@@ -31,7 +31,7 @@ async def _post_page(tenant: str, cursor, base_url: str, secret: str) -> dict:
 
 
 async def run_tenant(tenant: str, base_url: str, secret: str) -> dict:
-    cursor, totals = None, {"processed": 0, "written": 0, "errors": []}
+    cursor, totals = None, {"processed": 0, "written": 0, "errors": [], "failed_pages": 0}
     failures = 0
     while True:
         try:
@@ -39,6 +39,7 @@ async def run_tenant(tenant: str, base_url: str, secret: str) -> dict:
         except Exception as exc:  # noqa: BLE001 -- a bad page must not cost the rest
             print(f"[scheduled] tenant={tenant} cursor={cursor} page failed: {exc!r}", file=sys.stderr)
             totals["errors"].append({"cursor": cursor, "error": type(exc).__name__})
+            totals["failed_pages"] += 1
             failures += 1
             if failures >= MAX_CONSECUTIVE_FAILURES:
                 return totals
@@ -66,6 +67,8 @@ async def main() -> None:
             print(f"[scheduled] tenant={tenant} failed: {exc!r}", file=sys.stderr)
             continue
         print(f"[scheduled] tenant={tenant} {totals}")
+        if totals.get("failed_pages"):
+            failed_tenants += 1
     if failed_tenants:
         print(f"[scheduled] {failed_tenants} of {len(tenants)} tenants failed", file=sys.stderr)
         sys.exit(1)

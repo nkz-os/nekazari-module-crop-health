@@ -141,3 +141,57 @@ async def test_zone_sensor_ctx_wiring_and_parcel_fallback(monkeypatch):
     await pipeline.compute_assessment("urn:ngsi-ld:AgriParcel:t:p1", "t", sensor_ctx=parcel_ctx)
     assert seen["zA"] == {"air_temp_c": 24.0}
     assert seen["zB"] == parcel_ctx
+
+
+def _day_rows(n, t_min, t_max):
+    return [{"date": f"2026-05-{d:02d}", "tMin": t_min, "tMax": t_max} for d in range(1, n + 1)]
+
+
+async def _run_gdd(monkeypatch, zones, daily):
+    _patch_crop_level(monkeypatch)
+    published = []
+
+    async def _pub(entity, tid):
+        published.append(entity)
+        return True
+
+    async def _zones(pid, tid, geom):
+        return zones
+
+    async def _no_sensors(pid, tid):
+        return []
+
+    async def _daily(*a, **k):
+        return daily
+
+    monkeypatch.setattr(pipeline, "_publish_assessment", _pub, raising=False)
+    monkeypatch.setattr(pipeline, "resolve_zones", _zones, raising=False)
+    monkeypatch.setattr(pipeline, "_gather_parcel_sensors", _no_sensors)
+    monkeypatch.setattr(pipeline, "_fetch_zone_daily", _daily)
+    seen = {}
+    real = pipeline._assess_zone
+
+    async def _spy(zone, *args, **kwargs):
+        a = await real(zone, *args, **kwargs)
+        seen[zone.zone_id] = a
+        return a
+
+    monkeypatch.setattr(pipeline, "_assess_zone", _spy)
+    await pipeline.compute_assessment("urn:ngsi-ld:AgriParcel:t:p1", "t")
+    return seen
+
+
+@pytest.mark.asyncio
+async def test_zone_gdd_is_parcel_plus_delta(monkeypatch):
+    zones = [Zone("zA", _Z0, urn="urn:ngsi-ld:AgriParcelZone:t:p1:zA", area_ha=1.0),
+             Zone("zB", _Z1, urn="urn:ngsi-ld:AgriParcelZone:t:p1:zB", area_ha=1.0)]
+    seen = await _run_gdd(monkeypatch, zones,
+                          {"zA": _day_rows(10, 8, 22), "zB": _day_rows(10, 9, 23)})
+    assert seen["zA"].gdd_accumulated == pytest.approx(295.0)  # parcel 300 - 5
+    assert seen["zB"].gdd_accumulated == pytest.approx(305.0)
+
+
+@pytest.mark.asyncio
+async def test_whole_parcel_gdd_unchanged(monkeypatch):
+    seen = await _run_gdd(monkeypatch, [Zone("parcel", _Z0)], {"parcel": _day_rows(10, 8, 22)})
+    assert seen["parcel"].gdd_accumulated == pytest.approx(300.0)

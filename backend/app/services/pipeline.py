@@ -1792,6 +1792,7 @@ async def _assess_zone(
     whole: bool,
     parcel_balance: SoilWaterBalanceResult | None = None,
     zone_ctx: dict | None = None,
+    gdd_delta: float = 0.0,
 ) -> CropHealthAssessment:
     """Compute one zone's assessment, reusing the existing engine core.
 
@@ -1803,7 +1804,10 @@ async def _assess_zone(
     """
     phenology = crop_ctx["phenology"]
     thresholds = crop_ctx["thresholds"]
+    # Parcel GDD stays authoritative; the zone adds its topographic deviation.
     gdd = crop_ctx["gdd"]
+    if gdd is not None:
+        gdd = gdd + gdd_delta
     species = crop_ctx["species"]
     variety_name = crop_ctx["variety_name"]
     now = crop_ctx["now"]
@@ -1977,6 +1981,16 @@ async def compute_assessment(
         fetch_daily=_fetch_zone_daily, gather_sensors=_gather_parcel_sensors,
     )
 
+    from app.services.zonation import zone_weights
+    from app.services.zone_gdd import zone_gdd_delta
+    gdd_deltas = zone_gdd_delta(
+        {zid: zi.weather_daily for zid, zi in inputs.items() if zi.weather_daily},
+        zone_weights(zones),
+        thresholds.base_temp if thresholds else 10.0,
+        thresholds.upper_cutoff if thresholds and thresholds.upper_cutoff is not None
+        else _DEFAULT_UPPER_CUTOFF,
+    )
+
     zone_results: list[CropHealthAssessment] = []
     for z in zones:
         zi = inputs.get(z.zone_id)
@@ -1986,6 +2000,7 @@ async def compute_assessment(
                 z, parcel_id, parcel_short, tenant_id, crop_ctx, zone_sensor_ctx, whole,
                 parcel_balance=parcel_balance,
                 zone_ctx=zone_meteo_ctx(z, now),
+                gdd_delta=gdd_deltas.get(z.zone_id, 0.0),
             )
         except Exception as exc:  # best-effort per zone — one bad zone must not sink the rest
             logger.warning("compute_assessment: zone %s failed for %s — skipped: %s", z.zone_id, parcel_short, exc)

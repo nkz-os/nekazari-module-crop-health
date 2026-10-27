@@ -1269,12 +1269,12 @@ const eu = {
         },
         legend: { numbers: 'n = n. zona (iparretik hegora)', outline: 'ertza = lursailarekiko alderik gabe' },
         meteoFidelity: {
-            zone_weather: 'gunearen eguraldia',
+            zone_weather: 'zonaren eguraldia',
         },
         zones: {
             fidelity: {
                 own: 'Berezkoa',
-                inherited: 'Oinarritua',
+                inherited: 'Heredatua',
                 meteo: 'eguraldia',
                 gdd: 'gradu-egunak',
                 ndvi: 'NDVI',
@@ -1283,7 +1283,7 @@ const eu = {
                 twi: 'hezetasun topografikoa',
                 balance: 'ur-balantzea',
             },
-            worst: 'Gune txarrena: {{n}}',
+            worst: 'Zona txarrena: {{n}}',
             wetness: {
                 drained: 'drainatua',
                 balanced: 'orekatua',

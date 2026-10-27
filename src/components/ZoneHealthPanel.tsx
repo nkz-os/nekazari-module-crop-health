@@ -104,7 +104,11 @@ const ZoneHealthPanel: React.FC<ZoneHealthPanelProps> = ({ zones, isWholeParcel,
                         </span>
                       )}
                       {zone.wetnessClass && (
-                        <span className="text-[10px] uppercase tracking-wide text-nkz-text-muted font-medium">
+                        <span
+                          className="text-[10px] uppercase tracking-wide text-nkz-text-muted font-medium"
+                          title={t(`zones.wetness.${zone.wetnessClass}`)}
+                          aria-label={t(`zones.wetness.${zone.wetnessClass}`)}
+                        >
                           {t(`zones.wetness.${zone.wetnessClass}`)}
                         </span>
                       )}

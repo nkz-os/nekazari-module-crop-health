@@ -131,6 +131,7 @@ async def test_zone_fc_wp_override_the_parcel_soil():
     redis = ZoneFakeRedis()
     zones, inputs = _zones_and_inputs(eto_a=3.0, eto_b=3.0)
     inputs["zB"].soil = {"fieldCapacity": 0.35, "wiltingPoint": 0.12}
+    inputs["zB"].fidelity["soil"] = "zone_specific"
     out = await _run(redis, zones, inputs)
     assert out["zB"].awc_mm > out["zA"].awc_mm
 
@@ -248,3 +249,30 @@ def test_zone_eto_daily_skips_bad_rows():
     rows = [{"date": "2026-10-20", "eto": 2.5}, {"date": "2026-10-21", "eto": None},
             {"date": "bad", "eto": 1.0}, {"date": "2026-10-22"}]
     assert pipeline._zone_eto_daily(rows) == {date(2026, 10, 20): 2.5}
+
+
+@pytest.mark.asyncio
+async def test_balance_fidelity_follows_zone_soil_or_et0():
+    redis = ZoneFakeRedis()
+    zones, inputs = _zones_and_inputs()
+    horizon = {"fieldCapacity": 0.35, "wiltingPoint": 0.12}
+    # zA: soil inherited (the parcel's horizon), no ET0 series -> parcel_inherited, parcel soil model.
+    inputs["zA"].weather_daily = []
+    inputs["zA"].soil = dict(horizon)
+    inputs["zA"].fidelity["soil"] = "parcel_inherited"
+    # zB: zone-specific soil, no ET0 series.
+    inputs["zB"].weather_daily = []
+    inputs["zB"].soil = dict(horizon)
+    inputs["zB"].fidelity["soil"] = "zone_specific"
+    out = await _run(redis, zones, inputs)
+    assert inputs["zA"].fidelity["balance"] == "parcel_inherited"
+    assert inputs["zB"].fidelity["balance"] == "zone_specific"
+    assert out["zB"].awc_mm > out["zA"].awc_mm  # zA kept the parcel's FC/WP
+
+    # ET0 series only (inherited soil) -> zone_specific.
+    redis2 = ZoneFakeRedis()
+    zones, inputs = _zones_and_inputs()
+    inputs["zA"].soil = dict(horizon)
+    inputs["zA"].fidelity["soil"] = "parcel_inherited"
+    await _run(redis2, zones, inputs)
+    assert inputs["zA"].fidelity["balance"] == "zone_specific"

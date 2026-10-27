@@ -104,3 +104,40 @@ def test_aggregate_rollup_picks_worst_zone():
     assert rollup.overall_severity == Severity.CRITICAL
     assert rollup.zone_id is None
     assert rollup.parcel_id == "p1"
+
+
+@pytest.mark.asyncio
+async def test_zone_sensor_ctx_wiring_and_parcel_fallback(monkeypatch):
+    _patch_crop_level(monkeypatch)
+    seen = {}
+
+    async def _pub(entity, tid):
+        return True
+
+    async def _zones(pid, tid, geom):
+        return [Zone("zA", _Z0, urn="urn:ngsi-ld:AgriParcelZone:t:p1:zA"),
+                Zone("zB", _Z1, urn="urn:ngsi-ld:AgriParcelZone:t:p1:zB")]
+
+    async def _sensors(pid, tid):
+        return [{"device_id": "d1", "lon": 0.5, "lat": 0.5, "readings": {"air_temp_c": 24.0},
+                 "air_temp_c": 24.0}]
+
+    async def _daily(*a, **k):
+        return {}
+
+    real = pipeline._assess_zone
+
+    async def _spy(zone, *args, **kwargs):
+        seen[zone.zone_id] = args[4]  # sensor_ctx positional
+        return await real(zone, *args, **kwargs)
+
+    monkeypatch.setattr(pipeline, "_publish_assessment", _pub, raising=False)
+    monkeypatch.setattr(pipeline, "resolve_zones", _zones, raising=False)
+    monkeypatch.setattr(pipeline, "_gather_parcel_sensors", _sensors)
+    monkeypatch.setattr(pipeline, "_fetch_zone_daily", _daily)
+    monkeypatch.setattr(pipeline, "_assess_zone", _spy)
+
+    parcel_ctx = {"air_temp_c": 18.0}
+    await pipeline.compute_assessment("urn:ngsi-ld:AgriParcel:t:p1", "t", sensor_ctx=parcel_ctx)
+    assert seen["zA"] == {"air_temp_c": 24.0}
+    assert seen["zB"] == parcel_ctx

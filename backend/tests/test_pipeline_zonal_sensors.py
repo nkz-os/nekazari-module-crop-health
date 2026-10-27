@@ -96,3 +96,59 @@ async def test_failure_returns_empty(monkeypatch):
     assert await pipeline._gather_parcel_sensors(
         _URN, "acme", redis_state=_FakeRedis({}), parcel_geometry=_PARCEL
     ) == []
+
+
+@pytest.mark.asyncio
+async def test_truncated_device_listing_warns(fake_orion, caplog):
+    fake_orion += [{"id": f"urn:Device:d{i}"} for i in range(pipeline._DEVICE_LIST_LIMIT)]
+    import logging
+    with caplog.at_level(logging.WARNING, logger=pipeline.logger.name):
+        await pipeline._gather_parcel_sensors(
+            _URN, "acme", redis_state=_FakeRedis({}), parcel_geometry=_PARCEL
+        )
+    assert any("truncated" in r.getMessage() and "acme" in r.getMessage() for r in caplog.records)
+
+
+class _Resp:
+    def __init__(self, status, body):
+        self.status_code, self._b = status, body
+
+    def json(self):
+        return self._b
+
+
+def _fake_httpx(monkeypatch, resp=None, exc=None):
+    class _Client:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def get(self, url, params=None, headers=None):
+            if exc:
+                raise exc
+            return resp
+
+    monkeypatch.setattr(pipeline.httpx, "AsyncClient", _Client)
+    monkeypatch.setattr(pipeline, "get_settings", lambda: types.SimpleNamespace(weather_map_url="http://wm"))
+
+
+@pytest.mark.asyncio
+async def test_fetch_zone_daily_returns_zones_body(monkeypatch):
+    from datetime import date
+    _fake_httpx(monkeypatch, _Resp(200, {"zones": {"z1": [{"date": "2026-07-01"}]}}))
+    out = await pipeline._fetch_zone_daily("p1", "acme", date(2026, 7, 1), date(2026, 7, 2))
+    assert out == {"z1": [{"date": "2026-07-01"}]}
+
+
+@pytest.mark.asyncio
+async def test_fetch_zone_daily_errors_give_empty(monkeypatch):
+    from datetime import date
+    _fake_httpx(monkeypatch, _Resp(500, {}))
+    assert await pipeline._fetch_zone_daily("p1", "acme", date(2026, 7, 1), date(2026, 7, 2)) == {}
+    _fake_httpx(monkeypatch, exc=RuntimeError("down"))
+    assert await pipeline._fetch_zone_daily("p1", "acme", date(2026, 7, 1), date(2026, 7, 2)) == {}

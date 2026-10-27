@@ -1457,7 +1457,7 @@ async def _weather_map_meteo(parcel_id: str, tenant_id: str) -> dict:
                 return {}
             data = resp.json() or {}
     except Exception as exc:  # noqa: BLE001 — fail-safe
-        logger.warning("_weather_map_meteo: failed for %s — {}: %s", parcel_id, exc)
+        logger.warning("_weather_map_meteo: failed for %s: %s", parcel_id, exc)
         return {}
 
     metrics = data.get("metrics") or {}  # empty when error/"No COG data available"
@@ -1539,7 +1539,7 @@ async def _fetch_zone_daily(
             zones = (resp.json() or {}).get("zones")
             return zones if isinstance(zones, dict) else {}
     except Exception as exc:  # noqa: BLE001 — fail-safe
-        logger.warning("_fetch_zone_daily: failed for %s — {}: %s", parcel_id, exc)
+        logger.warning("_fetch_zone_daily: failed for %s: %s", parcel_id, exc)
         return {}
 
 
@@ -1685,6 +1685,7 @@ _SENSOR_METRICS = {
     MetricType.SOLAR_RADIATION.value: "solar_radiation_wm2",
 }
 _SENSOR_MAX_AGE_H = 24
+_DEVICE_LIST_LIMIT = 1000
 
 
 def _device_point(device: dict) -> tuple[float, float] | None:
@@ -1740,9 +1741,14 @@ async def _gather_parcel_sensors(
         settings = get_settings()
         client = OrionClient(tenant_id, base_url=settings.orion_ld_url, context_url=settings.orion_ld_context)
         try:
-            devices = await client.query_entities(type="Device", options="keyValues", limit=1000)
+            devices = await client.query_entities(type="Device", options="keyValues", limit=_DEVICE_LIST_LIMIT)
         finally:
             await client.close()
+        if devices and len(devices) >= _DEVICE_LIST_LIMIT:
+            logger.warning(
+                "_gather_parcel_sensors: tenant %s has >= %d Devices; listing truncated, some sensors may be missing",
+                tenant_id, _DEVICE_LIST_LIMIT,
+            )
 
         out: list[dict] = []
         for dev in devices or []:

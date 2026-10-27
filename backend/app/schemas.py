@@ -409,7 +409,7 @@ class CropHealthAssessment(BaseModel):
     phenology_source: str = "default"
     data_fidelity: str = "regional_proxy"  # onsite_calibrated | local_proxy | regional_proxy | modeled_opendata
     # Frozen keel-contract meteo fidelity vocab (resolve_meteo_context):
-    # iot_sensor > parcel_weather > regional_proxy > unavailable. SEPARATE from
+    # iot_sensor > zone_weather > parcel_weather > regional_proxy > unavailable. SEPARATE from
     # data_fidelity (engine vocab) — do not conflate.
     meteo_fidelity: str = "unavailable"
     # Season start (ISO date) — surfaced as keel-contract seasonStart.

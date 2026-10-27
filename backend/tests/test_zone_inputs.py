@@ -86,3 +86,10 @@ async def test_gather_zone_inputs_empty_and_no_season_start():
     assert calls == [date(2026, 7, 10) - timedelta(days=120)]
     assert out["z1"].fidelity["meteo"] == "parcel_inherited"
     assert out["z1"].fidelity["gdd"] == "parcel_inherited"
+
+
+def test_zone_meteo_ctx_naive_datetimes_treated_as_utc():
+    naive_obs = _zone(observed_at=datetime(2026, 7, 10, 10, 0))
+    assert zone_meteo_ctx(naive_obs, NOW)["air_temp_c"] == 15.5
+    assert zone_meteo_ctx(_zone(age_h=2), NOW.replace(tzinfo=None))["air_temp_c"] == 15.5
+    assert zone_meteo_ctx(_zone(observed_at=datetime(2026, 7, 8, 10, 0)), NOW) == {}

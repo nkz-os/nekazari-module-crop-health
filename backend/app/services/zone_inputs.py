@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 from app.services.zonation import Zone, consolidate_sensor_readings, sensors_in_zone
 
@@ -33,7 +33,14 @@ class ZoneInputs:
 def zone_meteo_ctx(zone: Zone, now: datetime) -> dict:
     """Meteo variables of the zone, or {} when absent or older than 36 h."""
     obs = zone.observed_at
-    if obs is None or now - obs > ZONE_METEO_MAX_AGE:
+    if obs is None:
+        return {}
+    # A naive datetime is treated as UTC so the subtraction cannot raise.
+    if obs.tzinfo is None:
+        obs = obs.replace(tzinfo=timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    if now - obs > ZONE_METEO_MAX_AGE:
         return {}
     out: dict = {}
     if zone.t_min is not None and zone.t_max is not None:

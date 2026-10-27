@@ -28,12 +28,16 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["phenology"])
 
 _MEAN_DAILY_GDD_DEFAULT = 8.0  # Mediterranean default mean daily GDD
-_METEO_VOCAB = {"iot_sensor", "parcel_weather", "regional_proxy", "unavailable"}
+_METEO_VOCAB = {"iot_sensor", "zone_weather", "parcel_weather", "regional_proxy", "unavailable"}
+# The SDK envelope's `fidelity` Literal has no zone_weather: label it with the
+# nearest SDK value (same confidence tier as parcel_weather).
+_ENVELOPE_FIDELITY = {"zone_weather": "parcel_weather"}
 
 
 def _status_agronomic(status: dict) -> dict:
     """Build the additive `agronomic` map for phenology-status (P1 contract)."""
     fidelity = status.get("dataFidelity") or "regional_proxy"
+    fidelity = _ENVELOPE_FIDELITY.get(fidelity, fidelity)
     conf = confidence_from_fidelity(fidelity)
     src = Source(short=status.get("phenologySource") or "default")
     # meteo-vocab fidelity values are the only ones valid on the envelope's

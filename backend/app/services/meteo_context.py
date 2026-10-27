@@ -1,4 +1,4 @@
-"""Per-variable meteo source resolver — sensor > weather-map > regional.
+"""Per-variable meteo source resolver — sensor > zone > weather-map > regional.
 
 The daily CropHealthAssessment is a daily snapshot. Sensor inputs MUST be
 pre-windowed aggregates (e.g. from redis_state.get_window), never raw webhook
@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 logger = logging.getLogger(__name__)
 
 _VARIABLES = ("air_temp_c", "rh_pct", "et0_mm", "leaf_temp_c", "solar_radiation_wm2")
-_FIDELITY_RANK = {"iot_sensor": 3, "parcel_weather": 2, "regional_proxy": 1, "unavailable": 0}
+_FIDELITY_RANK = {"iot_sensor": 4, "zone_weather": 3, "parcel_weather": 2, "regional_proxy": 1, "unavailable": 0}
 
 
 @dataclass
@@ -22,6 +22,7 @@ class MeteoContext:
     et0_mm: float | None = None
     leaf_temp_c: float | None = None
     solar_radiation_wm2: float | None = None
+    air_temp_min_24h: float | None = None
     fidelity: dict[str, str] = field(default_factory=dict)
     dominant_fidelity: str = "unavailable"
 
@@ -41,10 +42,12 @@ async def resolve_meteo_context(
     tenant_id: str,
     *,
     sensor_ctx: dict | None = None,
+    zone_ctx: dict | None = None,
     weather_map_fn=None,
     regional_fn=None,
 ) -> MeteoContext:
     sensor = sensor_ctx or {}
+    zone = zone_ctx or {}
     wm = await _safe(weather_map_fn, parcel_id, tenant_id)
     regional = await _safe(regional_fn, parcel_id, tenant_id)
 
@@ -52,6 +55,8 @@ async def resolve_meteo_context(
     for var in _VARIABLES:
         if sensor.get(var) is not None:
             value, fidelity = sensor[var], "iot_sensor"
+        elif zone.get(var) is not None:
+            value, fidelity = zone[var], "zone_weather"
         elif wm.get(var) is not None:
             value, fidelity = wm[var], "parcel_weather"
         elif regional.get(var) is not None:
@@ -60,6 +65,8 @@ async def resolve_meteo_context(
             value, fidelity = None, "unavailable"
         setattr(ctx, var, value)
         ctx.fidelity[var] = fidelity
+
+    ctx.air_temp_min_24h = zone.get("air_temp_min_24h")
 
     present = [f for f in ctx.fidelity.values() if f != "unavailable"]
     ctx.dominant_fidelity = (

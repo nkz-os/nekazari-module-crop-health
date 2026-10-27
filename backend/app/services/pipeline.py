@@ -1510,6 +1510,39 @@ def _parse_observed_ts(value) -> float | None:
     return parsed.timestamp()
 
 
+async def _fetch_zone_daily(
+    parcel_id: str, tenant_id: str, start: date, end: date
+) -> dict[str, list[dict]]:
+    """Daily per-zone weather series from weather-map ({zone_id: [rows]}, fail-safe {})."""
+    try:
+        settings = get_settings()
+        if not settings.weather_map_url:
+            return {}
+        parcel_urn = parcel_id if parcel_id.startswith("urn:") else f"urn:ngsi-ld:AgriParcel:{parcel_id}"
+        headers = {}
+        if tenant_id:
+            headers = {"X-Tenant-ID": tenant_id, "X-User-ID": "crop-health-worker"}
+            secret = _hmac_secret()
+            if secret:
+                headers["X-Auth-Signature"] = generate_hmac_signature(secret, "", tenant_id)
+            else:
+                logger.warning("_fetch_zone_daily: signing secret unset — request goes unsigned")
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(
+                f"{settings.weather_map_url}/api/weather-map/zones/{parcel_urn}/daily",
+                params={"start": start.isoformat(), "end": end.isoformat()},
+                headers=headers,
+            )
+            if resp.status_code != 200:
+                logger.warning("_fetch_zone_daily: HTTP %s for %s", resp.status_code, parcel_id)
+                return {}
+            zones = (resp.json() or {}).get("zones")
+            return zones if isinstance(zones, dict) else {}
+    except Exception as exc:  # noqa: BLE001 — fail-safe
+        logger.warning("_fetch_zone_daily: failed for %s — {}: %s", parcel_id, exc)
+        return {}
+
+
 async def _regional_meteo(parcel_id: str, tenant_id: str) -> dict:
     """Regional fallback meteo from Orion WeatherObserved (fail-safe {}).
 
@@ -1644,15 +1677,103 @@ async def _resolve_device_coords(entity_id: str, tenant_id: str) -> tuple[float,
     return None
 
 
-async def _gather_parcel_sensors(parcel_id: str, tenant_id: str) -> list[dict]:
-    """Located sensor readings for the parcel, for per-zone consolidation.
+_SENSOR_METRICS = {
+    MetricType.AIR_TEMPERATURE.value: "air_temp_c",
+    MetricType.RELATIVE_HUMIDITY.value: "rh_pct",
+    MetricType.SOIL_MOISTURE.value: "soil_moisture",
+    MetricType.LEAF_TEMPERATURE.value: "leaf_temp_c",
+    MetricType.SOLAR_RADIATION.value: "solar_radiation_wm2",
+}
+_SENSOR_MAX_AGE_H = 24
 
-    v1: returns ``[]`` — the scheduled path is sensorless and the webhook path
-    supplies its triggering measurement directly via ``sensor_ctx``. Gathering
-    live device coordinates for full multi-device spatial consolidation is a
-    documented follow-up (needs a Device-location query contract).
+
+def _device_point(device: dict) -> tuple[float, float] | None:
+    loc = device.get("location")
+    if isinstance(loc, dict) and loc.get("type") == "GeoProperty":
+        loc = loc.get("value")
+    if isinstance(loc, dict) and loc.get("type") == "Point":
+        c = loc.get("coordinates")
+        if isinstance(c, (list, tuple)) and len(c) >= 2:
+            try:
+                return float(c[0]), float(c[1])
+            except (TypeError, ValueError):
+                return None
+    return None
+
+
+def _controls_parcel(device: dict, parcel_urn: str) -> bool:
+    ca = device.get("controlledAsset")
+    if isinstance(ca, dict):
+        ca = ca.get("object", ca.get("value"))
+    items = ca if isinstance(ca, list) else [ca]
+    for it in items:
+        if isinstance(it, dict):
+            it = it.get("object", it.get("value"))
+        if it == parcel_urn:
+            return True
+    return False
+
+
+async def _gather_parcel_sensors(
+    parcel_id: str, tenant_id: str, *, redis_state=None, parcel_geometry: dict | None = None
+) -> list[dict]:
+    """Located sensor readings of the parcel, for per-zone consolidation.
+
+    Devices of the tenant inside the parcel polygon, plus devices whose
+    ``controlledAsset`` names the parcel. Each item carries the fresh (24 h)
+    per-device Redis mean of each metric, flat under the meteo variable names
+    (what ``consolidate_sensor_readings`` averages) and under ``readings``.
+    Devices without a location get ``lon=lat=None`` and are not attributed to a
+    zone. Fail-safe: any error returns ``[]``.
     """
-    return []
+    try:
+        from nkz_platform_sdk.orion import OrionClient
+
+        parcel_short = parcel_id.split(":")[-1] if parcel_id.startswith("urn:") else parcel_id
+        parcel_urn = parcel_id if parcel_id.startswith("urn:") else f"urn:ngsi-ld:AgriParcel:{parcel_id}"
+        if parcel_geometry is None:
+            parcel_geometry = await context_client._resolve_parcel_geometry(parcel_short, tenant_id)
+        if redis_state is None:
+            from app.main import get_redis_state
+            redis_state = get_redis_state()
+
+        settings = get_settings()
+        client = OrionClient(tenant_id, base_url=settings.orion_ld_url, context_url=settings.orion_ld_context)
+        try:
+            devices = await client.query_entities(type="Device", options="keyValues", limit=1000)
+        finally:
+            await client.close()
+
+        out: list[dict] = []
+        for dev in devices or []:
+            dev_id = dev.get("id")
+            if not dev_id:
+                continue
+            pt = _device_point(dev)
+            inside = bool(pt and parcel_geometry and point_in_polygon(pt[0], pt[1], parcel_geometry))
+            if not (inside or _controls_parcel(dev, parcel_urn)):
+                continue
+            readings: dict[str, float] = {}
+            for metric, name in _SENSOR_METRICS.items():
+                try:
+                    pts = await redis_state.get_window(dev_id, metric, hours=_SENSOR_MAX_AGE_H)
+                except Exception as exc:  # noqa: BLE001 — one metric must not sink the rest
+                    logger.warning("_gather_parcel_sensors: window %s/%s failed: %s", dev_id, metric, exc)
+                    continue
+                vals = [p.value for p in pts if math.isfinite(p.value)]
+                if vals:
+                    readings[name] = sum(vals) / len(vals)
+            out.append({
+                "device_id": dev_id,
+                "lon": pt[0] if pt else None,
+                "lat": pt[1] if pt else None,
+                "readings": readings,
+                **readings,
+            })
+        return out
+    except Exception as exc:  # noqa: BLE001 — fail-safe
+        logger.warning("_gather_parcel_sensors: failed for %s — []: %s", parcel_id, exc)
+        return []
 
 
 async def _assess_zone(
@@ -1664,6 +1785,7 @@ async def _assess_zone(
     sensor_ctx: dict | None,
     whole: bool,
     parcel_balance: SoilWaterBalanceResult | None = None,
+    zone_ctx: dict | None = None,
 ) -> CropHealthAssessment:
     """Compute one zone's assessment, reusing the existing engine core.
 
@@ -1683,6 +1805,7 @@ async def _assess_zone(
     meteo = await resolve_meteo_context(
         parcel_id, tenant_id,
         sensor_ctx=sensor_ctx,
+        zone_ctx=zone_ctx,
         weather_map_fn=_weather_map_meteo,
         regional_fn=_regional_meteo,
     )
@@ -1841,20 +1964,22 @@ async def compute_assessment(
     zones = await resolve_zones(parcel_id, tenant_id, parcel_geom or {})
     whole = is_whole_parcel(zones)
 
-    # Located sensors for per-zone consolidation (v1: [] for scheduled path).
-    all_sensors = await _gather_parcel_sensors(parcel_id, tenant_id)
+    # Per-zone inputs: zone meteo + daily series (one request) and located sensors.
+    from app.services.zone_inputs import gather_zone_inputs, zone_meteo_ctx
+    inputs = await gather_zone_inputs(
+        parcel_id, parcel_short, tenant_id, zones, season_start, now,
+        fetch_daily=_fetch_zone_daily, gather_sensors=_gather_parcel_sensors,
+    )
 
     zone_results: list[CropHealthAssessment] = []
     for z in zones:
-        zone_sensor_ctx = sensor_ctx
-        if all_sensors:
-            consolidated = consolidate_sensor_readings(sensors_in_zone(z, all_sensors))
-            if consolidated:
-                zone_sensor_ctx = consolidated
+        zi = inputs.get(z.zone_id)
+        zone_sensor_ctx = (zi.sensors if zi else None) or sensor_ctx
         try:
             za = await _assess_zone(
                 z, parcel_id, parcel_short, tenant_id, crop_ctx, zone_sensor_ctx, whole,
                 parcel_balance=parcel_balance,
+                zone_ctx=zone_meteo_ctx(z, now),
             )
         except Exception as exc:  # best-effort per zone — one bad zone must not sink the rest
             logger.warning("compute_assessment: zone %s failed for %s — skipped: %s", z.zone_id, parcel_short, exc)

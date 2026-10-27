@@ -19,6 +19,9 @@ def _match(entity: dict, q: str) -> bool:
     """Tiny NGSI-LD q evaluator: ``a=="v"`` terms joined by ``|`` (or) and ``;`` (and)."""
     def term(t: str) -> bool:
         t = t.strip().strip("()")
+        if ">=" in t:
+            attr, _, val = t.partition(">=")
+            return str(entity.get(attr, "")) >= val
         attr, _, val = t.partition("==")
         val = val.strip('"')
         got = entity.get(attr)
@@ -79,7 +82,8 @@ async def _ndvi(fo, zone_urn):
 async def test_zone_product_5_days_old_is_zone_specific():
     fo = FakeOrion([_parcel_eo(2, 0.40), _zone_eo(5, 0.61)])
     assert await _ndvi(fo, ZONE_URN) == (0.61, "zone_specific")
-    assert fo.queries[0] == f'hasAgriParcelZone=="{ZONE_URN}"'
+    since = (datetime.now(timezone.utc) - timedelta(days=20)).strftime("%Y-%m-%d")
+    assert fo.queries[0] == f'hasAgriParcelZone=="{ZONE_URN}";sensingDate>={since}'
 
 
 @pytest.mark.asyncio

@@ -1907,12 +1907,15 @@ async def _assess_zone(
     return assessment
 
 
+# Only these headline numbers are area-weighted. Ratios, levels, conditions and every
+# other field stay the worst zone's by design (a mean of a category has no meaning).
 _WEIGHTED_NUMERICS = (
     ("composite_stress", "composite_index"),
     ("cwsi", "cwsi"),
     ("vigor", "vigor_index"),
     ("soil_water_balance", "sw_mm"),
     ("soil_water_balance", "deficit_mm"),
+    ("crop_requirements", "water_deficit_mm"),
 )
 
 
@@ -1946,9 +1949,6 @@ def _aggregate_rollup(
         w = weights or {}
         rollup = worst.model_copy(deep=True)
         for obj_name, attr in _WEIGHTED_NUMERICS:
-            target = getattr(rollup, obj_name, None)
-            if target is None:
-                continue
             pairs = []
             for z in zone_results:
                 obj = getattr(z, obj_name, None)
@@ -1956,8 +1956,17 @@ def _aggregate_rollup(
                 if v is not None:
                     pairs.append((float(v), float(w.get(z.zone_id, 1.0))))
             mean = _weighted_mean(pairs)
-            if mean is not None:
-                setattr(target, attr, mean)
+            if mean is None:
+                continue
+            target = getattr(rollup, obj_name, None)
+            if target is None:
+                # The worst zone lacks the object: borrow it from the first zone that has it.
+                donor = next((getattr(z, obj_name) for z in zone_results if getattr(z, obj_name, None) is not None), None)
+                if donor is None:
+                    continue
+                target = donor.model_copy(deep=True)
+                setattr(rollup, obj_name, target)
+            setattr(target, attr, mean)
     stress = [
         z.composite_stress.composite_index for z in zone_results
         if z.composite_stress is not None and z.composite_stress.composite_index is not None
@@ -2893,9 +2902,11 @@ async def _zone_eoproduct(tenant_id: str, zone_urn: str, attr: str, extra_q: str
     Per-zone products carry ``hasAgriParcelZone`` and no ``hasAgriParcel``, so the
     parcel query never sees them and this one never sees parcel products.
     """
-    q = f'hasAgriParcelZone=="{zone_urn}"' + extra_q
-    entities = await _query_eoproducts(tenant_id, q, _ZONE_PRODUCT_LIMIT)
     now = datetime.now(timezone.utc)
+    since = (now - timedelta(days=ZONE_PRODUCT_MAX_AGE_DAYS)).strftime("%Y-%m-%d")
+    # The date term keeps old products from filling the page; the age check below stays as a guard.
+    q = f'hasAgriParcelZone=="{zone_urn}";sensingDate>={since}' + extra_q
+    entities = await _query_eoproducts(tenant_id, q, _ZONE_PRODUCT_LIMIT)
     fresh = []
     for e in entities:
         if e.get(attr) is None:

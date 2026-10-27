@@ -109,3 +109,29 @@ def test_mapper_passes_fidelity_rank_version_wetness_through():
     assert z["wetnessClass"] == "wet"
     bare = map_entity_to_zone_assessment({k: v for k, v in entity.items() if not k.startswith(("nkz", "https"))})
     assert bare["inputFidelity"] == {} and bare["zoneRank"] is None and bare["wetnessClass"] is None
+
+
+def _cwsi(v):
+    from app.schemas import CWSIResult
+    return CWSIResult(cwsi=v, vpd_kpa=1.0, temp_canopy=30.0, temp_air=28.0, d1=1.0, d2=2.0)
+
+
+def test_rollup_borrows_object_the_worst_zone_lacks():
+    a = _za("z0", 10.0, Severity.LOW)
+    a.cwsi = _cwsi(0.2)
+    b = _za("z1", 50.0, Severity.HIGH)  # worst, no cwsi
+    c = _za("z2", 30.0, Severity.LOW)
+    c.cwsi = _cwsi(0.6)
+    r = pipeline._aggregate_rollup("p1", [a, b, c], {"z0": 0.5, "z1": 0.25, "z2": 0.25})
+    assert r.cwsi.cwsi == pytest.approx((0.2 * 0.5 + 0.6 * 0.25) / 0.75)
+    assert a.cwsi.cwsi == 0.2 and c.cwsi.cwsi == 0.6  # donors untouched
+
+
+def test_emitted_water_deficit_is_weighted():
+    from app.schemas import CropRequirements
+    a = _za("z0", 10.0, Severity.LOW)
+    a.crop_requirements = CropRequirements(water_deficit_mm=10.0)
+    b = _za("z1", 50.0, Severity.HIGH)
+    b.crop_requirements = CropRequirements(water_deficit_mm=50.0)
+    r = pipeline._aggregate_rollup("p1", [a, b], {"z0": 0.75, "z1": 0.25})
+    assert r.to_ngsi_ld()["waterDeficitMm"]["value"] == pytest.approx(20.0)

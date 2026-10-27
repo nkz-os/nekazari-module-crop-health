@@ -2438,8 +2438,10 @@ async def _scheduled_zone_balances(
     for z in zones:
         zi = inputs.get(z.zone_id)
         eto_daily = _zone_eto_daily(zi.weather_daily) if zi else {}
-        fc, wp = _zone_soil_values(zi.soil if zi else None)
-        zone_specific = bool(eto_daily) or fc is not None or wp is not None
+        # An inherited zone answer carries the parcel's own horizon: not zone soil.
+        soil_is_zone_specific = bool(zi and zi.fidelity.get("soil") == "zone_specific")
+        fc, wp = _zone_soil_values(zi.soil) if soil_is_zone_specific else (None, None)
+        zone_specific = bool(eto_daily) or soil_is_zone_specific
         soil = soil_with_overrides(parcel_soil, fc, wp)
         try:
             balance = await advance_daily_balance(

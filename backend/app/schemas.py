@@ -688,10 +688,11 @@ class CropHealthAssessment(BaseModel):
                         "@value": up.observed_at.astimezone(timezone.utc).isoformat(),
                     },
                 }
-        if self.worst_zone_id is not None:
+        # Id and rank travel together: the upsert merges attributes, so one without the
+        # other would leave a stale partner naming a different zone.
+        if self.worst_zone_id is not None and self.worst_zone_rank is not None:
             entity["nkz:worstZoneId"] = {"type": "Property", "value": self.worst_zone_id}
-            if self.worst_zone_rank is not None:
-                entity["nkz:worstZoneRank"] = {"type": "Property", "value": self.worst_zone_rank}
+            entity["nkz:worstZoneRank"] = {"type": "Property", "value": self.worst_zone_rank}
             if self.zone_spread is not None:
                 entity["nkz:zoneSpread"] = {"type": "Property", "value": self.zone_spread}
         return entity

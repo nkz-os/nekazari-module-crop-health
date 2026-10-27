@@ -131,9 +131,54 @@ async def test_smi_falls_back_to_parcel_when_zone_has_none():
         assert await pipeline._fetch_parcel_smi(PARCEL, "acme", ZONE_URN) == (0.33, "parcel_inherited")
 
 
+async def _engines(zone_urn, fo, ndvi_calls=None):
+    """Run the shared engine core against a fake broker; returns the assessment."""
+    from app.schemas import CropHealthAssessment, PhenologyParams, SoilProperties
+
+    now = datetime.now(timezone.utc)
+    a = CropHealthAssessment(parcel_id=PARCEL, assessed_at=now)
+    real = pipeline._fetch_parcel_ndvi
+
+    async def counting(*args, **kw):
+        if ndvi_calls is not None:
+            ndvi_calls.append(args)
+        return await real(*args, **kw)
+
+    async def _none(*a, **k):
+        return None
+
+    with patch("nkz_platform_sdk.orion.OrionClient", return_value=fo), \
+         patch.object(pipeline, "_fetch_parcel_ndvi", counting), \
+         patch.object(pipeline, "_fetch_parcel_lst_with_date", _none), \
+         patch.object(pipeline, "_fetch_parcel_lst", _none), \
+         patch.object(pipeline, "_fetch_parcel_smi", AsyncMock(return_value=(None, "unavailable"))), \
+         patch.object(pipeline, "_fetch_parcel_sar", AsyncMock(return_value=(None, "unavailable"))):
+        await pipeline._run_engines(
+            a, metric_type="", weather=None,
+            phenology=PhenologyParams(stage="flowering"), redis_state=None,
+            entity_id=PARCEL, effective_parcel=PARCEL, tenant_id="acme", species="generic",
+            crop_context=None, variety_name=None, gdd=None, soil=SoilProperties(),
+            root_depth_mm=600.0, now=now, publish=False, zone_urn=zone_urn,
+        )
+    return a
+
+
 @pytest.mark.asyncio
-async def test_zone_vigor_indices_from_same_product():
-    zone = _zone_eo(2, 0.6, evi={"type": "Property", "value": 0.4}, savi=0.3, gndvi=0.5, ndre=0.2)
-    with patch("nkz_platform_sdk.orion.OrionClient", return_value=FakeOrion([zone])):
-        idx = await pipeline._fetch_zone_vigor_indices(PARCEL, "acme", ZONE_URN)
-    assert idx == {"evi": 0.4, "savi": 0.3, "gndvi": 0.5, "ndre": 0.2}
+async def test_zone_vigor_matches_parcel_vigor_for_same_ndvi():
+    """A zone product's NDRE/EVI must not change the index the vigour is read from."""
+    zone = _zone_eo(2, 0.8, evi=0.5, savi=0.5, gndvi=0.5, ndre=0.35)
+    parcel = _parcel_eo(2, 0.8)
+    zone_a = await _engines(ZONE_URN, FakeOrion([zone, parcel]))
+    parcel_a = await _engines(None, FakeOrion([parcel]))
+    assert parcel_a.vigor is not None and zone_a.vigor is not None
+    assert zone_a.vigor.index_used == parcel_a.vigor.index_used == "NDVI"
+    assert zone_a.vigor.vigor_index == parcel_a.vigor.vigor_index
+    assert zone_a.vigor.condition == parcel_a.vigor.condition
+
+
+@pytest.mark.asyncio
+async def test_one_ndvi_fetch_per_assessment():
+    calls: list = []
+    a = await _engines(ZONE_URN, FakeOrion([_zone_eo(2, 0.8)]), ndvi_calls=calls)
+    assert a.vigor is not None
+    assert len(calls) == 1

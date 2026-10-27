@@ -86,6 +86,26 @@ async def test_controlled_asset_without_location_included_unattributed(fake_orio
 
 
 @pytest.mark.asyncio
+async def test_park_owned_device_inside_polygon_is_excluded(fake_orion):
+    park = "urn:ngsi-ld:AgriSolarPark:park1"
+    fake_orion += [
+        {"id": "urn:Device:under", "location": _point(2, 2), "controlledAsset": [park, _URN]},
+        {"id": "urn:Device:open", "location": _point(3, 3), "controlledAsset": [_URN, park]},
+        {"id": "urn:Device:free", "location": _point(4, 4)},
+        {"id": "urn:Device:legacy", "hasAgriParcel": "urn:ngsi-ld:AgriParcel:other", "location": _point(5, 5)},
+    ]
+    redis = _FakeRedis({
+        ("urn:Device:under", "airTemperature"): [40.0],
+        ("urn:Device:open", "airTemperature"): [20.0],
+        ("urn:Device:free", "airTemperature"): [22.0],
+    })
+    sensors = await pipeline._gather_parcel_sensors(
+        _URN, "acme", redis_state=redis, parcel_geometry=_PARCEL
+    )
+    assert {s["device_id"] for s in sensors} == {"urn:Device:open", "urn:Device:free"}
+
+
+@pytest.mark.asyncio
 async def test_failure_returns_empty(monkeypatch):
     class Boom:
         def __init__(self, *a, **k):

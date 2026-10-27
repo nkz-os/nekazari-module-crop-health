@@ -476,6 +476,10 @@ async def _stored_balance(
     return result
 
 
+# The labels a zone input can carry; ``used`` fidelities outside it are not written.
+_KNOWN_FIDELITIES = frozenset({"zone_specific", "parcel_inherited", "iot_sensor", "unavailable"})
+
+
 async def trigger(
     entity_id: str,
     metric_type: str,
@@ -619,6 +623,8 @@ async def trigger(
             a.zone_id = zone.zone_id
             a.zone_urn = zone.urn
             a.zone_geometry = zone.geometry
+            a.zone_version = zone.zone_version
+            a.zone_rank = zone.zone_rank
         return a
 
     # ── Soil properties (benefits 1+2) ───────────────────────────────────
@@ -693,6 +699,9 @@ async def trigger(
             device_coords[0], device_coords[1], z.geometry
         )
         a = _mk_assessment(z)
+        # Everything this path does not resolve per zone is the parcel's value; written
+        # explicitly because the upsert merges and would keep the daily run's labels.
+        used_fidelity: dict[str, str] = {}
         try:
             await _run_engines(
                 a,
@@ -717,10 +726,24 @@ async def trigger(
                 shade_observed_at=shade_observed_at,
                 et0_fidelity=et0_fidelity,
                 sensor_context=sensor_context if is_sensor else None,
+                fidelity_out=used_fidelity,
             )
         except Exception as exc:
             logger.warning("trigger: zone %s failed for %s — skipped: %s", z.zone_id, effective_parcel, exc)
             continue
+        a.input_fidelity = {
+            "meteo": (
+                "iot_sensor" if is_sensor and meteo.fidelity.get("air_temp_c") == "iot_sensor"
+                else "parcel_inherited"
+            ),
+            "gdd": "parcel_inherited",
+            "ndvi": "parcel_inherited",
+            "sar": "parcel_inherited",
+            "soil": "parcel_inherited",
+            "twi": "parcel_inherited",
+            "balance": "parcel_inherited" if parcel_balance is not None else "unavailable",
+            **{k: v for k, v in used_fidelity.items() if v in _KNOWN_FIDELITIES},
+        }
         zone_results.append(a)
         await _publish_assessment(a.to_zone_ngsi_ld(), tenant_id)
 
@@ -914,16 +937,13 @@ async def _run_engines(
         ndvi_val, ndvi_fid = await _fetch_parcel_ndvi(effective_parcel, tenant_id, zone_urn)
         if fidelity_out is not None:
             fidelity_out["ndvi"] = ndvi_fid
-        zone_indices = (
-            await _fetch_zone_vigor_indices(effective_parcel, tenant_id, zone_urn)
-            if zone_urn and ndvi_fid == "zone_specific" else {}
-        )
         if ndvi_val is not None or assessment.cwsi is not None:
             cwsi_val = assessment.cwsi.cwsi if assessment.cwsi else None
             stage_name = phenology.stage if phenology else "vegetative"
             vr = evaluate_vigor(
+                # NDVI only, as on the parcel path: the engine normalises every index
+                # with the NDVI scale, so a zone's EVI/SAVI/GNDVI/NDRE would read falsely low.
                 ndvi=ndvi_val,
-                **zone_indices,
                 cwsi=cwsi_val,
                 stage=stage_name,
                 fidelity="onsite_uncalibrated" if ndvi_val is not None else "modeled_opendata",
@@ -1173,7 +1193,7 @@ async def _run_engines(
     # WUE (after composite stress and yield gap, needs NDVI integral + irrigation data)
     try:
         from app.engines.wue import evaluate_wue
-        ndvi_val, _ndvi_fid = await _fetch_parcel_ndvi(effective_parcel, tenant_id, zone_urn)
+        # The NDVI of the vigour step above: one fetch per assessment.
         irrigation_mm = None
         irrigation_source = "none"
         try:
@@ -1748,6 +1768,28 @@ def _controls_parcel(device: dict, parcel_urn: str) -> bool:
     return False
 
 
+def _is_open_field_sensor_of(device: dict, parcel_urn: str, inside: bool) -> bool:
+    """Whether the device feeds this parcel's open-field meteo.
+
+    Owned devices follow their owner: a parcel owner counts when it is this parcel,
+    a solar-park owner (under-panel) never does. Devices with no stated owner count
+    when they sit inside the parcel polygon.
+    """
+    link = device.get("controlledAsset")
+    if parcel_link_targets(link):
+        owner = owner_from_link(link)
+        if owner is not None:
+            context, owner_parcel, _park = owner
+            return context == OPEN_FIELD and owner_parcel == parcel_urn
+        # A link naming neither a park nor a parcel states no usable owner.
+    else:
+        for attr in ("hasAgriParcel", "refAgriParcel"):
+            target = parcel_link_target(device.get(attr))
+            if target:
+                return target == parcel_urn
+    return inside
+
+
 async def _gather_parcel_sensors(
     parcel_id: str, tenant_id: str, *, redis_state=None, parcel_geometry: dict | None = None
 ) -> list[dict]:
@@ -1790,7 +1832,7 @@ async def _gather_parcel_sensors(
                 continue
             pt = _device_point(dev)
             inside = bool(pt and parcel_geometry and point_in_polygon(pt[0], pt[1], parcel_geometry))
-            if not (inside or _controls_parcel(dev, parcel_urn)):
+            if not _is_open_field_sensor_of(dev, parcel_urn, inside):
                 continue
             readings: dict[str, float] = {}
             for metric, name in _SENSOR_METRICS.items():
@@ -2121,12 +2163,13 @@ async def compute_assessment(
     zone_results: list[CropHealthAssessment] = []
     for z in zones:
         zi = inputs.get(z.zone_id)
-        zone_sensor_ctx = (zi.sensors if zi else None) or sensor_ctx
+        # Whole-parcel mode keeps the caller's sensor context and no zone meteo, as before zones.
+        zone_sensor_ctx = sensor_ctx if whole else ((zi.sensors if zi else None) or sensor_ctx)
         try:
             za = await _assess_zone(
                 z, parcel_id, parcel_short, tenant_id, crop_ctx, zone_sensor_ctx, whole,
                 parcel_balance=parcel_balance if whole else zone_balances.get(z.zone_id),
-                zone_ctx=zone_meteo_ctx(z, now),
+                zone_ctx=None if whole else zone_meteo_ctx(z, now),
                 gdd_delta=gdd_deltas.get(z.zone_id, 0.0),
                 input_fidelity=zi.fidelity if zi else None,
                 zone_soil=zi.soil if zi else None,
@@ -2283,6 +2326,9 @@ def _zone_soil_values(zone_soil: dict | None) -> tuple[float | None, float | Non
     for key in ("fieldCapacity", "wiltingPoint"):
         v = zone_soil.get(key)
         vals.append(float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else None)
+    # A lone value would mix zone and parcel soil (AWC can go negative): both or the parcel's pair.
+    if vals[0] is None or vals[1] is None:
+        return None, None
     return vals[0], vals[1]
 
 
@@ -2333,6 +2379,35 @@ async def _write_weighted_parcel_state(
         await redis_state.unlock(key)
 
 
+class _SharedSeries:
+    """One upstream series request per parcel, shared by every zone's balance step.
+
+    The zones step from different saved days, so a later call may ask for an earlier
+    start: then the union is fetched again. Calls inside the held range are sliced
+    from it (a failed fetch, ``None``, is held too: zones do not hammer a service that is down).
+    """
+
+    def __init__(self, fetch):
+        self._fetch = fetch
+        self._start: date | None = None
+        self._end: date | None = None
+        self._data: dict | None = None
+        self.calls = 0
+
+    async def __call__(self, tenant_id: str, parcel_id: str, start: date, end: date):
+        held = self._start is not None
+        if not held or start < self._start or end > self._end:
+            lo = min(start, self._start) if held else start
+            hi = max(end, self._end) if held else end
+            self.calls += 1
+            self._data = await self._fetch(tenant_id, parcel_id, lo, hi)
+            self._start, self._end = lo, hi
+        if self._data is None:
+            return None
+        lo_key, hi_key = start.isoformat(), end.isoformat()
+        return {k: v for k, v in self._data.items() if lo_key <= k <= hi_key}
+
+
 async def _scheduled_zone_balances(
     parcel_id: str, parcel_short: str, tenant_id: str, zones: list, inputs: dict,
     crop_ctx: dict, *, redis_state, depletion_p: float, now_ts: float,
@@ -2357,6 +2432,9 @@ async def _scheduled_zone_balances(
     located: set[str] = {
         d["device_id"] for zi in inputs.values() for d in zi.devices if d.get("device_id")
     }
+    # Rain/ET0 and irrigation are the parcel's: one request each, however many zones.
+    shared_daily = _SharedSeries(_fetch_daily_water)
+    shared_irrigation = _SharedSeries(_fetch_irrigation)
     for z in zones:
         zi = inputs.get(z.zone_id)
         eto_daily = _zone_eto_daily(zi.weather_daily) if zi else {}
@@ -2367,7 +2445,7 @@ async def _scheduled_zone_balances(
             balance = await advance_daily_balance(
                 redis_state, tenant_id, parcel_short,
                 soil=parcel_soil, root_depth_mm=crop_ctx["root_depth_mm"], depletion_p=depletion_p,
-                kc=kc, today=today, fetch=_fetch_daily_water, fetch_irrigation=_fetch_irrigation,
+                kc=kc, today=today, fetch=shared_daily, fetch_irrigation=shared_irrigation,
                 zone_id=z.zone_id, zone_version=z.zone_version,
                 eto_daily=eto_daily or None, fc=fc, wp=wp,
             )
@@ -2944,23 +3022,6 @@ async def _zone_eoproduct(tenant_id: str, zone_urn: str, attr: str, extra_q: str
     if not fresh:
         return None
     return max(fresh, key=lambda e: str(e.get("sensingDate", "")))
-
-
-async def _fetch_zone_vigor_indices(parcel_id: str, tenant_id: str, zone_urn: str) -> dict[str, float]:
-    """``evi, savi, gndvi, ndre`` from the newest zone product (empty when none)."""
-    try:
-        e = await _zone_eoproduct(tenant_id, zone_urn, "ndvi")
-        if e is None:
-            return {}
-        out = {}
-        for k in ("evi", "savi", "gndvi", "ndre"):
-            v = _extract_eoproduct_scalar(e, k)
-            if v is not None:
-                out[k] = v
-        return out
-    except Exception as exc:
-        logger.warning("_fetch_zone_vigor_indices: failed for zone %s: %s", zone_urn, exc)
-        return {}
 
 
 async def _fetch_parcel_ndvi(

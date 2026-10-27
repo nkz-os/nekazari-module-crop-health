@@ -160,3 +160,35 @@ async def test_weather_comes_from_the_parcel_meteo_context(monkeypatch):
     assert weather.temp_air == 21.0
     assert weather.humidity_pct == 55.0
     assert weather.eto_mm == 4.0
+
+
+@pytest.mark.asyncio
+async def test_zonal_trigger_labels_inherited_values_and_writes_rank_with_id(monkeypatch):
+    """The upsert merges: the webhook run must not leave the daily run's zone_specific labels."""
+    zones = [Zone("z0", _Z0, urn="urn:ngsi-ld:AgriParcelZone:t:p1:z0", zone_version="v1", zone_rank=1),
+             Zone("z1", _Z1, urn="urn:ngsi-ld:AgriParcelZone:t:p1:z1", zone_version="v7", zone_rank=2)]
+    _calls, published = _patch_trigger(monkeypatch, zones=zones, device_coords=(5, 5))
+
+    async def _air(*a, **k):
+        return {"air_temp_c": 24.0}
+
+    monkeypatch.setattr(pipeline, "_sensor_air_ctx", _air)
+    await pipeline.trigger(
+        entity_id="urn:ngsi-ld:DeviceMeasurement:d1",
+        metric_type=MetricType.LEAF_TEMPERATURE.value,
+        redis_state=_Redis(), parcel_id="p1", tenant_id="t",
+    )
+    zone_entities = {e["hasAgriParcelZone"]["object"].rsplit(":", 1)[-1]: e
+                     for e in published if e["type"] == "CropHealthZoneAssessment"}
+    for zid, rank, version in (("z0", 1, "v1"), ("z1", 2, "v7")):
+        e = zone_entities[zid]
+        fid = e["nkz:inputFidelity"]["value"]
+        assert "zone_specific" not in fid.values()
+        assert e["nkz:zoneRank"]["value"] == rank and e["nkz:zoneVersion"]["value"] == version
+    # The sensor sits in z0 and supplied air temperature; z1 has none.
+    assert zone_entities["z0"]["nkz:inputFidelity"]["value"]["meteo"] == "iot_sensor"
+    assert zone_entities["z1"]["nkz:inputFidelity"]["value"]["meteo"] == "parcel_inherited"
+    assert zone_entities["z0"]["nkz:inputFidelity"]["value"]["balance"] == "unavailable"
+    rollup = next(e for e in published if e["type"] == "CropHealthAssessment")
+    assert rollup["nkz:worstZoneId"]["value"] == "z0"
+    assert rollup["nkz:worstZoneRank"]["value"] == 1

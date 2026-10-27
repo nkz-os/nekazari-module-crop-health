@@ -1298,7 +1298,8 @@ async def _zonal_call(
     for z in ordered:
         key = f"zone-{kind}:{tenant_id}:{short}:{z.zone_id}:{z.zone_version}"
         hit = None
-        if cache is not None:
+        # Without a zone version there is no stable key: never read or write the cache.
+        if cache is not None and z.zone_version is not None:
             try:
                 hit = await cache.get_json(key)
             except Exception:  # noqa: BLE001 — a failed read is a miss
@@ -1332,7 +1333,7 @@ async def _zonal_call(
         if zid not in versions:
             continue
         out[zid] = entry
-        if cache is not None and entry.get("fidelity") == "zone_specific":
+        if cache is not None and versions[zid] is not None and entry.get("fidelity") == "zone_specific":
             await cache.set_json(
                 f"zone-{kind}:{tenant_id}:{short}:{zid}:{versions[zid]}", entry, _ZONE_CACHE_TTL_S,
             )

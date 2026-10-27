@@ -72,6 +72,7 @@ from app.services.parcel_link import (
 )
 from app.services.redis_state import MAX_FUTURE_SKEW_S, RedisState, StoreError
 from app.services.zonation import (
+    zone_weights,
     resolve_zones,
     is_whole_parcel,
     sensors_in_zone,
@@ -727,7 +728,7 @@ async def trigger(
         logger.warning("trigger: all zones failed for %s — no assessment", effective_parcel)
         return None
 
-    rollup = _aggregate_rollup(effective_parcel, zone_results)
+    rollup = _aggregate_rollup(effective_parcel, zone_results, zone_weights(zones))
     attach_soil_suitability(rollup, crop_context)
     # Water stress is parcel-level: computed once here, carried by the rollup only.
     rollup.water_stress, rollup.under_panel_water_stress = await _resolve_both_water_stress(
@@ -770,6 +771,8 @@ async def _run_engines(
     parcel_stress: bool = False,
     sensor_context: str | None = None,
     parcel_balance: SoilWaterBalanceResult | None = None,
+    zone_urn: str | None = None,
+    fidelity_out: dict | None = None,
 ) -> CropHealthAssessment:
     """Shared engine-fusion core.
 
@@ -906,12 +909,19 @@ async def _run_engines(
     ndvi_val = None
     try:
         from app.engines.vigor import evaluate_vigor
-        ndvi_val = await _fetch_parcel_ndvi(effective_parcel, tenant_id)
+        ndvi_val, ndvi_fid = await _fetch_parcel_ndvi(effective_parcel, tenant_id, zone_urn)
+        if fidelity_out is not None:
+            fidelity_out["ndvi"] = ndvi_fid
+        zone_indices = (
+            await _fetch_zone_vigor_indices(effective_parcel, tenant_id, zone_urn)
+            if zone_urn and ndvi_fid == "zone_specific" else {}
+        )
         if ndvi_val is not None or assessment.cwsi is not None:
             cwsi_val = assessment.cwsi.cwsi if assessment.cwsi else None
             stage_name = phenology.stage if phenology else "vegetative"
             vr = evaluate_vigor(
                 ndvi=ndvi_val,
+                **zone_indices,
                 cwsi=cwsi_val,
                 stage=stage_name,
                 fidelity="onsite_uncalibrated" if ndvi_val is not None else "modeled_opendata",
@@ -1077,14 +1087,15 @@ async def _run_engines(
         from app.engines.sar_moisture import evaluate_sar_moisture
         from app.schemas import SARResult as SARResultSchema
 
-        smi_val = await _fetch_parcel_smi(effective_parcel, tenant_id)
+        smi_val, smi_fid = await _fetch_parcel_smi(effective_parcel, tenant_id, zone_urn)
+        sar_fid = smi_fid
         if smi_val is not None:
             assessment.sar = SARResultSchema(
                 surface_moisture_index=round(smi_val, 4),
                 data_fidelity="satellite_derived",
             )
         else:
-            sar_backscatter = await _fetch_parcel_sar(effective_parcel, tenant_id)
+            sar_backscatter, sar_fid = await _fetch_parcel_sar(effective_parcel, tenant_id, zone_urn)
             if sar_backscatter is not None:
                 vv, vh = sar_backscatter
                 sar_res = evaluate_sar_moisture(
@@ -1100,6 +1111,8 @@ async def _run_engines(
                     waterlogging_risk=sar_res.waterlogging_risk,
                     data_fidelity=sar_res.data_fidelity,
                 )
+        if fidelity_out is not None:
+            fidelity_out["sar"] = sar_fid
     except Exception as e:
         logger.error("SAR engine failed: %s", e)
 
@@ -1158,7 +1171,7 @@ async def _run_engines(
     # WUE (after composite stress and yield gap, needs NDVI integral + irrigation data)
     try:
         from app.engines.wue import evaluate_wue
-        ndvi_val = await _fetch_parcel_ndvi(effective_parcel, tenant_id)
+        ndvi_val, _ndvi_fid = await _fetch_parcel_ndvi(effective_parcel, tenant_id, zone_urn)
         irrigation_mm = None
         irrigation_source = "none"
         try:
@@ -1811,6 +1824,7 @@ async def _assess_zone(
     parcel_balance: SoilWaterBalanceResult | None = None,
     zone_ctx: dict | None = None,
     gdd_delta: float = 0.0,
+    input_fidelity: dict[str, str] | None = None,
 ) -> CropHealthAssessment:
     """Compute one zone's assessment, reusing the existing engine core.
 
@@ -1854,7 +1868,10 @@ async def _assess_zone(
         zone_id=None if whole else zone.zone_id,
         zone_urn=None if whole else zone.urn,
         zone_geometry=None if whole else zone.geometry,
+        zone_version=None if whole else zone.zone_version,
+        zone_rank=None if whole else zone.zone_rank,
     )
+    used_fidelity: dict[str, str] = {}
 
     if gdd is not None and thresholds:
         assessment.phenology_stage = derive_stage_from_gdd(gdd, thresholds)
@@ -1881,21 +1898,80 @@ async def _assess_zone(
         stage_table=thresholds,
         publish=False,
         et0_fidelity=meteo.fidelity.get("et0_mm", "unavailable"),
+        zone_urn=None if whole else zone.urn,
+        fidelity_out=used_fidelity,
     )
+    if not whole:
+        # What the engines actually used overrides the optimistic defaults.
+        assessment.input_fidelity = {**(input_fidelity or {}), **used_fidelity}
     return assessment
 
 
-def _aggregate_rollup(parcel_short: str, zone_results: list[CropHealthAssessment]) -> CropHealthAssessment:
-    """Parcel rollup = the worst (most severe) zone (fail-safe).
+_WEIGHTED_NUMERICS = (
+    ("composite_stress", "composite_index"),
+    ("cwsi", "cwsi"),
+    ("vigor", "vigor_index"),
+    ("soil_water_balance", "sw_mm"),
+    ("soil_water_balance", "deficit_mm"),
+)
 
+
+def _weighted_mean(values: list[tuple[float, float]]) -> float | None:
+    """Mean of ``(value, weight)`` pairs with the weights renormalised; None if empty."""
+    if not values:
+        return None
+    total = sum(w for _, w in values)
+    if total <= 0:
+        return sum(v for v, _ in values) / len(values)
+    return sum(v * w for v, w in values) / total
+
+
+def _aggregate_rollup(
+    parcel_short: str,
+    zone_results: list[CropHealthAssessment],
+    weights: dict[str, float] | None = None,
+) -> CropHealthAssessment:
+    """Parcel rollup of the zone assessments.
+
+    Severity and recommended action come from the worst zone (fail-safe); the
+    headline numerics (composite stress, CWSI, vigor, soil water, deficit) are
+    the area-weighted mean over the zones that have the value. Every other field
+    is the worst zone's. With a single zone the result is that zone, unchanged.
     Returns a copy with zone identity stripped so it serialises as the legacy
     parcel-level ``CropHealthAssessment`` (back-compat).
     """
     worst = max(zone_results, key=_sev_rank)
     rollup = worst.model_copy()
+    if len(zone_results) > 1:
+        w = weights or {}
+        rollup = worst.model_copy(deep=True)
+        for obj_name, attr in _WEIGHTED_NUMERICS:
+            target = getattr(rollup, obj_name, None)
+            if target is None:
+                continue
+            pairs = []
+            for z in zone_results:
+                obj = getattr(z, obj_name, None)
+                v = getattr(obj, attr, None) if obj is not None else None
+                if v is not None:
+                    pairs.append((float(v), float(w.get(z.zone_id, 1.0))))
+            mean = _weighted_mean(pairs)
+            if mean is not None:
+                setattr(target, attr, mean)
+    stress = [
+        z.composite_stress.composite_index for z in zone_results
+        if z.composite_stress is not None and z.composite_stress.composite_index is not None
+    ]
+    if any(z.zone_id is not None for z in zone_results):
+        rollup.worst_zone_id = worst.zone_id
+        rollup.worst_zone_rank = worst.zone_rank
+        rollup.zone_spread = (max(stress) - min(stress)) if len(stress) >= 2 else 0.0
     rollup.zone_id = None
     rollup.zone_urn = None
     rollup.zone_geometry = None
+    rollup.zone_version = None
+    rollup.zone_rank = None
+    rollup.input_fidelity = None
     rollup.parcel_id = parcel_short
     return rollup
 
@@ -2034,6 +2110,7 @@ async def compute_assessment(
                 parcel_balance=parcel_balance if whole else zone_balances.get(z.zone_id),
                 zone_ctx=zone_meteo_ctx(z, now),
                 gdd_delta=gdd_deltas.get(z.zone_id, 0.0),
+                input_fidelity=zi.fidelity if zi else None,
             )
         except Exception as exc:  # best-effort per zone — one bad zone must not sink the rest
             logger.warning("compute_assessment: zone %s failed for %s — skipped: %s", z.zone_id, parcel_short, exc)
@@ -2046,7 +2123,7 @@ async def compute_assessment(
         logger.warning("compute_assessment: all zones failed for %s — no assessment", parcel_short)
         return None
 
-    rollup = _aggregate_rollup(parcel_short, zone_results)
+    rollup = _aggregate_rollup(parcel_short, zone_results, zone_weights(zones))
 
     # Water stress is parcel-level: computed once here, carried by the rollup only.
     daily_shade, shade_observed_at = await _read_daily_shade_obs(
@@ -2778,98 +2855,179 @@ async def _fetch_parcel_lst_with_date(
     return None
 
 
-async def _fetch_parcel_ndvi(parcel_id: str, tenant_id: str) -> float | None:
-    """Fetch latest NDVI mean for a parcel from canonical EOProduct entities.
+ZONE_PRODUCT_MAX_AGE_DAYS = 20
+_ZONE_PRODUCT_LIMIT = 20
+
+
+def _sensing_age_days(entity: dict, now: datetime) -> int | None:
+    """Whole days between the product's ``sensingDate`` and ``now`` (None if unparseable)."""
+    raw = entity.get("sensingDate")
+    if isinstance(raw, dict):
+        raw = raw.get("value")
+    if not raw:
+        return None
+    try:
+        text = str(raw)
+        d = datetime.fromisoformat(text.replace("Z", "+00:00")).date() if "T" in text \
+            else datetime.strptime(text[:10], "%Y-%m-%d").date()
+    except ValueError:
+        return None
+    return (now.date() - d).days
+
+
+async def _query_eoproducts(tenant_id: str, q: str, limit: int) -> list[dict]:
+    from app.config import get_settings
+    from nkz_platform_sdk.orion import OrionClient
+    settings = get_settings()
+    client = OrionClient(tenant_id, base_url=settings.orion_ld_url, context_url=settings.orion_ld_context)
+    try:
+        entities = await client.query_entities(type="EOProduct", q=q, limit=limit, options="keyValues")
+    finally:
+        await client.close()
+    return entities if isinstance(entities, list) else []
+
+
+async def _zone_eoproduct(tenant_id: str, zone_urn: str, attr: str, extra_q: str = "") -> dict | None:
+    """Newest per-zone EOProduct carrying ``attr``, sensed within ZONE_PRODUCT_MAX_AGE_DAYS.
+
+    Per-zone products carry ``hasAgriParcelZone`` and no ``hasAgriParcel``, so the
+    parcel query never sees them and this one never sees parcel products.
+    """
+    q = f'hasAgriParcelZone=="{zone_urn}"' + extra_q
+    entities = await _query_eoproducts(tenant_id, q, _ZONE_PRODUCT_LIMIT)
+    now = datetime.now(timezone.utc)
+    fresh = []
+    for e in entities:
+        if e.get(attr) is None:
+            continue
+        age = _sensing_age_days(e, now)
+        if age is not None and age <= ZONE_PRODUCT_MAX_AGE_DAYS:
+            fresh.append(e)
+    if not fresh:
+        return None
+    return max(fresh, key=lambda e: str(e.get("sensingDate", "")))
+
+
+async def _fetch_zone_vigor_indices(parcel_id: str, tenant_id: str, zone_urn: str) -> dict[str, float]:
+    """``evi, savi, gndvi, ndre`` from the newest zone product (empty when none)."""
+    try:
+        e = await _zone_eoproduct(tenant_id, zone_urn, "ndvi")
+        if e is None:
+            return {}
+        out = {}
+        for k in ("evi", "savi", "gndvi", "ndre"):
+            v = _extract_eoproduct_scalar(e, k)
+            if v is not None:
+                out[k] = v
+        return out
+    except Exception as exc:
+        logger.warning("_fetch_zone_vigor_indices: failed for zone %s: %s", zone_urn, exc)
+        return {}
+
+
+async def _fetch_parcel_ndvi(
+    parcel_id: str, tenant_id: str, zone_urn: str | None = None,
+) -> tuple[float | None, str]:
+    """Latest NDVI mean as ``(value, fidelity)``.
+
+    With ``zone_urn``: the zone's own EOProduct sensed within 20 days
+    (``zone_specific``); otherwise the parcel's (``parcel_inherited``); nothing
+    found -> ``(None, "unavailable")``.
 
     Canonical contract (vegetation-health CONTRACT.md): one EOProduct per
-    (parcel, sensingDate); NDVI is the named lowercased `ndvi` Property whose
+    (parcel|zone, sensingDate); NDVI is the named lowercased `ndvi` Property whose
     `value` is the zonal mean. There is no `productType` discriminator on
-    optical products and no `ndviMean`/`ndviValue`. Newest by sensingDate wins;
-    SAR EOProducts (no `ndvi` attribute) are skipped.
+    optical products. Newest by sensingDate wins; SAR EOProducts (no `ndvi`)
+    are skipped.
     """
-    try:
-        from app.config import get_settings
-        from nkz_platform_sdk.orion import OrionClient
-        settings = get_settings()
-        client = OrionClient(tenant_id, base_url=settings.orion_ld_url, context_url=settings.orion_ld_context)
+    if zone_urn:
         try:
-            entities = await client.query_entities(
-                type="EOProduct",
-                q=f'hasAgriParcel=="urn:ngsi-ld:AgriParcel:{parcel_id}"|refAgriParcel=="urn:ngsi-ld:AgriParcel:{parcel_id}"',
-                limit=100,
-                options="keyValues",
-            )
-        finally:
-            await client.close()
-        if entities and isinstance(entities, list):
-            with_ndvi = [e for e in entities if e.get("ndvi") is not None]
-            if with_ndvi:
-                latest = max(with_ndvi, key=lambda e: str(e.get("sensingDate", "")))
-                ndvi = _extract_eoproduct_scalar(latest, "ndvi")
-                if ndvi is not None:
-                    return ndvi
+            e = await _zone_eoproduct(tenant_id, zone_urn, "ndvi")
+            if e is not None:
+                v = _extract_eoproduct_scalar(e, "ndvi")
+                if v is not None:
+                    return v, "zone_specific"
+        except Exception as exc:
+            logger.warning("_fetch_parcel_ndvi: zone %s failed, using parcel: %s", zone_urn, exc)
+    try:
+        entities = await _query_eoproducts(
+            tenant_id,
+            f'hasAgriParcel=="urn:ngsi-ld:AgriParcel:{parcel_id}"|refAgriParcel=="urn:ngsi-ld:AgriParcel:{parcel_id}"',
+            100,
+        )
+        with_ndvi = [e for e in entities if e.get("ndvi") is not None]
+        if with_ndvi:
+            latest = max(with_ndvi, key=lambda e: str(e.get("sensingDate", "")))
+            ndvi = _extract_eoproduct_scalar(latest, "ndvi")
+            if ndvi is not None:
+                return ndvi, "parcel_inherited"
     except Exception as exc:
         logger.warning("_fetch_parcel_ndvi: failed for parcel %s — returning None: %s", parcel_id, exc)
-    return None
+    return None, "unavailable"
 
 
-async def _fetch_parcel_smi(parcel_id: str, tenant_id: str) -> float | None:
-    """Fetch latest SAR SMI (0–1) for a parcel from EOProduct.sarMoisture."""
-    try:
-        from app.config import get_settings
-        from nkz_platform_sdk.orion import OrionClient
-        settings = get_settings()
-        client = OrionClient(tenant_id, base_url=settings.orion_ld_url, context_url=settings.orion_ld_context)
+async def _fetch_parcel_smi(
+    parcel_id: str, tenant_id: str, zone_urn: str | None = None,
+) -> tuple[float | None, str]:
+    """Latest SAR SMI (0–1) from EOProduct.sarMoisture as ``(value, fidelity)``."""
+    if zone_urn:
         try:
-            entities = await client.query_entities(
-                type="EOProduct",
-                q=f'hasAgriParcel=="urn:ngsi-ld:AgriParcel:{parcel_id}"|refAgriParcel=="urn:ngsi-ld:AgriParcel:{parcel_id}"',
-                limit=100,
-                options="keyValues",
-            )
-        finally:
-            await client.close()
-        if entities and isinstance(entities, list):
-            with_smi = [e for e in entities if e.get("sarMoisture") is not None]
-            if with_smi:
-                latest = max(with_smi, key=lambda e: str(e.get("sensingDate", "")))
-                smi = _extract_eoproduct_scalar(latest, "sarMoisture")
-                if smi is not None:
-                    return smi
+            e = await _zone_eoproduct(tenant_id, zone_urn, "sarMoisture")
+            if e is not None:
+                v = _extract_eoproduct_scalar(e, "sarMoisture")
+                if v is not None:
+                    return v, "zone_specific"
+        except Exception as exc:
+            logger.warning("_fetch_parcel_smi: zone %s failed, using parcel: %s", zone_urn, exc)
+    try:
+        entities = await _query_eoproducts(
+            tenant_id,
+            f'hasAgriParcel=="urn:ngsi-ld:AgriParcel:{parcel_id}"|refAgriParcel=="urn:ngsi-ld:AgriParcel:{parcel_id}"',
+            100,
+        )
+        with_smi = [e for e in entities if e.get("sarMoisture") is not None]
+        if with_smi:
+            latest = max(with_smi, key=lambda e: str(e.get("sensingDate", "")))
+            smi = _extract_eoproduct_scalar(latest, "sarMoisture")
+            if smi is not None:
+                return smi, "parcel_inherited"
     except Exception as exc:
         logger.warning("_fetch_parcel_smi: failed for %s: %s", parcel_id, exc)
-    return None
+    return None, "unavailable"
 
 
-async def _fetch_parcel_sar(parcel_id: str, tenant_id: str) -> tuple[float, float] | None:
-    """Fetch latest SAR backscatter (VV, VH) for a parcel from Orion-LD.
+async def _fetch_parcel_sar(
+    parcel_id: str, tenant_id: str, zone_urn: str | None = None,
+) -> tuple[tuple[float, float] | None, str]:
+    """Latest SAR backscatter ``((VV, VH), fidelity)`` from GRD EOProducts.
 
-    Queries EOProduct entities (FIWARE Smart Data Model) filtered by
-    productType=GRD (Sentinel-1 Ground Range Detected).
+    Zone product (within 20 days) -> ``zone_specific``; else the parcel's ->
+    ``parcel_inherited``; none -> ``(None, "unavailable")``.
     """
-    try:
-        from app.config import get_settings
-        from nkz_platform_sdk.orion import OrionClient
-        settings = get_settings()
-        client = OrionClient(tenant_id, base_url=settings.orion_ld_url, context_url=settings.orion_ld_context)
+    if zone_urn:
         try:
-            entities = await client.query_entities(
-                type="EOProduct",
-                q=f'(hasAgriParcel==\"urn:ngsi-ld:AgriParcel:{parcel_id}\"|refAgriParcel==\"urn:ngsi-ld:AgriParcel:{parcel_id}\");productType==\"GRD\"',
-                limit=1,
-                options="keyValues",
-            )
-        finally:
-            await client.close()
-        if entities and isinstance(entities, list):
+            e = await _zone_eoproduct(tenant_id, zone_urn, "backscatterVV", ';productType=="GRD"')
+            if e is not None:
+                vv, vh = e.get("backscatterVV"), e.get("backscatterVH")
+                if vv is not None and vh is not None:
+                    return (float(vv), float(vh)), "zone_specific"
+        except Exception as exc:
+            logger.warning("_fetch_parcel_sar: zone %s failed, using parcel: %s", zone_urn, exc)
+    try:
+        entities = await _query_eoproducts(
+            tenant_id,
+            f'(hasAgriParcel==\"urn:ngsi-ld:AgriParcel:{parcel_id}\"|refAgriParcel==\"urn:ngsi-ld:AgriParcel:{parcel_id}\");productType==\"GRD\"',
+            1,
+        )
+        if entities:
             e = entities[0]
             vv = e.get("backscatterVV")
             vh = e.get("backscatterVH")
             if vv is not None and vh is not None:
-                return float(vv), float(vh)
+                return (float(vv), float(vh)), "parcel_inherited"
     except Exception as exc:
         logger.warning("_fetch_parcel_sar: failed for parcel %s — returning None: %s", parcel_id, exc)
-    return None
+    return None, "unavailable"
 
 
 def _resolve_data_fidelity(assessment: CropHealthAssessment) -> str:

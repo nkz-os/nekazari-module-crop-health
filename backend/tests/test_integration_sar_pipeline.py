@@ -57,4 +57,4 @@ async def test_fetch_sar_returns_none_when_empty():
          patch("nkz_platform_sdk.orion.OrionClient", mock_cls):
         result = await _fetch_parcel_sar("parcel-4", "test-tenant")
 
-    assert result is None
+    assert result == (None, "unavailable")

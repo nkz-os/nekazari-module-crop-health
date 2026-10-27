@@ -441,6 +441,15 @@ class CropHealthAssessment(BaseModel):
     # is used verbatim for the ``hasAgriParcelZone`` relationship so the ref
     # matches the real entity; otherwise a best-effort URN is reconstructed.
     zone_urn: str | None = None
+    # Zone entities: where each input came from (``zone_specific`` / ``parcel_inherited``
+    # / ``unavailable``), plus the zonation version and rank the assessment used.
+    input_fidelity: dict[str, str] | None = None
+    zone_version: str | None = None
+    zone_rank: int | None = None
+    # Parcel rollup only (zonal mode): the worst zone and the stress spread across zones.
+    worst_zone_id: str | None = None
+    worst_zone_rank: int | None = None
+    zone_spread: float | None = None
     crop_requirements: CropRequirements | None = None
     soil_suitability: "SoilSuitability | None" = None
     # Parcel-level only: never serialised on zone entities.
@@ -675,6 +684,12 @@ class CropHealthAssessment(BaseModel):
                         "@value": up.observed_at.astimezone(timezone.utc).isoformat(),
                     },
                 }
+        if self.worst_zone_id is not None:
+            entity["nkz:worstZoneId"] = {"type": "Property", "value": self.worst_zone_id}
+            if self.worst_zone_rank is not None:
+                entity["nkz:worstZoneRank"] = {"type": "Property", "value": self.worst_zone_rank}
+            if self.zone_spread is not None:
+                entity["nkz:zoneSpread"] = {"type": "Property", "value": self.zone_spread}
         return entity
 
     def to_zone_ngsi_ld(self) -> dict[str, Any]:
@@ -702,6 +717,12 @@ class CropHealthAssessment(BaseModel):
             "object": zone_urn,
         }
         entity["zoneId"] = {"type": "Property", "value": zone}
+        if self.input_fidelity:
+            entity["nkz:inputFidelity"] = {"type": "Property", "value": dict(self.input_fidelity)}
+        if self.zone_version is not None:
+            entity["nkz:zoneVersion"] = {"type": "Property", "value": self.zone_version}
+        if self.zone_rank is not None:
+            entity["nkz:zoneRank"] = {"type": "Property", "value": self.zone_rank}
         return entity
 
 

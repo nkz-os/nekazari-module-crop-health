@@ -112,3 +112,15 @@ async def test_irrigation_paginates(monkeypatch):
     assert out == {"2026-10-20": pytest.approx(1001.0)}
     assert [c["offset"] for c in calls] == [0, 1000]
     assert all(c["limit"] == 1000 for c in calls)
+
+
+@pytest.mark.asyncio
+async def test_irrigation_query_is_bounded_by_the_window(monkeypatch):
+    # Orion compares the DateTime's @value as a string: one day of margin on each
+    # side keeps offsets like +02:00 inside; the exact day is checked afterwards.
+    calls = _fake(monkeypatch, [[]])
+    await pipeline._fetch_irrigation("tenant-a", "p-1", START, END)
+    q = calls[0]["q"]
+    window = ('((endedAt[@value]>="2026-10-17";endedAt[@value]<"2026-10-26")'
+              '|(startedAt[@value]>="2026-10-17";startedAt[@value]<"2026-10-26"))')
+    assert q.endswith(";" + window)

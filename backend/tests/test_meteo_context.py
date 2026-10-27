@@ -54,3 +54,26 @@ async def test_solar_radiation_resolved_from_regional():
     ctx = await resolve_meteo_context("p1", "t1", regional_fn=_reg)
     assert ctx.solar_radiation_wm2 == 640.0
     assert ctx.fidelity["solar_radiation_wm2"] == "regional_proxy"
+
+
+@pytest.mark.asyncio
+async def test_zone_ctx_without_sensor_is_zone_weather():
+    zone = {"air_temp_c": (10 + 21) / 2, "air_temp_min_24h": 10.0}
+    ctx = await resolve_meteo_context(
+        "p1", "t1", zone_ctx=zone, weather_map_fn=_wm, regional_fn=_regional,
+    )
+    assert ctx.air_temp_c == 15.5
+    assert ctx.fidelity["air_temp_c"] == "zone_weather"
+    assert ctx.air_temp_min_24h == 10.0
+    assert ctx.fidelity["rh_pct"] == "parcel_weather"
+    assert ctx.dominant_fidelity == "zone_weather"
+
+
+@pytest.mark.asyncio
+async def test_sensor_beats_zone_ctx():
+    ctx = await resolve_meteo_context(
+        "p1", "t1", sensor_ctx={"air_temp_c": 28.0}, zone_ctx={"air_temp_c": 15.5},
+        weather_map_fn=_wm, regional_fn=_regional,
+    )
+    assert ctx.air_temp_c == 28.0
+    assert ctx.fidelity["air_temp_c"] == "iot_sensor"

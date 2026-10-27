@@ -358,9 +358,17 @@ class RedisState:
             logger.warning("redis_state.set_json: failed for %s — not stored: %s", key, exc)
             return False
 
-    async def get_balance_state(self, tenant_id: str, parcel_id: str) -> dict | None:
+    @staticmethod
+    def balance_key(tenant_id: str, parcel_id: str, zone_id: str | None = None) -> str:
+        """Key of the daily balance state: the parcel's, or one zone's when ``zone_id``."""
+        base = f"swd:{tenant_id}:{parcel_id}"
+        return f"{base}:{zone_id}" if zone_id else base
+
+    async def get_balance_state(
+        self, tenant_id: str, parcel_id: str, zone_id: str | None = None
+    ) -> dict | None:
         """Daily soil water state ``{"date", "sw_mm"}``; raises StoreError like get_json."""
-        return await self.get_json(f"swd:{tenant_id}:{parcel_id}")
+        return await self.get_json(self.balance_key(tenant_id, parcel_id, zone_id))
 
     async def set_balance_state(
         self,
@@ -376,8 +384,14 @@ class RedisState:
         anchor_date: str | None = None,
         anchor_sw_mm: float | None = None,
         anchor_root_depth_mm: float | None = None,
+        zone_id: str | None = None,
+        zone_version: str | None = None,
+        source: str | None = None,
     ) -> bool:
         """Store the soil water (mm) at the end of ``day``; TTL 40 days.
+
+        ``zone_id`` stores a zone's own state (with its ``zone_version``);
+        ``source`` marks a parcel state derived from the zones.
 
         The day's flows, the root depth the water refers to and the replay anchor
         (water at the end of an older day) are stored when given.
@@ -392,9 +406,11 @@ class RedisState:
             "anchor_date": anchor_date,
             "anchor_sw_mm": anchor_sw_mm,
             "anchor_root_depth_mm": anchor_root_depth_mm,
+            "zone_version": zone_version,
+            "source": source,
         }
         value.update({k: v for k, v in extras.items() if v is not None})
-        return await self.set_json(f"swd:{tenant_id}:{parcel_id}", value, 40 * 86400)
+        return await self.set_json(self.balance_key(tenant_id, parcel_id, zone_id), value, 40 * 86400)
 
     async def try_lock(self, key: str, ttl_s: int) -> bool | None:
         """True if acquired, False if held by someone else, None if Redis is down."""

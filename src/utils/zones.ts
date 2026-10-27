@@ -11,6 +11,7 @@ interface ZoneLike {
   zoneId: string;
   geometry?: Geometry;
   differsFromParcel?: boolean;
+  zoneRank?: number | null;
 }
 
 export function polygonRings(geometry: Geometry): number[][][] {
@@ -42,7 +43,7 @@ const ROW = 1e-4;
 
 /**
  * Zone number per parcel, 1-based, read like a page: north to south, then west to east.
- * Zones without geometry come last, by id. Independent of the order the zones arrive in.
+ * Zones without geometry come last, by id. If every zone of a parcel carries a `zoneRank`, that rank is used. Independent of the order the zones arrive in.
  */
 export function zoneNumbers(zones: ZoneLike[]): Map<string, number> {
   const byParcel = new Map<string, ZoneLike[]>();
@@ -53,6 +54,11 @@ export function zoneNumbers(zones: ZoneLike[]): Map<string, number> {
   }
   const out = new Map<string, number>();
   byParcel.forEach((list) => {
+    // The backend's own order wins when it ranks every zone of the parcel.
+    if (list.every((z) => typeof z.zoneRank === 'number')) {
+      list.forEach((z) => out.set(zoneKey(z.parcelId, z.zoneId), z.zoneRank as number));
+      return;
+    }
     const keyed = list.map((z) => ({ z, c: zoneCentroid(z.geometry) }));
     keyed.sort((a, b) => {
       if (!a.c || !b.c) return a.c ? -1 : b.c ? 1 : a.z.zoneId.localeCompare(b.z.zoneId);
@@ -89,6 +95,25 @@ export function zoneNumberList(zones: ZoneLike[], numbers: Map<string, number>):
     i = j + 1;
   }
   return parts.join(', ');
+}
+
+export const FIDELITY_KEYS = ['meteo', 'gdd', 'ndvi', 'sar', 'soil', 'twi', 'balance'] as const;
+
+/** Which inputs of a zone are its own (zone-specific or sensor) and which are inherited from the parcel. */
+export function fidelityLine(
+  inputFidelity: Record<string, string> | undefined,
+  t: (key: string) => string,
+): { own: string[]; inherited: string[] } {
+  const own: string[] = [];
+  const inherited: string[] = [];
+  if (!inputFidelity) return { own, inherited };
+  for (const key of FIDELITY_KEYS) {
+    const v = inputFidelity[key];
+    const label = t(`zones.fidelity.${key}`);
+    if (v === 'zone_specific' || v === 'iot_sensor') own.push(label);
+    else if (v === 'parcel_inherited') inherited.push(label);
+  }
+  return { own, inherited };
 }
 
 /** The map label: zone number and the value of the active layer. */

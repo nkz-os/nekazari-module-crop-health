@@ -31,8 +31,24 @@ DAY_FLOWS = ("precip_mm", "etc_mm", "actual_et_mm", "deep_percolation_mm")
 STATE_EXTRAS = DAY_FLOWS + ("root_depth_mm",)
 
 
-def _lock_key(tenant_id: str, parcel_id: str) -> str:
-    return f"swd-lock:{tenant_id}:{parcel_id}"
+def _lock_key(tenant_id: str, parcel_id: str, zone_id: str | None = None) -> str:
+    base = f"swd-lock:{tenant_id}:{parcel_id}"
+    return f"{base}:{zone_id}" if zone_id else base
+
+
+def soil_with_overrides(soil, fc: float | None, wp: float | None):
+    """The soil with a zone's own field capacity / wilting point where given."""
+    update = {}
+    if fc is not None:
+        update["field_capacity"] = fc
+    if wp is not None:
+        update["wilting_point"] = wp
+    return soil.model_copy(update=update) if update else soil
+
+
+def _zone_kwargs(zone_id: str | None) -> dict:
+    """Extra Redis arguments for a zone's state; none for the parcel's (as before zones)."""
+    return {"zone_id": zone_id} if zone_id else {}
 
 
 def step_day(
@@ -159,12 +175,24 @@ async def advance_daily_balance(
     today: date,
     fetch,
     fetch_irrigation=None,
+    zone_id: str | None = None,
+    zone_version: str | None = None,
+    eto_daily: dict[date, float] | None = None,
+    fc: float | None = None,
+    wp: float | None = None,
 ) -> SoilWaterBalanceResult | None:
     """Replay the stored balance from its anchor up to yesterday; None when nothing trustworthy exists.
 
     ``fetch_irrigation=None`` means no irrigation source (every day 0 mm).
+
+    With ``zone_id`` the state is the zone's own. ``eto_daily`` replaces the
+    parcel ET0 on the days it has, ``fc``/``wp`` the soil's; rain, irrigation, Kc
+    and root depth stay the parcel's. A stored ``zone_version`` different from
+    ``zone_version`` (the zone changed) restarts from the parcel's state.
     """
-    key = _lock_key(tenant_id, parcel_id)
+    soil = soil_with_overrides(soil, fc, wp)
+    zkw = _zone_kwargs(zone_id)
+    key = _lock_key(tenant_id, parcel_id, zone_id)
     acquired = await redis_state.try_lock(key, BALANCE_LOCK_TTL_S)
     if not acquired:
         logger.info(
@@ -173,7 +201,20 @@ async def advance_daily_balance(
         return None
     try:
         try:
-            state = await redis_state.get_balance_state(tenant_id, parcel_id)
+            state = await redis_state.get_balance_state(tenant_id, parcel_id, **zkw)
+            if zone_id and state is not None and state.get("zone_version") != zone_version:
+                logger.info(
+                    "daily_balance: reason=zone_version_changed tenant=%s parcel=%s zone=%s stored=%s received=%s",
+                    tenant_id, parcel_id, zone_id, state.get("zone_version"), zone_version,
+                )
+                parcel_state = await redis_state.get_balance_state(tenant_id, parcel_id)
+                if parcel_state is None:
+                    logger.info(
+                        "daily_balance: reason=zone_version_changed fallback=fresh tenant=%s parcel=%s zone=%s",
+                        tenant_id, parcel_id, zone_id,
+                    )
+                # No parcel state: the old zone state is dropped too (fresh anchor).
+                state = parcel_state
         except StoreError as exc:
             logger.warning(
                 "daily_balance: state unreadable for %s/%s, skipping: %s", tenant_id, parcel_id, exc
@@ -209,6 +250,12 @@ async def advance_daily_balance(
             return state_result
 
         daily = await fetch(tenant_id, parcel_id, start, yesterday)
+        if daily is not None and eto_daily:
+            daily = dict(daily)
+            for day, eto in eto_daily.items():
+                row = daily.get(day.isoformat())
+                if row is not None and row[0] is not None:
+                    daily[day.isoformat()] = (row[0], eto)
         if daily is None:
             logger.warning(
                 "daily_balance: weather unavailable for %s/%s, keeping previous state",
@@ -270,6 +317,7 @@ async def advance_daily_balance(
             root_depth_mm=root_depth_mm, **day_flows(result),
             anchor_date=new_anchor[0].isoformat(), anchor_sw_mm=new_anchor[1],
             anchor_root_depth_mm=new_anchor[2],
+            **zkw, **({"zone_version": zone_version} if zone_id else {}),
         )
         return _low(result) if last_day < yesterday else result
     finally:
@@ -285,8 +333,11 @@ async def correct_balance_state(
     root_depth_mm: float,
     awc_mm: float,
     now_ts: float,
+    zone_id: str | None = None,
 ) -> float | None:
     """Pull the stored water toward the probe mean; the state date is unchanged.
+
+    With ``zone_id`` it corrects that zone's state only.
 
     The corrected water becomes the anchor, so the next replay starts from it.
     """
@@ -296,12 +347,13 @@ async def correct_balance_state(
     theta = sum(t for _, t in used) / len(used)
     sw = min(max((theta - soil.wilting_point) * root_depth_mm, 0.0), awc_mm)
 
-    key = _lock_key(tenant_id, parcel_id)
+    key = _lock_key(tenant_id, parcel_id, zone_id)
+    zkw = _zone_kwargs(zone_id)
     if not await redis_state.try_lock(key, BALANCE_LOCK_TTL_S):
         return None
     try:
         try:
-            state = await redis_state.get_balance_state(tenant_id, parcel_id)
+            state = await redis_state.get_balance_state(tenant_id, parcel_id, **zkw)
         except StoreError as exc:
             logger.warning(
                 "daily_balance: state unreadable for %s/%s, no correction: %s", tenant_id, parcel_id, exc
@@ -313,6 +365,7 @@ async def correct_balance_state(
             tenant_id, parcel_id, state["date"], sw,
             **{k: state.get(k) for k in STATE_EXTRAS},
             anchor_date=state["date"], anchor_sw_mm=sw, anchor_root_depth_mm=root_depth_mm,
+            **zkw, **({"zone_version": state.get("zone_version")} if zone_id else {}),
         )
         return sw
     finally:

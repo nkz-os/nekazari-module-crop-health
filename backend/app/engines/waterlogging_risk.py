@@ -13,6 +13,14 @@ from dataclasses import dataclass
 # SCS drainage factor: Group A drains fastest, D slowest
 SCS_FACTORS = {"A": 1.5, "B": 1.0, "C": 0.5, "D": 0.2}
 
+_LEVELS = ("LOW", "MEDIUM", "HIGH", "CRITICAL")
+_CONDITIONS = {
+    "LOW": "normal",
+    "MEDIUM": "saturated_short",
+    "HIGH": "saturated_prolonged",
+    "CRITICAL": "anoxia_risk",
+}
+
 
 @dataclass
 class WaterloggingRiskResult:
@@ -29,6 +37,7 @@ def waterlogging_risk(
     excess_mm: float,
     ksat_mm_h: float,
     scs_group: str,
+    wetness_class: str | None = None,
 ) -> WaterloggingRiskResult:
     """Calculate waterlogging risk from excess water and soil drainage.
 
@@ -36,6 +45,10 @@ def waterlogging_risk(
         excess_mm: Water that overflowed AWC (mm) — from soil_water_balance.
         ksat_mm_h: Saturated hydraulic conductivity (mm/h).
         scs_group: SCS hydrologic group (A, B, C, D).
+        wetness_class: Terrain wetness of the zone (TWI). With excess water,
+            ``wet`` raises the level one step (capped at CRITICAL) and
+            ``drained`` lowers it one step (floored at LOW); ``None`` or
+            ``balanced`` leave it as is.
 
     Returns:
         WaterloggingRiskResult with saturation hours and risk level.
@@ -72,6 +85,12 @@ def waterlogging_risk(
     else:
         risk_level = "CRITICAL"
         condition = "anoxia_risk"
+
+    step = {"wet": 1, "drained": -1}.get(wetness_class or "", 0)
+    if step:
+        idx = min(max(_LEVELS.index(risk_level) + step, 0), len(_LEVELS) - 1)
+        risk_level = _LEVELS[idx]
+        condition = _CONDITIONS[risk_level]
 
     return WaterloggingRiskResult(
         excess_mm=round(excess_mm, 2),

@@ -134,9 +134,13 @@ def _setup(monkeypatch, *, wm=None, regional=None, soil=None, zones=None, eppo="
     monkeypatch.setattr(pipeline, "resolve_zones", _zones, raising=False)
     monkeypatch.setattr(pipeline, "_weather_map_meteo", _wm)
     monkeypatch.setattr(pipeline, "_regional_meteo", _reg)
-    for name in ("_fetch_parcel_lst_with_date", "_fetch_parcel_lst", "_fetch_parcel_ndvi",
-                 "_fetch_parcel_smi", "_fetch_parcel_sar", "_emit_assessment_side_effects"):
+    async def _unavailable(*a, **k):
+        return None, "unavailable"
+
+    for name in ("_fetch_parcel_lst_with_date", "_fetch_parcel_lst", "_emit_assessment_side_effects"):
         monkeypatch.setattr(pipeline, name, _none, raising=False)
+    for name in ("_fetch_parcel_ndvi", "_fetch_parcel_smi", "_fetch_parcel_sar"):
+        monkeypatch.setattr(pipeline, name, _unavailable, raising=False)
 
     published = {"assessments": [], "entities": []}
 

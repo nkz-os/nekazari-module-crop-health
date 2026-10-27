@@ -75,3 +75,23 @@ describe('NoAssessmentView', () => {
     expect(r(null)).not.toContain('worklist.job');
   });
 });
+
+// Shape of `map_entity_to_assessment` for a zonal rollup (backend/tests/test_assessment_mapper_zones.py).
+const mappedRollup = {
+  id: 'urn:ngsi-ld:CropHealthAssessment:acme:p1', parcelId: 'p1',
+  overallSeverity: 'HIGH', recommendedAction: 'IRRIGATE_IMMEDIATE', cwsiValue: 0.5,
+  assessedAt: '2026-10-25T08:00:00Z',
+  worstZoneRank: 3, worstZoneId: 'z3', zoneSpread: 12.5,
+};
+
+describe('CropStatusSnapshotView worst zone', () => {
+  const view = (a: object) => renderToStaticMarkup(
+    <CropStatusSnapshotView assessment={a as never} cropCtx={null} nextJob={job} surprise={null} freshness="fresh" />,
+  ).replace(/&quot;/g, '"');
+  it('names the worst zone of a mapped zonal rollup', () => {
+    expect(view(mappedRollup)).toContain('zones.worst:{"n":3}');
+  });
+  it('shows nothing when the mapper left the rank null', () => {
+    expect(view({ ...mappedRollup, worstZoneRank: null, worstZoneId: null, zoneSpread: null })).not.toContain('zones.worst');
+  });
+});

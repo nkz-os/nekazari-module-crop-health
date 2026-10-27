@@ -32,6 +32,27 @@ def extract_parcel_id(entity: dict[str, Any]) -> str:
     return obj.replace("urn:ngsi-ld:AgriParcel:", "")
 
 
+_NKZ_NS = "https://nkz-os.org/ns/"
+
+
+def nkz_value(entity: dict[str, Any], name: str) -> Any:
+    """Value of a producer ``nkz:`` term, whether it arrives as ``nkz:x``, the full IRI or bare."""
+    for key in (f"nkz:{name}", _NKZ_NS + name, name):
+        if entity.get(key) is not None:
+            return prop_value(entity, key)
+    return None
+
+
+def _rank_int(value: Any) -> int | None:
+    """A zone rank as int; accepts 3, "3" and "3.0", None on anything else."""
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return int(float(value))
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
 def extract_zone_id(entity: dict[str, Any]) -> str:
     zid = prop_value(entity, "zoneId")
     if zid:
@@ -267,6 +288,9 @@ def map_entity_to_assessment(entity: dict[str, Any]) -> dict[str, Any]:
         "underPanelWaterStressIndex": prop_value(entity, "underPanelWaterStressIndex"),
         "underPanelWaterStressFidelity": prop_value(entity, "underPanelWaterStressFidelity"),
         "underPanelWaterStressObservedAt": datetime_value(entity, "underPanelWaterStressObservedAt"),
+        "worstZoneRank": _rank_int(nkz_value(entity, "worstZoneRank")),
+        "worstZoneId": nkz_value(entity, "worstZoneId"),
+        "zoneSpread": nkz_value(entity, "zoneSpread"),
     }
 
 
@@ -308,6 +332,12 @@ def map_entity_to_zone_assessment(
     result = map_entity_to_assessment(entity)
     result["zoneId"] = extract_zone_id(entity)
     result["zoneUrn"] = extract_zone_urn(entity)
+    fidelity = nkz_value(entity, "inputFidelity")
+    result["inputFidelity"] = fidelity if isinstance(fidelity, dict) else {}
+    rank = nkz_value(entity, "zoneRank")
+    result["zoneRank"] = _rank_int(rank)
+    result["zoneVersion"] = nkz_value(entity, "zoneVersion")
+    result["wetnessClass"] = nkz_value(entity, "wetnessClass")
     if geometry is not None:
         result["geometry"] = geometry
     if sensor_nearby is not None:
@@ -328,7 +358,12 @@ def differs_from_parcel(zone: dict[str, Any], parcel: dict[str, Any]) -> bool:
     """True if a zone's state is worth calling out against the whole parcel.
 
     A sensor nearby always counts. A value missing on either side is ignored.
+    A zone whose every recorded input is inherited from the parcel carries no
+    zone-specific information, so it never differs (even with a sensor nearby).
     """
+    fidelity = zone.get("inputFidelity")
+    if isinstance(fidelity, dict) and fidelity and all(v == "parcel_inherited" for v in fidelity.values()):
+        return False
     if zone.get("sensorNearby") is True:
         return True
     for key, threshold in _DIFFER_THRESHOLDS:

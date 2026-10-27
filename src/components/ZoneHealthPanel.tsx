@@ -3,7 +3,7 @@ import { useTranslation } from '@nekazari/sdk';
 import { SeverityBadge } from './shared/SeverityBadge';
 import type { ZoneAssessmentData, ZonesResponse } from '../types/assessment';
 import { navigateTo } from '../api/cropHealthApi';
-import { splitZones, zoneKey, zoneNumberList, zoneNumbers, zoneSelection, zoneViewerPath, type ZoneRef } from '../utils/zones';
+import { fidelityLine, splitZones, zoneKey, zoneNumberList, zoneNumbers, zoneSelection, zoneViewerPath, type ZoneRef } from '../utils/zones';
 
 interface ZoneHealthPanelProps {
   zones: ZoneAssessmentData[];
@@ -40,6 +40,15 @@ function parcelMetricLabel(zone: ZoneAssessmentData, pv: ZonesResponse['parcelVa
   if (zone.compositeStressIndex != null) return pv.compositeStressIndex != null ? `${Math.round(pv.compositeStressIndex)}%` : '—';
   if (zone.vigorIndex != null) return pv.vigorIndex != null ? `VHI ${Math.round(pv.vigorIndex * 100)}` : '—';
   return '—';
+}
+
+function provenance(zone: ZoneAssessmentData, t: (key: string) => string): React.ReactNode {
+  const { own, inherited } = fidelityLine(zone.inputFidelity, t);
+  if (own.length === 0 && inherited.length === 0) return null;
+  const parts: string[] = [];
+  if (own.length > 0) parts.push(`${t('zones.fidelity.own')}: ${own.join(' · ')}`);
+  if (inherited.length > 0) parts.push(`${t('zones.fidelity.inherited')}: ${inherited.join(' · ')}`);
+  return <p className="text-xs text-nkz-text-muted mt-1">{parts.join(' — ')}</p>;
 }
 
 const ZoneHealthPanel: React.FC<ZoneHealthPanelProps> = ({ zones, isWholeParcel, parcelValues = {} }) => {
@@ -94,6 +103,15 @@ const ZoneHealthPanel: React.FC<ZoneHealthPanelProps> = ({ zones, isWholeParcel,
                           {t('zones.sensorNearby')}
                         </span>
                       )}
+                      {zone.wetnessClass && (
+                        <span
+                          className="text-[10px] uppercase tracking-wide text-nkz-text-muted font-medium"
+                          title={t(`zones.wetness.${zone.wetnessClass}`)}
+                          aria-label={t(`zones.wetness.${zone.wetnessClass}`)}
+                        >
+                          {t(`zones.wetness.${zone.wetnessClass}`)}
+                        </span>
+                      )}
                       <SeverityBadge severity={zone.overallSeverity} />
                     </div>
                     <p className="text-xs text-nkz-text-muted mt-1">
@@ -102,6 +120,7 @@ const ZoneHealthPanel: React.FC<ZoneHealthPanelProps> = ({ zones, isWholeParcel,
                         <> · {t('zones.stressor', { value: zone.dominantStressor })}</>
                       )}
                     </p>
+                    {provenance(zone, t)}
                     {zone.recommendedAction && zone.recommendedAction !== 'NO_ACTION' && (
                       <p className="text-xs text-nkz-text-secondary mt-1">
                         {t(actionLabelKey(zone.recommendedAction), zone.recommendedAction)}

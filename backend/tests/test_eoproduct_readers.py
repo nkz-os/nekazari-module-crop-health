@@ -36,7 +36,7 @@ async def test_fetch_parcel_ndvi_reads_latest_eoproduct():
             "da36ccd2-85d2-4c76-b552-c5c835a987c1", "test-tenant"
         )
 
-    assert val == 0.72  # newest acquisition's ndvi mean
+    assert val == (0.72, "parcel_inherited")  # newest acquisition's ndvi mean
     kwargs = client.query_entities.call_args.kwargs
     assert kwargs.get("type") == "EOProduct"
     # optical EOProducts carry no productType discriminator

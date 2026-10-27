@@ -55,4 +55,13 @@ describe('ZoneHealthPanel', () => {
   it('paints nothing for a whole-parcel result', () => {
     expect(render([zone('a', 42)], true)).toBe('');
   });
+  it('shows per-zone input provenance and wetness', () => {
+    const z1 = { ...(zone('a', 42) as object), inputFidelity: { meteo: 'zone_specific', ndvi: 'iot_sensor', soil: 'parcel_inherited', sar: 'unavailable' }, wetnessClass: 'wet' } as never;
+    const out = render([z1]);
+    expect(out).toContain('zones.fidelity.own: zones.fidelity.meteo · zones.fidelity.ndvi — zones.fidelity.inherited: zones.fidelity.soil');
+    expect(out).toContain('zones.wetness.wet');
+  });
+  it('omits the provenance line when nothing is own or inherited', () => {
+    expect(render([zone('a', 42)])).not.toContain('zones.fidelity.own');
+  });
 });

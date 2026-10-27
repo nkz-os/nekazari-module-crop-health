@@ -30,3 +30,12 @@ def test_envelope_low_and_note_on_unavailable():
     ag = ph._status_agronomic(status)
     assert ag["currentStage"]["confidence"] == "low"
     assert ag["currentStage"]["notes"]  # explains the assumption
+
+
+def test_envelope_keeps_zone_weather_label():
+    status = {"currentStage": "vegetative", "deviation": "on_track",
+              "dataFidelity": "zone_weather", "phenologySource": "default"}
+    ag = ph._status_agronomic(status)
+    assert ag["currentStage"]["fidelity"] is not None
+    assert ag["currentStage"]["confidence"] == "medium"
+    assert ag["deviation"]["fidelity"] is not None

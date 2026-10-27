@@ -1265,3 +1265,102 @@ def _climatology_unavailable(reason: str) -> dict:
         "is_reliable": False,
         "reason": reason,
     }
+
+
+# ── Per-zone soil and terrain wetness ────────────────────────────────────────
+
+_ZONE_CALL_MAX = 20
+_ZONE_CACHE_TTL_S = 7 * 86400
+_ZONE_CALL_TIMEOUT_S = 15.0
+
+
+def _zone_cache():
+    """The module's Redis state, or None when it is not running."""
+    try:
+        from app.main import get_redis_state
+        return get_redis_state()
+    except Exception:  # noqa: BLE001 — cache is optional
+        return None
+
+
+async def _zonal_call(
+    kind: str, url: str, parcel_id: str, tenant_id: str, zones: list, body_extra: dict,
+    parcel_short: str | None,
+) -> dict[str, dict]:
+    """POST the zones that miss the cache; ``{zoneId: zone_dict}``, ``{}`` on any failure."""
+    from app.services.soil_headers import soil_module_headers
+
+    short = parcel_short or parcel_id.rsplit(":", 1)[-1]
+    ordered = sorted(zones, key=lambda z: (z.zone_rank is None, z.zone_rank or 0))[:_ZONE_CALL_MAX]
+    cache = _zone_cache()
+    out: dict[str, dict] = {}
+    misses = []
+    for z in ordered:
+        key = f"zone-{kind}:{tenant_id}:{short}:{z.zone_id}:{z.zone_version}"
+        hit = None
+        # Without a zone version there is no stable key: never read or write the cache.
+        if cache is not None and z.zone_version is not None:
+            try:
+                hit = await cache.get_json(key)
+            except Exception:  # noqa: BLE001 — a failed read is a miss
+                hit = None
+        if hit:
+            out[z.zone_id] = hit
+        else:
+            misses.append(z)
+    if not misses:
+        return out
+    payload = {
+        **body_extra,
+        "zones": [
+            {"zoneId": z.zone_id, "zoneVersion": z.zone_version, "geometry": z.geometry}
+            for z in misses
+        ],
+    }
+    try:
+        async with httpx.AsyncClient(timeout=_ZONE_CALL_TIMEOUT_S) as client:
+            resp = await client.post(url, json=payload, headers=soil_module_headers(tenant_id))
+        if resp.status_code != 200:
+            logger.warning("zone %s: %s returned %s for %s", kind, url, resp.status_code, short)
+            return out
+        data = resp.json() or {}
+    except Exception as exc:  # noqa: BLE001 — fail-safe: parcel values apply
+        logger.warning("zone %s: request failed for %s: %s", kind, short, exc)
+        return out
+    versions = {z.zone_id: z.zone_version for z in misses}
+    for entry in data.get("zones") or []:
+        zid = entry.get("zoneId")
+        if zid not in versions:
+            continue
+        out[zid] = entry
+        if cache is not None and versions[zid] is not None and entry.get("fidelity") == "zone_specific":
+            await cache.set_json(
+                f"zone-{kind}:{tenant_id}:{short}:{zid}:{versions[zid]}", entry, _ZONE_CACHE_TTL_S,
+            )
+    return out
+
+
+async def get_zone_soil(
+    parcel_id: str, tenant_id: str, zones: list, parcel_short: str | None = None,
+) -> dict[str, dict]:
+    """Per-zone soil horizon from the soil module (0-60 cm); ``{}`` when unavailable."""
+    if not zones:
+        return {}
+    url = f"{get_settings().soil_module_url.rstrip('/')}/v1/soil/zonal"
+    return await _zonal_call(
+        "soil", url, parcel_id, tenant_id, zones,
+        {"parcel_id": parcel_id, "depth": "0-60"}, parcel_short,
+    )
+
+
+async def get_zone_twi(
+    parcel_id: str, tenant_id: str, zones: list, parcel_short: str | None = None,
+) -> dict[str, dict]:
+    """Per-zone TWI stats from the hydrology module; ``{}`` when unavailable."""
+    if not zones:
+        return {}
+    url = (
+        f"{get_settings().hydrology_url.rstrip('/')}/api/v1/hydrology/parcels/"
+        f"{parcel_id}/zonal-stats"
+    )
+    return await _zonal_call("twi", url, parcel_id, tenant_id, zones, {}, parcel_short)

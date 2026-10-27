@@ -50,6 +50,7 @@ from app.schemas import (
 from app.services import context_client
 from app.services.context_client import get_phenology_params
 from app.services.daily_balance import (
+    DAY_FLOWS,
     SPINUP_DAYS,
     STATE_EXTRAS,
     advance_daily_balance,
@@ -57,6 +58,7 @@ from app.services.daily_balance import (
     balance_from_stored,
     correct_balance_state,
     day_flows,
+    soil_with_overrides,
 )
 from app.services.fiware_publisher import publish_assessment
 from app.services.meteo_context import resolve_meteo_context
@@ -70,6 +72,7 @@ from app.services.parcel_link import (
 )
 from app.services.redis_state import MAX_FUTURE_SKEW_S, RedisState, StoreError
 from app.services.zonation import (
+    zone_weights,
     resolve_zones,
     is_whole_parcel,
     sensors_in_zone,
@@ -400,22 +403,38 @@ def _awc_mm(soil, root_depth_mm: float) -> float:
 
 
 async def _correct_from_open_field(
-    redis_state, tenant_id: str, parcel_id: str, soil, root_depth_mm: float, now_ts: float
+    redis_state, tenant_id: str, parcel_id: str, soil, root_depth_mm: float, now_ts: float,
+    zone_id: str | None = None,
+    only_devices: set[str] | None = None,
+    exclude_devices: set[str] | None = None,
 ) -> float | None:
-    """Pull the stored balance toward fresh open-field probes; None when nothing was corrected."""
+    """Pull the stored balance toward fresh open-field probes; None when nothing was corrected.
+
+    ``zone_id`` corrects that zone's state only, with the probes of ``only_devices``
+    (the devices inside the zone); ``exclude_devices`` drops the probes already
+    attributed to a zone. Without them the parcel's state is corrected, as before zones.
+    """
     if redis_state is None:
         return None
     readings = await _read_parcel_readings(
         redis_state, tenant_id, parcel_id, OPEN_FIELD, "soilMoisture", now_ts
     )
+    if only_devices is not None:
+        readings = [r for r in readings if r.device_id in only_devices]
+    if exclude_devices:
+        readings = [r for r in readings if r.device_id not in exclude_devices]
     if not readings:
         return None
     corrected = await correct_balance_state(
         redis_state, tenant_id, parcel_id, readings, soil, root_depth_mm,
         _awc_mm(soil, root_depth_mm), now_ts,
+        **({"zone_id": zone_id} if zone_id else {}),
     )
     if corrected is not None:
-        logger.info("daily_balance: %s/%s corrected by probes to %.2f mm", tenant_id, parcel_id, corrected)
+        logger.info(
+            "daily_balance: %s/%s%s corrected by probes to %.2f mm",
+            tenant_id, parcel_id, f"/{zone_id}" if zone_id else "", corrected,
+        )
     return corrected
 
 
@@ -455,6 +474,10 @@ async def _stored_balance(
         logger.warning("daily_balance: state of %s/%s lags yesterday (%s)", tenant_id, parcel_id, last)
         result = dataclasses.replace(result, soil_moisture_confidence="low")
     return result
+
+
+# The labels a zone input can carry; ``used`` fidelities outside it are not written.
+_KNOWN_FIDELITIES = frozenset({"zone_specific", "parcel_inherited", "iot_sensor", "unavailable"})
 
 
 async def trigger(
@@ -600,6 +623,8 @@ async def trigger(
             a.zone_id = zone.zone_id
             a.zone_urn = zone.urn
             a.zone_geometry = zone.geometry
+            a.zone_version = zone.zone_version
+            a.zone_rank = zone.zone_rank
         return a
 
     # ── Soil properties (benefits 1+2) ───────────────────────────────────
@@ -674,6 +699,9 @@ async def trigger(
             device_coords[0], device_coords[1], z.geometry
         )
         a = _mk_assessment(z)
+        # Everything this path does not resolve per zone is the parcel's value; written
+        # explicitly because the upsert merges and would keep the daily run's labels.
+        used_fidelity: dict[str, str] = {}
         try:
             await _run_engines(
                 a,
@@ -698,10 +726,24 @@ async def trigger(
                 shade_observed_at=shade_observed_at,
                 et0_fidelity=et0_fidelity,
                 sensor_context=sensor_context if is_sensor else None,
+                fidelity_out=used_fidelity,
             )
         except Exception as exc:
             logger.warning("trigger: zone %s failed for %s — skipped: %s", z.zone_id, effective_parcel, exc)
             continue
+        a.input_fidelity = {
+            "meteo": (
+                "iot_sensor" if is_sensor and meteo.fidelity.get("air_temp_c") == "iot_sensor"
+                else "parcel_inherited"
+            ),
+            "gdd": "parcel_inherited",
+            "ndvi": "parcel_inherited",
+            "sar": "parcel_inherited",
+            "soil": "parcel_inherited",
+            "twi": "parcel_inherited",
+            "balance": "parcel_inherited" if parcel_balance is not None else "unavailable",
+            **{k: v for k, v in used_fidelity.items() if v in _KNOWN_FIDELITIES},
+        }
         zone_results.append(a)
         await _publish_assessment(a.to_zone_ngsi_ld(), tenant_id)
 
@@ -709,7 +751,7 @@ async def trigger(
         logger.warning("trigger: all zones failed for %s — no assessment", effective_parcel)
         return None
 
-    rollup = _aggregate_rollup(effective_parcel, zone_results)
+    rollup = _aggregate_rollup(effective_parcel, zone_results, zone_weights(zones))
     attach_soil_suitability(rollup, crop_context)
     # Water stress is parcel-level: computed once here, carried by the rollup only.
     rollup.water_stress, rollup.under_panel_water_stress = await _resolve_both_water_stress(
@@ -752,6 +794,9 @@ async def _run_engines(
     parcel_stress: bool = False,
     sensor_context: str | None = None,
     parcel_balance: SoilWaterBalanceResult | None = None,
+    zone_urn: str | None = None,
+    fidelity_out: dict | None = None,
+    wetness_class: str | None = None,
 ) -> CropHealthAssessment:
     """Shared engine-fusion core.
 
@@ -847,6 +892,7 @@ async def _run_engines(
                 excess_mm=swb.excess_mm,
                 ksat_mm_h=soil.ksat_mm_h,
                 scs_group=soil.scs_hydrologic_group,
+                wetness_class=wetness_class,
             )
             assessment.waterlogging_risk = wlr
 
@@ -888,11 +934,15 @@ async def _run_engines(
     ndvi_val = None
     try:
         from app.engines.vigor import evaluate_vigor
-        ndvi_val = await _fetch_parcel_ndvi(effective_parcel, tenant_id)
+        ndvi_val, ndvi_fid = await _fetch_parcel_ndvi(effective_parcel, tenant_id, zone_urn)
+        if fidelity_out is not None:
+            fidelity_out["ndvi"] = ndvi_fid
         if ndvi_val is not None or assessment.cwsi is not None:
             cwsi_val = assessment.cwsi.cwsi if assessment.cwsi else None
             stage_name = phenology.stage if phenology else "vegetative"
             vr = evaluate_vigor(
+                # NDVI only, as on the parcel path: the engine normalises every index
+                # with the NDVI scale, so a zone's EVI/SAVI/GNDVI/NDRE would read falsely low.
                 ndvi=ndvi_val,
                 cwsi=cwsi_val,
                 stage=stage_name,
@@ -1059,14 +1109,15 @@ async def _run_engines(
         from app.engines.sar_moisture import evaluate_sar_moisture
         from app.schemas import SARResult as SARResultSchema
 
-        smi_val = await _fetch_parcel_smi(effective_parcel, tenant_id)
+        smi_val, smi_fid = await _fetch_parcel_smi(effective_parcel, tenant_id, zone_urn)
+        sar_fid = smi_fid
         if smi_val is not None:
             assessment.sar = SARResultSchema(
                 surface_moisture_index=round(smi_val, 4),
                 data_fidelity="satellite_derived",
             )
         else:
-            sar_backscatter = await _fetch_parcel_sar(effective_parcel, tenant_id)
+            sar_backscatter, sar_fid = await _fetch_parcel_sar(effective_parcel, tenant_id, zone_urn)
             if sar_backscatter is not None:
                 vv, vh = sar_backscatter
                 sar_res = evaluate_sar_moisture(
@@ -1082,6 +1133,8 @@ async def _run_engines(
                     waterlogging_risk=sar_res.waterlogging_risk,
                     data_fidelity=sar_res.data_fidelity,
                 )
+        if fidelity_out is not None:
+            fidelity_out["sar"] = sar_fid
     except Exception as e:
         logger.error("SAR engine failed: %s", e)
 
@@ -1140,7 +1193,7 @@ async def _run_engines(
     # WUE (after composite stress and yield gap, needs NDVI integral + irrigation data)
     try:
         from app.engines.wue import evaluate_wue
-        ndvi_val = await _fetch_parcel_ndvi(effective_parcel, tenant_id)
+        # The NDVI of the vigour step above: one fetch per assessment.
         irrigation_mm = None
         irrigation_source = "none"
         try:
@@ -1457,7 +1510,7 @@ async def _weather_map_meteo(parcel_id: str, tenant_id: str) -> dict:
                 return {}
             data = resp.json() or {}
     except Exception as exc:  # noqa: BLE001 — fail-safe
-        logger.warning("_weather_map_meteo: failed for %s — {}: %s", parcel_id, exc)
+        logger.warning("_weather_map_meteo: failed for %s: %s", parcel_id, exc)
         return {}
 
     metrics = data.get("metrics") or {}  # empty when error/"No COG data available"
@@ -1508,6 +1561,39 @@ def _parse_observed_ts(value) -> float | None:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     return parsed.timestamp()
+
+
+async def _fetch_zone_daily(
+    parcel_id: str, tenant_id: str, start: date, end: date
+) -> dict[str, list[dict]]:
+    """Daily per-zone weather series from weather-map ({zone_id: [rows]}, fail-safe {})."""
+    try:
+        settings = get_settings()
+        if not settings.weather_map_url:
+            return {}
+        parcel_urn = parcel_id if parcel_id.startswith("urn:") else f"urn:ngsi-ld:AgriParcel:{parcel_id}"
+        headers = {}
+        if tenant_id:
+            headers = {"X-Tenant-ID": tenant_id, "X-User-ID": "crop-health-worker"}
+            secret = _hmac_secret()
+            if secret:
+                headers["X-Auth-Signature"] = generate_hmac_signature(secret, "", tenant_id)
+            else:
+                logger.warning("_fetch_zone_daily: signing secret unset — request goes unsigned")
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(
+                f"{settings.weather_map_url}/api/weather-map/zones/{parcel_urn}/daily",
+                params={"start": start.isoformat(), "end": end.isoformat()},
+                headers=headers,
+            )
+            if resp.status_code != 200:
+                logger.warning("_fetch_zone_daily: HTTP %s for %s", resp.status_code, parcel_id)
+                return {}
+            zones = (resp.json() or {}).get("zones")
+            return zones if isinstance(zones, dict) else {}
+    except Exception as exc:  # noqa: BLE001 — fail-safe
+        logger.warning("_fetch_zone_daily: failed for %s: %s", parcel_id, exc)
+        return {}
 
 
 async def _regional_meteo(parcel_id: str, tenant_id: str) -> dict:
@@ -1644,15 +1730,131 @@ async def _resolve_device_coords(entity_id: str, tenant_id: str) -> tuple[float,
     return None
 
 
-async def _gather_parcel_sensors(parcel_id: str, tenant_id: str) -> list[dict]:
-    """Located sensor readings for the parcel, for per-zone consolidation.
+_SENSOR_METRICS = {
+    MetricType.AIR_TEMPERATURE.value: "air_temp_c",
+    MetricType.RELATIVE_HUMIDITY.value: "rh_pct",
+    MetricType.SOIL_MOISTURE.value: "soil_moisture",
+    MetricType.LEAF_TEMPERATURE.value: "leaf_temp_c",
+    MetricType.SOLAR_RADIATION.value: "solar_radiation_wm2",
+}
+_SENSOR_MAX_AGE_H = 24
+_DEVICE_LIST_LIMIT = 1000
 
-    v1: returns ``[]`` — the scheduled path is sensorless and the webhook path
-    supplies its triggering measurement directly via ``sensor_ctx``. Gathering
-    live device coordinates for full multi-device spatial consolidation is a
-    documented follow-up (needs a Device-location query contract).
+
+def _device_point(device: dict) -> tuple[float, float] | None:
+    loc = device.get("location")
+    if isinstance(loc, dict) and loc.get("type") == "GeoProperty":
+        loc = loc.get("value")
+    if isinstance(loc, dict) and loc.get("type") == "Point":
+        c = loc.get("coordinates")
+        if isinstance(c, (list, tuple)) and len(c) >= 2:
+            try:
+                return float(c[0]), float(c[1])
+            except (TypeError, ValueError):
+                return None
+    return None
+
+
+def _controls_parcel(device: dict, parcel_urn: str) -> bool:
+    ca = device.get("controlledAsset")
+    if isinstance(ca, dict):
+        ca = ca.get("object", ca.get("value"))
+    items = ca if isinstance(ca, list) else [ca]
+    for it in items:
+        if isinstance(it, dict):
+            it = it.get("object", it.get("value"))
+        if it == parcel_urn:
+            return True
+    return False
+
+
+def _is_open_field_sensor_of(device: dict, parcel_urn: str, inside: bool) -> bool:
+    """Whether the device feeds this parcel's open-field meteo.
+
+    Owned devices follow their owner: a parcel owner counts when it is this parcel,
+    a solar-park owner (under-panel) never does. Devices with no stated owner count
+    when they sit inside the parcel polygon.
     """
-    return []
+    link = device.get("controlledAsset")
+    if parcel_link_targets(link):
+        owner = owner_from_link(link)
+        if owner is not None:
+            context, owner_parcel, _park = owner
+            return context == OPEN_FIELD and owner_parcel == parcel_urn
+        # A link naming neither a park nor a parcel states no usable owner.
+    else:
+        for attr in ("hasAgriParcel", "refAgriParcel"):
+            target = parcel_link_target(device.get(attr))
+            if target:
+                return target == parcel_urn
+    return inside
+
+
+async def _gather_parcel_sensors(
+    parcel_id: str, tenant_id: str, *, redis_state=None, parcel_geometry: dict | None = None
+) -> list[dict]:
+    """Located sensor readings of the parcel, for per-zone consolidation.
+
+    Devices of the tenant inside the parcel polygon, plus devices whose
+    ``controlledAsset`` names the parcel. Each item carries the fresh (24 h)
+    per-device Redis mean of each metric, flat under the meteo variable names
+    (what ``consolidate_sensor_readings`` averages) and under ``readings``.
+    Devices without a location get ``lon=lat=None`` and are not attributed to a
+    zone. Fail-safe: any error returns ``[]``.
+    """
+    try:
+        from nkz_platform_sdk.orion import OrionClient
+
+        parcel_short = parcel_id.split(":")[-1] if parcel_id.startswith("urn:") else parcel_id
+        parcel_urn = parcel_id if parcel_id.startswith("urn:") else f"urn:ngsi-ld:AgriParcel:{parcel_id}"
+        if parcel_geometry is None:
+            parcel_geometry = await context_client._resolve_parcel_geometry(parcel_short, tenant_id)
+        if redis_state is None:
+            from app.main import get_redis_state
+            redis_state = get_redis_state()
+
+        settings = get_settings()
+        client = OrionClient(tenant_id, base_url=settings.orion_ld_url, context_url=settings.orion_ld_context)
+        try:
+            devices = await client.query_entities(type="Device", options="keyValues", limit=_DEVICE_LIST_LIMIT)
+        finally:
+            await client.close()
+        if devices and len(devices) >= _DEVICE_LIST_LIMIT:
+            logger.warning(
+                "_gather_parcel_sensors: tenant %s has >= %d Devices; listing truncated, some sensors may be missing",
+                tenant_id, _DEVICE_LIST_LIMIT,
+            )
+
+        out: list[dict] = []
+        for dev in devices or []:
+            dev_id = dev.get("id")
+            if not dev_id:
+                continue
+            pt = _device_point(dev)
+            inside = bool(pt and parcel_geometry and point_in_polygon(pt[0], pt[1], parcel_geometry))
+            if not _is_open_field_sensor_of(dev, parcel_urn, inside):
+                continue
+            readings: dict[str, float] = {}
+            for metric, name in _SENSOR_METRICS.items():
+                try:
+                    pts = await redis_state.get_window(dev_id, metric, hours=_SENSOR_MAX_AGE_H)
+                except Exception as exc:  # noqa: BLE001 — one metric must not sink the rest
+                    logger.warning("_gather_parcel_sensors: window %s/%s failed: %s", dev_id, metric, exc)
+                    continue
+                vals = [p.value for p in pts if math.isfinite(p.value)]
+                if vals:
+                    readings[name] = sum(vals) / len(vals)
+            out.append({
+                "device_id": dev_id,
+                "lon": pt[0] if pt else None,
+                "lat": pt[1] if pt else None,
+                "readings": readings,
+                **readings,
+            })
+        return out
+    except Exception as exc:  # noqa: BLE001 — fail-safe
+        logger.warning("_gather_parcel_sensors: failed for %s — []: %s", parcel_id, exc)
+        return []
 
 
 async def _assess_zone(
@@ -1664,6 +1866,11 @@ async def _assess_zone(
     sensor_ctx: dict | None,
     whole: bool,
     parcel_balance: SoilWaterBalanceResult | None = None,
+    zone_ctx: dict | None = None,
+    gdd_delta: float = 0.0,
+    input_fidelity: dict[str, str] | None = None,
+    zone_soil: dict | None = None,
+    zone_twi: dict | None = None,
 ) -> CropHealthAssessment:
     """Compute one zone's assessment, reusing the existing engine core.
 
@@ -1675,7 +1882,10 @@ async def _assess_zone(
     """
     phenology = crop_ctx["phenology"]
     thresholds = crop_ctx["thresholds"]
+    # Parcel GDD stays authoritative; the zone adds its topographic deviation.
     gdd = crop_ctx["gdd"]
+    if gdd is not None:
+        gdd = max(0.0, gdd + gdd_delta)
     species = crop_ctx["species"]
     variety_name = crop_ctx["variety_name"]
     now = crop_ctx["now"]
@@ -1683,6 +1893,7 @@ async def _assess_zone(
     meteo = await resolve_meteo_context(
         parcel_id, tenant_id,
         sensor_ctx=sensor_ctx,
+        zone_ctx=zone_ctx,
         weather_map_fn=_weather_map_meteo,
         regional_fn=_regional_meteo,
     )
@@ -1703,7 +1914,14 @@ async def _assess_zone(
         zone_id=None if whole else zone.zone_id,
         zone_urn=None if whole else zone.urn,
         zone_geometry=None if whole else zone.geometry,
+        zone_version=None if whole else zone.zone_version,
+        zone_rank=None if whole else zone.zone_rank,
     )
+    if not whole and zone_twi:
+        assessment.twi_mean = zone_twi.get("twiMean")
+        assessment.wet_fraction = zone_twi.get("wetFraction")
+        assessment.wetness_class = zone_twi.get("wetnessClass")
+    used_fidelity: dict[str, str] = {}
 
     if gdd is not None and thresholds:
         assessment.phenology_stage = derive_stage_from_gdd(gdd, thresholds)
@@ -1723,28 +1941,97 @@ async def _assess_zone(
         crop_context=None,
         variety_name=variety_name,
         gdd=gdd,
-        soil=crop_ctx["soil"],
+        soil=_zone_soil_model(crop_ctx["soil"], None if whole else zone_soil),
         root_depth_mm=crop_ctx["root_depth_mm"],
         parcel_balance=parcel_balance,
         now=now,
         stage_table=thresholds,
         publish=False,
+        wetness_class=None if whole or not zone_twi else zone_twi.get("wetnessClass"),
         et0_fidelity=meteo.fidelity.get("et0_mm", "unavailable"),
+        zone_urn=None if whole else zone.urn,
+        fidelity_out=used_fidelity,
     )
+    if not whole:
+        # What the engines actually used overrides the optimistic defaults.
+        assessment.input_fidelity = {**(input_fidelity or {}), **used_fidelity}
     return assessment
 
 
-def _aggregate_rollup(parcel_short: str, zone_results: list[CropHealthAssessment]) -> CropHealthAssessment:
-    """Parcel rollup = the worst (most severe) zone (fail-safe).
+# Only these headline numbers are area-weighted. Ratios, levels, conditions and every
+# other field stay the worst zone's by design (a mean of a category has no meaning).
+_WEIGHTED_NUMERICS = (
+    ("composite_stress", "composite_index"),
+    ("cwsi", "cwsi"),
+    ("vigor", "vigor_index"),
+    ("soil_water_balance", "sw_mm"),
+    ("soil_water_balance", "deficit_mm"),
+    ("crop_requirements", "water_deficit_mm"),
+)
 
+
+def _weighted_mean(values: list[tuple[float, float]]) -> float | None:
+    """Mean of ``(value, weight)`` pairs with the weights renormalised; None if empty."""
+    if not values:
+        return None
+    total = sum(w for _, w in values)
+    if total <= 0:
+        return sum(v for v, _ in values) / len(values)
+    return sum(v * w for v, w in values) / total
+
+
+def _aggregate_rollup(
+    parcel_short: str,
+    zone_results: list[CropHealthAssessment],
+    weights: dict[str, float] | None = None,
+) -> CropHealthAssessment:
+    """Parcel rollup of the zone assessments.
+
+    Severity and recommended action come from the worst zone (fail-safe); the
+    headline numerics (composite stress, CWSI, vigor, soil water, deficit) are
+    the area-weighted mean over the zones that have the value. Every other field
+    is the worst zone's. With a single zone the result is that zone, unchanged.
     Returns a copy with zone identity stripped so it serialises as the legacy
     parcel-level ``CropHealthAssessment`` (back-compat).
     """
     worst = max(zone_results, key=_sev_rank)
     rollup = worst.model_copy()
+    if len(zone_results) > 1:
+        w = weights or {}
+        rollup = worst.model_copy(deep=True)
+        for obj_name, attr in _WEIGHTED_NUMERICS:
+            pairs = []
+            for z in zone_results:
+                obj = getattr(z, obj_name, None)
+                v = getattr(obj, attr, None) if obj is not None else None
+                if v is not None:
+                    pairs.append((float(v), float(w.get(z.zone_id, 1.0))))
+            mean = _weighted_mean(pairs)
+            if mean is None:
+                continue
+            target = getattr(rollup, obj_name, None)
+            if target is None:
+                # The worst zone lacks the object: borrow it from the first zone that has it.
+                donor = next((getattr(z, obj_name) for z in zone_results if getattr(z, obj_name, None) is not None), None)
+                if donor is None:
+                    continue
+                target = donor.model_copy(deep=True)
+                setattr(rollup, obj_name, target)
+            setattr(target, attr, mean)
+    stress = [
+        z.composite_stress.composite_index for z in zone_results
+        if z.composite_stress is not None and z.composite_stress.composite_index is not None
+    ]
+    if any(z.zone_id is not None for z in zone_results):
+        rollup.worst_zone_id = worst.zone_id
+        rollup.worst_zone_rank = worst.zone_rank
+        rollup.zone_spread = (max(stress) - min(stress)) if len(stress) >= 2 else 0.0
     rollup.zone_id = None
     rollup.zone_urn = None
     rollup.zone_geometry = None
+    rollup.zone_version = None
+    rollup.zone_rank = None
+    rollup.input_fidelity = None
     rollup.parcel_id = parcel_short
     return rollup
 
@@ -1819,11 +2106,6 @@ async def compute_assessment(
     except RuntimeError as exc:
         logger.warning("compute_assessment: no Redis for %s/%s, no daily balance: %s", tenant_id, parcel_short, exc)
         redis_state = None
-    parcel_balance = await _scheduled_balance(
-        redis_state, tenant_id, parcel_short, soil, root_depth_mm, depletion_p,
-        phenology, now.date(), now_ts,
-    )
-
     crop_ctx = {
         "species": species,
         "variety_name": variety_name,
@@ -1841,20 +2123,57 @@ async def compute_assessment(
     zones = await resolve_zones(parcel_id, tenant_id, parcel_geom or {})
     whole = is_whole_parcel(zones)
 
-    # Located sensors for per-zone consolidation (v1: [] for scheduled path).
-    all_sensors = await _gather_parcel_sensors(parcel_id, tenant_id)
+    # Per-zone inputs: zone meteo + daily series (one request) and located sensors.
+    from app.services.zone_inputs import gather_zone_inputs, zone_meteo_ctx
+    inputs = await gather_zone_inputs(
+        parcel_id, parcel_short, tenant_id, zones, season_start, now,
+        fetch_daily=_fetch_zone_daily, gather_sensors=_gather_parcel_sensors,
+    )
+
+    from app.services.zonation import zone_weights
+    from app.services.zone_gdd import zone_gdd_delta
+    try:
+        gdd_deltas = zone_gdd_delta(
+            {zid: zi.weather_daily for zid, zi in inputs.items() if zi.weather_daily},
+            zone_weights(zones),
+            thresholds.base_temp if thresholds else 10.0,
+            thresholds.upper_cutoff if thresholds and thresholds.upper_cutoff is not None
+            else _DEFAULT_UPPER_CUTOFF,
+        )
+    except Exception as exc:  # noqa: BLE001 -- a bad series must not sink the assessment
+        logger.warning("compute_assessment: zone GDD delta failed for %s, none applied: %s", parcel_short, exc)
+        gdd_deltas = {}
+
+    # Daily soil water balance: stepped here, once per closed day, before the zones.
+    # Whole-parcel mode steps the parcel's own state; zones each step their own and
+    # the parcel state becomes their area-weighted mean.
+    parcel_balance = None
+    zone_balances: dict[str, SoilWaterBalanceResult] = {}
+    if whole:
+        parcel_balance = await _scheduled_balance(
+            redis_state, tenant_id, parcel_short, soil, root_depth_mm, depletion_p,
+            phenology, now.date(), now_ts,
+        )
+    else:
+        zone_balances = await _scheduled_zone_balances(
+            parcel_id, parcel_short, tenant_id, zones, inputs, crop_ctx,
+            redis_state=redis_state, depletion_p=depletion_p, now_ts=now_ts,
+        )
 
     zone_results: list[CropHealthAssessment] = []
     for z in zones:
-        zone_sensor_ctx = sensor_ctx
-        if all_sensors:
-            consolidated = consolidate_sensor_readings(sensors_in_zone(z, all_sensors))
-            if consolidated:
-                zone_sensor_ctx = consolidated
+        zi = inputs.get(z.zone_id)
+        # Whole-parcel mode keeps the caller's sensor context and no zone meteo, as before zones.
+        zone_sensor_ctx = sensor_ctx if whole else ((zi.sensors if zi else None) or sensor_ctx)
         try:
             za = await _assess_zone(
                 z, parcel_id, parcel_short, tenant_id, crop_ctx, zone_sensor_ctx, whole,
-                parcel_balance=parcel_balance,
+                parcel_balance=parcel_balance if whole else zone_balances.get(z.zone_id),
+                zone_ctx=None if whole else zone_meteo_ctx(z, now),
+                gdd_delta=gdd_deltas.get(z.zone_id, 0.0),
+                input_fidelity=zi.fidelity if zi else None,
+                zone_soil=zi.soil if zi else None,
+                zone_twi=zi.twi if zi else None,
             )
         except Exception as exc:  # best-effort per zone — one bad zone must not sink the rest
             logger.warning("compute_assessment: zone %s failed for %s — skipped: %s", z.zone_id, parcel_short, exc)
@@ -1867,7 +2186,7 @@ async def compute_assessment(
         logger.warning("compute_assessment: all zones failed for %s — no assessment", parcel_short)
         return None
 
-    rollup = _aggregate_rollup(parcel_short, zone_results)
+    rollup = _aggregate_rollup(parcel_short, zone_results, zone_weights(zones))
 
     # Water stress is parcel-level: computed once here, carried by the rollup only.
     daily_shade, shade_observed_at = await _read_daily_shade_obs(
@@ -1953,6 +2272,13 @@ async def _scheduled_balance(
     corrected = await _correct_from_open_field(redis_state, tenant_id, parcel_id, soil, root, now_ts)
     if corrected is None:
         return balance
+    return _corrected_result(balance, corrected, soil, root, depletion_p)
+
+
+def _corrected_result(
+    balance: SoilWaterBalanceResult, corrected: float, soil, root: float, depletion_p: float
+) -> SoilWaterBalanceResult:
+    """The balance with its water replaced by a probe-corrected value."""
     result = balance_from_state(corrected, soil, root, depletion_p, day_flows(balance))
     # The probe corrects the water left, not the day's drainage: keep its waterlogging input.
     result = dataclasses.replace(result, excess_mm=balance.excess_mm)
@@ -1960,6 +2286,216 @@ async def _scheduled_balance(
         # The probe corrects the water, not the lag of the stored day.
         result = dataclasses.replace(result, soil_moisture_confidence="low")
     return result
+
+
+def _zone_eto_daily(weather_daily: list[dict]) -> dict[date, float]:
+    """The zone's daily ET0 series as ``{day: mm}``; rows without a usable value are skipped."""
+    out: dict[date, float] = {}
+    for row in weather_daily or []:
+        eto = row.get("eto")
+        if isinstance(eto, bool) or not isinstance(eto, (int, float)):
+            continue
+        try:
+            out[date.fromisoformat(str(row["date"])[:10])] = float(eto)
+        except (KeyError, ValueError):
+            continue
+    return out
+
+
+def _zone_soil_model(soil, zone_soil: dict | None):
+    """The parcel soil with the zone's own FC/WP/Ksat/hydrologic group where given."""
+    if not zone_soil:
+        return soil
+    fc, wp = _zone_soil_values(zone_soil)
+    soil = soil_with_overrides(soil, fc, wp)
+    update = {}
+    ksat = zone_soil.get("ksatSaturated")
+    if isinstance(ksat, (int, float)) and not isinstance(ksat, bool) and ksat > 0:
+        update["ksat_mm_h"] = float(ksat)
+    grp = zone_soil.get("hydrologicGroup")
+    if isinstance(grp, str) and grp in ("A", "B", "C", "D"):
+        update["scs_hydrologic_group"] = grp
+    return soil.model_copy(update=update) if update else soil
+
+
+def _zone_soil_values(zone_soil: dict | None) -> tuple[float | None, float | None]:
+    """Zone field capacity and wilting point when the zone has its own soil."""
+    if not zone_soil:
+        return None, None
+    vals = []
+    for key in ("fieldCapacity", "wiltingPoint"):
+        v = zone_soil.get(key)
+        vals.append(float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else None)
+    # A lone value would mix zone and parcel soil (AWC can go negative): both or the parcel's pair.
+    if vals[0] is None or vals[1] is None:
+        return None, None
+    return vals[0], vals[1]
+
+
+async def _write_weighted_parcel_state(
+    redis_state, tenant_id: str, parcel_id: str, zone_states: dict[str, dict],
+    balances: dict[str, SoilWaterBalanceResult], weights: dict[str, float],
+) -> bool:
+    """Parcel state = area-weighted mean of the zones' states (``source="zones_weighted"``).
+
+    The date is the oldest zone's; the anchor is kept only when every zone shares its day.
+    """
+    from app.services.daily_balance import BALANCE_LOCK_TTL_S, _lock_key
+
+    ids = [z for z in zone_states if z in balances]
+    if not ids:
+        return False
+    total = sum(weights.get(z, 0.0) for z in ids)
+    w = {z: (weights.get(z, 0.0) / total if total > 0 else 1.0 / len(ids)) for z in ids}
+
+    def mean(values: dict[str, float | None]) -> float | None:
+        if any(v is None for v in values.values()):
+            return None
+        return round(sum(w[z] * v for z, v in values.items()), 4)
+
+    states = {z: zone_states[z] for z in ids}
+    anchors = {states[z].get("anchor_date") for z in ids}
+    anchored = len(anchors) == 1 and None not in anchors
+    flows = {k: mean({z: states[z].get(k) for z in ids}) for k in DAY_FLOWS}
+    key = _lock_key(tenant_id, parcel_id)
+    if not await redis_state.try_lock(key, BALANCE_LOCK_TTL_S):
+        logger.info("daily_balance: lock not acquired for %s/%s, parcel state not written", tenant_id, parcel_id)
+        return False
+    try:
+        return await redis_state.set_balance_state(
+            tenant_id, parcel_id,
+            min(date.fromisoformat(states[z]["date"]) for z in ids).isoformat(),
+            mean({z: float(states[z]["sw_mm"]) for z in ids}),
+            root_depth_mm=mean({z: states[z].get("root_depth_mm") for z in ids}),
+            anchor_date=anchors.pop() if anchored else None,
+            anchor_sw_mm=mean({z: states[z].get("anchor_sw_mm") for z in ids}) if anchored else None,
+            anchor_root_depth_mm=(
+                mean({z: states[z].get("anchor_root_depth_mm") for z in ids}) if anchored else None
+            ),
+            source="zones_weighted",
+            **flows,
+        )
+    finally:
+        await redis_state.unlock(key)
+
+
+class _SharedSeries:
+    """One upstream series request per parcel, shared by every zone's balance step.
+
+    The zones step from different saved days, so a later call may ask for an earlier
+    start: then the union is fetched again. Calls inside the held range are sliced
+    from it (a failed fetch, ``None``, is held too: zones do not hammer a service that is down).
+    """
+
+    def __init__(self, fetch):
+        self._fetch = fetch
+        self._start: date | None = None
+        self._end: date | None = None
+        self._data: dict | None = None
+        self.calls = 0
+
+    async def __call__(self, tenant_id: str, parcel_id: str, start: date, end: date):
+        held = self._start is not None
+        if not held or start < self._start or end > self._end:
+            lo = min(start, self._start) if held else start
+            hi = max(end, self._end) if held else end
+            self.calls += 1
+            self._data = await self._fetch(tenant_id, parcel_id, lo, hi)
+            self._start, self._end = lo, hi
+        if self._data is None:
+            return None
+        lo_key, hi_key = start.isoformat(), end.isoformat()
+        return {k: v for k, v in self._data.items() if lo_key <= k <= hi_key}
+
+
+async def _scheduled_zone_balances(
+    parcel_id: str, parcel_short: str, tenant_id: str, zones: list, inputs: dict,
+    crop_ctx: dict, *, redis_state, depletion_p: float, now_ts: float,
+) -> dict[str, SoilWaterBalanceResult]:
+    """Step every zone's own balance, correct it with its probes, then write the parcel state.
+
+    Rain, irrigation, Kc and root depth are the parcel's; ET0 and FC/WP are the zone's
+    when it has them. Sets ``inputs[z].fidelity["balance"]``. Fail-safe per zone.
+    """
+    from app.services.zonation import zone_weights
+
+    if redis_state is None:
+        return {}
+    phenology = crop_ctx["phenology"]
+    kc = phenology.kc if phenology else context_client._DEFAULT_PARAMS.kc
+    parcel_soil = crop_ctx["soil"]
+    today = crop_ctx["now"].date()
+    out: dict[str, SoilWaterBalanceResult] = {}
+    zone_states: dict[str, dict] = {}
+    # Probes inside a zone are that zone's; the rest (no location, or outside every
+    # zone) are parcel-representative and correct every zone.
+    located: set[str] = {
+        d["device_id"] for zi in inputs.values() for d in zi.devices if d.get("device_id")
+    }
+    # Rain/ET0 and irrigation are the parcel's: one request each, however many zones.
+    shared_daily = _SharedSeries(_fetch_daily_water)
+    shared_irrigation = _SharedSeries(_fetch_irrigation)
+    for z in zones:
+        zi = inputs.get(z.zone_id)
+        eto_daily = _zone_eto_daily(zi.weather_daily) if zi else {}
+        fc, wp = _zone_soil_values(zi.soil if zi else None)
+        zone_specific = bool(eto_daily) or fc is not None or wp is not None
+        soil = soil_with_overrides(parcel_soil, fc, wp)
+        try:
+            balance = await advance_daily_balance(
+                redis_state, tenant_id, parcel_short,
+                soil=parcel_soil, root_depth_mm=crop_ctx["root_depth_mm"], depletion_p=depletion_p,
+                kc=kc, today=today, fetch=shared_daily, fetch_irrigation=shared_irrigation,
+                zone_id=z.zone_id, zone_version=z.zone_version,
+                eto_daily=eto_daily or None, fc=fc, wp=wp,
+            )
+        except Exception as exc:  # noqa: BLE001 -- fail-safe: no balance for this zone
+            logger.warning(
+                "daily_balance: step failed for %s/%s zone %s, no balance: %s",
+                tenant_id, parcel_short, z.zone_id, exc,
+            )
+            continue
+        if balance is None:
+            continue
+        device_ids = {d["device_id"] for d in (zi.devices if zi else []) if d.get("device_id")}
+        corrected = None
+        if device_ids:
+            corrected = await _correct_from_open_field(
+                redis_state, tenant_id, parcel_short, soil, balance.root_depth_mm, now_ts,
+                zone_id=z.zone_id, only_devices=device_ids,
+            )
+        if corrected is None:
+            corrected = await _correct_from_open_field(
+                redis_state, tenant_id, parcel_short, soil, balance.root_depth_mm, now_ts,
+                zone_id=z.zone_id, exclude_devices=located,
+            )
+        if corrected is not None:
+            balance = _corrected_result(balance, corrected, soil, balance.root_depth_mm, depletion_p)
+        if zi is not None:
+            zi.fidelity["balance"] = (
+                "iot_sensor" if corrected is not None
+                else "zone_specific" if zone_specific else "parcel_inherited"
+            )
+        out[z.zone_id] = balance
+        try:
+            state = await redis_state.get_balance_state(tenant_id, parcel_short, zone_id=z.zone_id)
+        except StoreError as exc:
+            logger.warning(
+                "daily_balance: zone state unreadable for %s/%s/%s: %s",
+                tenant_id, parcel_short, z.zone_id, exc,
+            )
+            state = None
+        if state is not None:
+            zone_states[z.zone_id] = state
+
+    try:
+        if zone_states:
+            await _write_weighted_parcel_state(
+                redis_state, tenant_id, parcel_short, zone_states, out, zone_weights(zones)
+            )
+    except Exception as exc:  # noqa: BLE001 -- the zones' balances stand without the parcel state
+        logger.warning("daily_balance: parcel state of %s/%s not written: %s", tenant_id, parcel_short, exc)
+    return out
 
 
 async def _build_sensor_ctx(entity_id: str, redis_state) -> dict:
@@ -2433,98 +2969,164 @@ async def _fetch_parcel_lst_with_date(
     return None
 
 
-async def _fetch_parcel_ndvi(parcel_id: str, tenant_id: str) -> float | None:
-    """Fetch latest NDVI mean for a parcel from canonical EOProduct entities.
+ZONE_PRODUCT_MAX_AGE_DAYS = 20
+_ZONE_PRODUCT_LIMIT = 20
+
+
+def _sensing_age_days(entity: dict, now: datetime) -> int | None:
+    """Whole days between the product's ``sensingDate`` and ``now`` (None if unparseable)."""
+    raw = entity.get("sensingDate")
+    if isinstance(raw, dict):
+        raw = raw.get("value")
+    if not raw:
+        return None
+    try:
+        text = str(raw)
+        d = datetime.fromisoformat(text.replace("Z", "+00:00")).date() if "T" in text \
+            else datetime.strptime(text[:10], "%Y-%m-%d").date()
+    except ValueError:
+        return None
+    return (now.date() - d).days
+
+
+async def _query_eoproducts(tenant_id: str, q: str, limit: int) -> list[dict]:
+    from app.config import get_settings
+    from nkz_platform_sdk.orion import OrionClient
+    settings = get_settings()
+    client = OrionClient(tenant_id, base_url=settings.orion_ld_url, context_url=settings.orion_ld_context)
+    try:
+        entities = await client.query_entities(type="EOProduct", q=q, limit=limit, options="keyValues")
+    finally:
+        await client.close()
+    return entities if isinstance(entities, list) else []
+
+
+async def _zone_eoproduct(tenant_id: str, zone_urn: str, attr: str, extra_q: str = "") -> dict | None:
+    """Newest per-zone EOProduct carrying ``attr``, sensed within ZONE_PRODUCT_MAX_AGE_DAYS.
+
+    Per-zone products carry ``hasAgriParcelZone`` and no ``hasAgriParcel``, so the
+    parcel query never sees them and this one never sees parcel products.
+    """
+    now = datetime.now(timezone.utc)
+    since = (now - timedelta(days=ZONE_PRODUCT_MAX_AGE_DAYS)).strftime("%Y-%m-%d")
+    # The date term keeps old products from filling the page; the age check below stays as a guard.
+    q = f'hasAgriParcelZone=="{zone_urn}";sensingDate>="{since}"' + extra_q
+    entities = await _query_eoproducts(tenant_id, q, _ZONE_PRODUCT_LIMIT)
+    fresh = []
+    for e in entities:
+        if e.get(attr) is None:
+            continue
+        age = _sensing_age_days(e, now)
+        if age is not None and age <= ZONE_PRODUCT_MAX_AGE_DAYS:
+            fresh.append(e)
+    if not fresh:
+        return None
+    return max(fresh, key=lambda e: str(e.get("sensingDate", "")))
+
+
+async def _fetch_parcel_ndvi(
+    parcel_id: str, tenant_id: str, zone_urn: str | None = None,
+) -> tuple[float | None, str]:
+    """Latest NDVI mean as ``(value, fidelity)``.
+
+    With ``zone_urn``: the zone's own EOProduct sensed within 20 days
+    (``zone_specific``); otherwise the parcel's (``parcel_inherited``); nothing
+    found -> ``(None, "unavailable")``.
 
     Canonical contract (vegetation-health CONTRACT.md): one EOProduct per
-    (parcel, sensingDate); NDVI is the named lowercased `ndvi` Property whose
+    (parcel|zone, sensingDate); NDVI is the named lowercased `ndvi` Property whose
     `value` is the zonal mean. There is no `productType` discriminator on
-    optical products and no `ndviMean`/`ndviValue`. Newest by sensingDate wins;
-    SAR EOProducts (no `ndvi` attribute) are skipped.
+    optical products. Newest by sensingDate wins; SAR EOProducts (no `ndvi`)
+    are skipped.
     """
-    try:
-        from app.config import get_settings
-        from nkz_platform_sdk.orion import OrionClient
-        settings = get_settings()
-        client = OrionClient(tenant_id, base_url=settings.orion_ld_url, context_url=settings.orion_ld_context)
+    if zone_urn:
         try:
-            entities = await client.query_entities(
-                type="EOProduct",
-                q=f'hasAgriParcel=="urn:ngsi-ld:AgriParcel:{parcel_id}"|refAgriParcel=="urn:ngsi-ld:AgriParcel:{parcel_id}"',
-                limit=100,
-                options="keyValues",
-            )
-        finally:
-            await client.close()
-        if entities and isinstance(entities, list):
-            with_ndvi = [e for e in entities if e.get("ndvi") is not None]
-            if with_ndvi:
-                latest = max(with_ndvi, key=lambda e: str(e.get("sensingDate", "")))
-                ndvi = _extract_eoproduct_scalar(latest, "ndvi")
-                if ndvi is not None:
-                    return ndvi
+            e = await _zone_eoproduct(tenant_id, zone_urn, "ndvi")
+            if e is not None:
+                v = _extract_eoproduct_scalar(e, "ndvi")
+                if v is not None:
+                    return v, "zone_specific"
+        except Exception as exc:
+            logger.warning("_fetch_parcel_ndvi: zone %s failed, using parcel: %s", zone_urn, exc)
+    try:
+        entities = await _query_eoproducts(
+            tenant_id,
+            f'hasAgriParcel=="urn:ngsi-ld:AgriParcel:{parcel_id}"|refAgriParcel=="urn:ngsi-ld:AgriParcel:{parcel_id}"',
+            100,
+        )
+        with_ndvi = [e for e in entities if e.get("ndvi") is not None]
+        if with_ndvi:
+            latest = max(with_ndvi, key=lambda e: str(e.get("sensingDate", "")))
+            ndvi = _extract_eoproduct_scalar(latest, "ndvi")
+            if ndvi is not None:
+                return ndvi, "parcel_inherited"
     except Exception as exc:
         logger.warning("_fetch_parcel_ndvi: failed for parcel %s — returning None: %s", parcel_id, exc)
-    return None
+    return None, "unavailable"
 
 
-async def _fetch_parcel_smi(parcel_id: str, tenant_id: str) -> float | None:
-    """Fetch latest SAR SMI (0–1) for a parcel from EOProduct.sarMoisture."""
-    try:
-        from app.config import get_settings
-        from nkz_platform_sdk.orion import OrionClient
-        settings = get_settings()
-        client = OrionClient(tenant_id, base_url=settings.orion_ld_url, context_url=settings.orion_ld_context)
+async def _fetch_parcel_smi(
+    parcel_id: str, tenant_id: str, zone_urn: str | None = None,
+) -> tuple[float | None, str]:
+    """Latest SAR SMI (0–1) from EOProduct.sarMoisture as ``(value, fidelity)``."""
+    if zone_urn:
         try:
-            entities = await client.query_entities(
-                type="EOProduct",
-                q=f'hasAgriParcel=="urn:ngsi-ld:AgriParcel:{parcel_id}"|refAgriParcel=="urn:ngsi-ld:AgriParcel:{parcel_id}"',
-                limit=100,
-                options="keyValues",
-            )
-        finally:
-            await client.close()
-        if entities and isinstance(entities, list):
-            with_smi = [e for e in entities if e.get("sarMoisture") is not None]
-            if with_smi:
-                latest = max(with_smi, key=lambda e: str(e.get("sensingDate", "")))
-                smi = _extract_eoproduct_scalar(latest, "sarMoisture")
-                if smi is not None:
-                    return smi
+            e = await _zone_eoproduct(tenant_id, zone_urn, "sarMoisture")
+            if e is not None:
+                v = _extract_eoproduct_scalar(e, "sarMoisture")
+                if v is not None:
+                    return v, "zone_specific"
+        except Exception as exc:
+            logger.warning("_fetch_parcel_smi: zone %s failed, using parcel: %s", zone_urn, exc)
+    try:
+        entities = await _query_eoproducts(
+            tenant_id,
+            f'hasAgriParcel=="urn:ngsi-ld:AgriParcel:{parcel_id}"|refAgriParcel=="urn:ngsi-ld:AgriParcel:{parcel_id}"',
+            100,
+        )
+        with_smi = [e for e in entities if e.get("sarMoisture") is not None]
+        if with_smi:
+            latest = max(with_smi, key=lambda e: str(e.get("sensingDate", "")))
+            smi = _extract_eoproduct_scalar(latest, "sarMoisture")
+            if smi is not None:
+                return smi, "parcel_inherited"
     except Exception as exc:
         logger.warning("_fetch_parcel_smi: failed for %s: %s", parcel_id, exc)
-    return None
+    return None, "unavailable"
 
 
-async def _fetch_parcel_sar(parcel_id: str, tenant_id: str) -> tuple[float, float] | None:
-    """Fetch latest SAR backscatter (VV, VH) for a parcel from Orion-LD.
+async def _fetch_parcel_sar(
+    parcel_id: str, tenant_id: str, zone_urn: str | None = None,
+) -> tuple[tuple[float, float] | None, str]:
+    """Latest SAR backscatter ``((VV, VH), fidelity)`` from GRD EOProducts.
 
-    Queries EOProduct entities (FIWARE Smart Data Model) filtered by
-    productType=GRD (Sentinel-1 Ground Range Detected).
+    Zone product (within 20 days) -> ``zone_specific``; else the parcel's ->
+    ``parcel_inherited``; none -> ``(None, "unavailable")``.
     """
-    try:
-        from app.config import get_settings
-        from nkz_platform_sdk.orion import OrionClient
-        settings = get_settings()
-        client = OrionClient(tenant_id, base_url=settings.orion_ld_url, context_url=settings.orion_ld_context)
+    if zone_urn:
         try:
-            entities = await client.query_entities(
-                type="EOProduct",
-                q=f'(hasAgriParcel==\"urn:ngsi-ld:AgriParcel:{parcel_id}\"|refAgriParcel==\"urn:ngsi-ld:AgriParcel:{parcel_id}\");productType==\"GRD\"',
-                limit=1,
-                options="keyValues",
-            )
-        finally:
-            await client.close()
-        if entities and isinstance(entities, list):
+            e = await _zone_eoproduct(tenant_id, zone_urn, "backscatterVV", ';productType=="GRD"')
+            if e is not None:
+                vv, vh = e.get("backscatterVV"), e.get("backscatterVH")
+                if vv is not None and vh is not None:
+                    return (float(vv), float(vh)), "zone_specific"
+        except Exception as exc:
+            logger.warning("_fetch_parcel_sar: zone %s failed, using parcel: %s", zone_urn, exc)
+    try:
+        entities = await _query_eoproducts(
+            tenant_id,
+            f'(hasAgriParcel==\"urn:ngsi-ld:AgriParcel:{parcel_id}\"|refAgriParcel==\"urn:ngsi-ld:AgriParcel:{parcel_id}\");productType==\"GRD\"',
+            1,
+        )
+        if entities:
             e = entities[0]
             vv = e.get("backscatterVV")
             vh = e.get("backscatterVH")
             if vv is not None and vh is not None:
-                return float(vv), float(vh)
+                return (float(vv), float(vh)), "parcel_inherited"
     except Exception as exc:
         logger.warning("_fetch_parcel_sar: failed for parcel %s — returning None: %s", parcel_id, exc)
-    return None
+    return None, "unavailable"
 
 
 def _resolve_data_fidelity(assessment: CropHealthAssessment) -> str:

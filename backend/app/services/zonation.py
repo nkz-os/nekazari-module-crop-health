@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
 from app.config import get_settings
 from nkz_platform_sdk.orion import OrionClient
@@ -25,6 +26,18 @@ class Zone:
     urn: str | None = None
     sensor_nearby: bool = False
     centroid: tuple[float, float] | None = None
+    zone_type: str | None = None
+    zone_version: str | None = None
+    zone_rank: int | None = None
+    area_ha: float | None = None
+    pixel_count: int | None = None
+    t_min: float | None = None
+    t_max: float | None = None
+    eto: float | None = None
+    solar_radiation_wm2: float | None = None
+    frost_risk: float | None = None
+    observed_at: datetime | None = None
+    sensor_distance_m: float | None = None
 
 
 def _orion(tenant_id: str) -> OrionClient:
@@ -72,6 +85,48 @@ def _centroid_from(row: dict) -> tuple[float, float] | None:
     if isinstance(c, (list, tuple)) and len(c) == 2:
         return (float(c[0]), float(c[1]))
     return None
+
+
+def _num(value, cast=float):
+    """Numeric value (plain or ``{"value": ...}``-wrapped) or None."""
+    if isinstance(value, dict):
+        value = value.get("value")
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return cast(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _observed_at_from(row: dict) -> datetime | None:
+    """``dateObserved`` as an aware datetime; ISO string or ``{"@value": ...}``."""
+    raw = _attr(row, "dateObserved")
+    if isinstance(raw, dict):
+        raw = raw.get("@value", raw.get("value"))
+    if not isinstance(raw, str):
+        return None
+    try:
+        dt = datetime.fromisoformat(raw.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
+def zone_weights(zones: list[Zone]) -> dict[str, float]:
+    """Normalised weight per zone_id: area, else pixel count, else equal."""
+    if not zones:
+        return {}
+    if all(z.area_ha is not None for z in zones):
+        raw = [float(z.area_ha) for z in zones]
+    elif all(z.pixel_count is not None for z in zones):
+        raw = [z.pixel_count * 0.01 for z in zones]
+    else:
+        raw = [1.0] * len(zones)
+    total = sum(raw)
+    if total <= 0:
+        raw, total = [1.0] * len(zones), float(len(zones))
+    return {z.zone_id: w / total for z, w in zip(zones, raw)}
 
 
 MAX_MANAGEMENT_PARTS = 5
@@ -161,6 +216,18 @@ async def resolve_zones(parcel_id: str, tenant_id: str, parcel_geometry: dict) -
             urn=r.get("id") or None,
             sensor_nearby=sensor_nearby,
             centroid=_centroid_from(r),
+            zone_type=_attr(r, "nkz:zoneType", "zoneType"),
+            zone_version=_attr(r, "nkz:zoneVersion", "zoneVersion"),
+            zone_rank=_num(_attr(r, "nkz:zoneRank", "zoneRank"), int),
+            area_ha=_num(_attr(r, "nkz:areaHa", "areaHa")),
+            pixel_count=_num(_attr(r, "nkz:pixelCount", "pixelCount"), int),
+            t_min=_num(_attr(r, "tMin")),
+            t_max=_num(_attr(r, "tMax")),
+            eto=_num(_attr(r, "eto")),
+            solar_radiation_wm2=_num(_attr(r, "nkz:solarRadiationWm2", "solarRadiationWm2")),
+            frost_risk=_num(_attr(r, "nkz:frostRisk", "frostRisk")),
+            observed_at=_observed_at_from(r),
+            sensor_distance_m=_num(_attr(r, "nkz:sensorDistanceM", "sensorDistanceM")),
         ))
 
     if not zones:

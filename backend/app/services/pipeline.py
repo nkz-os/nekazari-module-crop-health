@@ -1566,23 +1566,22 @@ def _parse_observed_ts(value) -> float | None:
 async def _fetch_zone_daily(
     parcel_id: str, tenant_id: str, start: date, end: date
 ) -> dict[str, list[dict]]:
-    """Daily per-zone weather series from weather-map ({zone_id: [rows]}, fail-safe {})."""
+    """Daily per-zone weather series from weather-api ({zone_id: [rows]}, fail-safe {})."""
     try:
         settings = get_settings()
-        if not settings.weather_map_url:
+        secret = _hmac_secret()
+        if not settings.weather_daily_url or not secret:
+            logger.warning("_fetch_zone_daily: weather-api url or signing secret unset — no zone series")
             return {}
-        parcel_urn = parcel_id if parcel_id.startswith("urn:") else f"urn:ngsi-ld:AgriParcel:{parcel_id}"
-        headers = {}
-        if tenant_id:
-            headers = {"X-Tenant-ID": tenant_id, "X-User-ID": "crop-health-worker"}
-            secret = _hmac_secret()
-            if secret:
-                headers["X-Auth-Signature"] = generate_hmac_signature(secret, "", tenant_id)
-            else:
-                logger.warning("_fetch_zone_daily: signing secret unset — request goes unsigned")
+        short = parcel_id.split(":")[-1]
+        headers = {
+            "X-Tenant-ID": tenant_id,
+            "X-User-ID": "crop-health-worker",
+            "X-Auth-Signature": generate_hmac_signature(secret, "", tenant_id),
+        }
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.get(
-                f"{settings.weather_map_url}/api/weather-map/zones/{parcel_urn}/daily",
+                f"{settings.weather_daily_url}/api/weather/parcel/{short}/zones/daily",
                 params={"start": start.isoformat(), "end": end.isoformat()},
                 headers=headers,
             )

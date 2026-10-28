@@ -137,7 +137,12 @@ class _Resp:
         return self._b
 
 
+_CALLS = []
+
+
 def _fake_httpx(monkeypatch, resp=None, exc=None):
+    _CALLS.clear()
+
     class _Client:
         def __init__(self, *a, **k):
             pass
@@ -149,12 +154,14 @@ def _fake_httpx(monkeypatch, resp=None, exc=None):
             return False
 
         async def get(self, url, params=None, headers=None):
+            _CALLS.append((url, params, headers))
             if exc:
                 raise exc
             return resp
 
     monkeypatch.setattr(pipeline.httpx, "AsyncClient", _Client)
-    monkeypatch.setattr(pipeline, "get_settings", lambda: types.SimpleNamespace(weather_map_url="http://wm"))
+    monkeypatch.setattr(pipeline, "_hmac_secret", lambda: "s3cret")
+    monkeypatch.setattr(pipeline, "get_settings", lambda: types.SimpleNamespace(weather_daily_url="http://wapi"))
 
 
 @pytest.mark.asyncio
@@ -163,6 +170,20 @@ async def test_fetch_zone_daily_returns_zones_body(monkeypatch):
     _fake_httpx(monkeypatch, _Resp(200, {"zones": {"z1": [{"date": "2026-07-01"}]}}))
     out = await pipeline._fetch_zone_daily("p1", "acme", date(2026, 7, 1), date(2026, 7, 2))
     assert out == {"z1": [{"date": "2026-07-01"}]}
+    url, params, headers = _CALLS[0]
+    assert url == "http://wapi/api/weather/parcel/p1/zones/daily"
+    assert params == {"start": "2026-07-01", "end": "2026-07-02"}
+    assert headers["X-Tenant-ID"] == "acme"
+    assert headers["X-User-ID"] == "crop-health-worker"
+    assert headers["X-Auth-Signature"]
+
+
+@pytest.mark.asyncio
+async def test_fetch_zone_daily_short_id_from_urn(monkeypatch):
+    from datetime import date
+    _fake_httpx(monkeypatch, _Resp(200, {"zones": {}}))
+    await pipeline._fetch_zone_daily(_URN, "acme", date(2026, 7, 1), date(2026, 7, 2))
+    assert _CALLS[0][0] == f"http://wapi/api/weather/parcel/{_URN.split(':')[-1]}/zones/daily"
 
 
 @pytest.mark.asyncio

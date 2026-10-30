@@ -64,7 +64,6 @@ def _setup_scheduled(monkeypatch, redis, *, redis_error=False, fetch=None, irrig
     fetch = fetch or _fetch_full()
     monkeypatch.setattr(pipeline, "_read_assigned_crop", _crop)
     monkeypatch.setattr(pipeline, "_gather_parcel_sensors", _no_sensors)
-    monkeypatch.setattr(pipeline.context_client, "get_nutrient_recommendation", _none, raising=False)
     monkeypatch.setattr(pipeline, "_fetch_daily_water", fetch)
     monkeypatch.setattr(pipeline, "_fetch_irrigation", irrigation or _irrigation())
     monkeypatch.setattr("app.main.get_redis_state", _get_redis_state)
@@ -228,3 +227,33 @@ async def test_scheduled_run_passes_irrigation(monkeypatch):
     assert irrigation.calls == [(TENANT, PARCEL, YDAY - timedelta(days=29), YDAY)]
     assert wet.state["sw_mm"] == pytest.approx(dry.state["sw_mm"] + 5.0, abs=0.01)
     assert wet.state["anchor_date"] == (YDAY - timedelta(days=7)).isoformat()
+
+
+@pytest.mark.asyncio
+async def test_scheduled_run_never_calls_bioorch_fertilizer_and_emits_no_npk(monkeypatch):
+    import httpx
+
+    urls = []
+
+    class _RecordingClient:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def get(self, url, *a, **k):
+            urls.append(str(url))
+            raise RuntimeError("no network in tests")
+
+    published, _ = _setup_scheduled(monkeypatch, FakeRedis())
+    monkeypatch.setattr(httpx, "AsyncClient", _RecordingClient)
+    out = await pipeline.compute_assessment(URN, TENANT)
+    assert out.crop_requirements is not None
+    assert not any("/recommendations/fertilizer" in u for u in urls)
+    e = _rollup_entity(published)
+    for attr in ("nRequirementKgHa", "p2o5RequirementKgHa", "k2oRequirementKgHa"):
+        assert attr not in e

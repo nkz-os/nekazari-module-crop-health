@@ -2205,11 +2205,9 @@ async def compute_assessment(
     nutrient_rec = await get_nutrient_recommendation(
         species=species,
         stage=rollup.phenology_stage or "vegetative",
-        # Real lab stocks (kg/ha) when a lab analysis exists; None otherwise —
-        # BioOrch then answers the stage demand alone instead of a fake deficit.
-        soil_n=getattr(soil_data, "nitrogen_kg_ha", None) if soil_data else None,
-        soil_p=getattr(soil_data, "phosphorus_kg_ha", None) if soil_data else None,
-        soil_k=getattr(soil_data, "potassium_kg_ha", None) if soil_data else None,
+        soil_n=getattr(soil_data, "nitrogen_kg_ha", 0) if soil_data else 0,
+        soil_p=getattr(soil_data, "phosphorus_kg_ha", 0) if soil_data else 0,
+        soil_k=getattr(soil_data, "potassium_kg_ha", 0) if soil_data else 0,
     )
 
     # Derive irrigation need from soil_water_balance

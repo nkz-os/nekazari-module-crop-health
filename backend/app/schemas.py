@@ -370,18 +370,12 @@ class CompactionRiskResult(BaseModel):
 
 
 class CropRequirements(BaseModel):
-    """Agronomic requirements derived from water balance + BioOrch nutrient demand.
+    """Agronomic requirements derived from the water balance.
 
     Embedded as Properties in CropHealthAssessment (not a standalone entity).
     """
     irrigation_mm: float | None = None
     water_deficit_mm: float | None = None
-    n_kg_ha: float | None = None
-    p2o5_kg_ha: float | None = None
-    k2o_kg_ha: float | None = None
-    bioorch_recommendations: list[dict] | None = None
-    bioorch_species: str | None = None
-    bioorch_stage: str | None = None
 
 
 # ── CropHealthAssessment (NGSI-LD output entity) ─────────────────────────────
@@ -635,12 +629,6 @@ class CropHealthAssessment(BaseModel):
                 entity["irrigationMm"] = {"type": "Property", "value": cr.irrigation_mm, "unitCode": "MMT"}
             if cr.water_deficit_mm is not None:
                 entity["waterDeficitMm"] = {"type": "Property", "value": cr.water_deficit_mm, "unitCode": "MMT"}
-            if cr.n_kg_ha is not None:
-                entity["nRequirementKgHa"] = {"type": "Property", "value": cr.n_kg_ha, "unitCode": "KGM"}
-            if cr.p2o5_kg_ha is not None:
-                entity["p2o5RequirementKgHa"] = {"type": "Property", "value": cr.p2o5_kg_ha, "unitCode": "KGM"}
-            if cr.k2o_kg_ha is not None:
-                entity["k2oRequirementKgHa"] = {"type": "Property", "value": cr.k2o_kg_ha, "unitCode": "KGM"}
         if self.soil_suitability and self.soil_suitability.verdict:
             ss = self.soil_suitability
             entity["soilSuitabilityVerdict"] = {"type": "Property", "value": ss.verdict}

@@ -895,7 +895,8 @@ async def get_penetrometer_data(
     that have penetrationResistance data. If found, the compaction risk
     engine can use this as ground truth instead of modeled susceptibility.
 
-    Returns None if no penetrometer data exists.
+    Returns None if no penetrometer data exists. ``point_count`` counts
+    readings (one per horizon), not entities; the mean mixes depths.
 
     Returns:
         {
@@ -919,28 +920,44 @@ async def get_penetrometer_data(
         if not isinstance(entities, list):
             return None
 
+        def _val(v):
+            return v.get("value") if isinstance(v, dict) else v
+
         mpa_values = []
+        depths = set()
         for e in entities:
-            pr = e.get("penetrationResistance")
-            if isinstance(pr, dict):
-                pr = pr.get("value")
-            if pr is not None:
+            # Readings live in horizons.value[]; the entity root only serves legacy
+            # entities written before horizons existed. A reading without a depth
+            # range is discarded (unknown beats an unplaceable figure).
+            hs = e.get("horizons")
+            if isinstance(hs, dict) and "value" in hs:
+                hs = hs["value"]
+            if isinstance(hs, dict):
+                hs = [hs]
+            readings = []
+            if isinstance(hs, list):
+                for h in hs:
+                    if isinstance(h, dict) and _val(h.get("penetrationResistance")) is not None:
+                        readings.append((
+                            _val(h.get("penetrationResistance")), h.get("depthFrom"), h.get("depthTo"),
+                        ))
+            elif _val(e.get("penetrationResistance")) is not None:
+                readings.append((
+                    _val(e.get("penetrationResistance")), _val(e.get("depthFrom")), _val(e.get("depthTo")),
+                ))
+            for pr, df, dt in readings:
+                if df is None or dt is None:
+                    continue
                 try:
                     val = float(pr)
-                    if val > 0:
-                        mpa_values.append(val)
                 except (ValueError, TypeError):
-                    pass
+                    continue
+                if val > 0:
+                    mpa_values.append(val)
+                    depths.add(f"{df}-{dt}")
 
         if len(mpa_values) < 1:
             return None
-
-        depths = set()
-        for e in entities:
-            df = e.get("depthFrom", {}).get("value") if isinstance(e.get("depthFrom"), dict) else e.get("depthFrom")
-            dt = e.get("depthTo", {}).get("value") if isinstance(e.get("depthTo"), dict) else e.get("depthTo")
-            if df is not None and dt is not None:
-                depths.add(f"{df}-{dt}")
 
         return {
             "available": True,

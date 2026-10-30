@@ -251,15 +251,11 @@ async def get_phenology_params(
 async def get_nutrient_recommendation(
     species: str,
     stage: str,
-    soil_n: float | None = None,
-    soil_p: float | None = None,
-    soil_k: float | None = None,
+    soil_n: float = 0,
+    soil_p: float = 0,
+    soil_k: float = 0,
 ) -> dict | None:
     """NPK recommendation from BioOrch nutrient-profile + soil levels.
-
-    ``soil_n/p/k`` are the available mineral stocks in kg/ha (0-30 cm) when a
-    lab analysis exists, or None when it does not — None params are omitted by
-    httpx, so BioOrch answers the stage demand alone instead of a fake deficit.
 
     Follows the same pattern as get_phenology_stages / get_phenology_params.
     Returns None (no crash) when BioOrch is unreachable or has no data.
@@ -268,16 +264,12 @@ async def get_nutrient_recommendation(
     if not settings.bioorchestrator_url:
         return None
     url = f"{settings.bioorchestrator_url}/api/graph/recommendations/fertilizer"
-    # None stocks are omitted explicitly (not left to httpx internals): BioOrch
-    # then answers the stage demand alone instead of a fake deficit.
-    params: dict = {"species": species, "stage": stage}
-    params.update({
-        k: v for k, v in (("soil_n", soil_n), ("soil_p", soil_p), ("soil_k", soil_k))
-        if v is not None
-    })
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(url, params=params)
+            resp = await client.get(url, params={
+                "species": species, "stage": stage,
+                "soil_n": soil_n, "soil_p": soil_p, "soil_k": soil_k,
+            })
             if resp.status_code == 200:
                 return resp.json()
     except Exception as exc:
@@ -383,73 +375,6 @@ def _soil_num(value: Any, default: float) -> float:
         return float(value)
     except (TypeError, ValueError):
         return default
-
-
-_FERTILITY_KEYS = (
-    "nitrateN", "ammoniumN", "totalNitrogen", "phosphorusAvailable",
-    "potassiumExchangeable", "organicMatter", "carbonates", "activeLime",
-)
-
-
-def _fertility_from_horizons(horizons: list) -> dict:
-    """Lab fertility of the surface horizon, as SoilProperties fields.
-
-    Only the surface horizon (depth_from < 30 cm) may supply fertility: a
-    subsurface analysis (e.g. 25-50 cm) is not the arable layer the stocks are
-    computed for. Concentrations are exposed as-is; stocks are the available
-    mineral amount of the 0-30 cm layer, kg/ha = mg/kg x d_cm x rho x 0.1,
-    with the horizon's own bulk density (1.35 g/cm3 as the last resort).
-    Everything stays None when there is no lab analysis — never a zero dressed
-    as a value.
-    """
-    candidates = [
-        h for h in horizons
-        if isinstance(h, dict) and any(h.get(k) is not None for k in _FERTILITY_KEYS)
-    ]
-    surface = [
-        h for h in candidates
-        if (df := _finite_num(h.get("depthFrom"))) is None or df <= 15
-    ]
-    # Only a horizon starting in the top of the arable layer may supply
-    # fertility (contract §4): a subsurface analysis (e.g. 25-50 cm) is not
-    # the 0-30 cm layer the stocks are computed for.
-    hz = surface[0] if surface else None
-    if hz is None:
-        return {}
-
-    nitrate = _finite_num(hz.get("nitrateN"))
-    ammonium = _finite_num(hz.get("ammoniumN"))
-    total_n = _finite_num(hz.get("totalNitrogen"))
-    p_avail = _finite_num(hz.get("phosphorusAvailable"))
-    k_exch = _finite_num(hz.get("potassiumExchangeable"))
-
-    depth_from = _finite_num(hz.get("depthFrom")) or 0.0
-    depth_to = _finite_num(hz.get("depthTo"))
-    d_cm = max(0.0, (min(depth_to, 30.0) if depth_to is not None else 30.0) - depth_from)
-    rho = _finite_num(hz.get("bulkDensity"))
-    rho = rho if (rho is not None and rho > 0) else 1.35
-    factor = d_cm * rho * 0.1
-
-    out: dict = {
-        "nitrate_n_mg_kg": nitrate,
-        "ammonium_n_mg_kg": ammonium,
-        "total_nitrogen_pct": total_n,
-        "phosphorus_available_mg_kg": p_avail,
-        "phosphorus_method": hz.get("phosphorusMethod") if isinstance(hz.get("phosphorusMethod"), str) else None,
-        "potassium_exchangeable_mg_kg": k_exch,
-        "potassium_method": hz.get("potassiumMethod") if isinstance(hz.get("potassiumMethod"), str) else None,
-    }
-    if factor > 0:
-        if nitrate is not None or ammonium is not None:
-            out["nitrogen_kg_ha"] = round(((nitrate or 0.0) + (ammonium or 0.0)) * factor, 1)
-        elif total_n is not None:
-            # Conservative mineralizable N in campaign: 1.5% of total organic N.
-            out["nitrogen_kg_ha"] = round((total_n * 10000 * 0.015) * factor, 1)
-        if p_avail is not None:
-            out["phosphorus_kg_ha"] = round(p_avail * factor, 1)
-        if k_exch is not None:
-            out["potassium_kg_ha"] = round(k_exch * factor, 1)
-    return out
 
 
 def _finite_num(value: Any) -> float | None:
@@ -606,7 +531,6 @@ async def get_soil_properties(parcel_id: str, tenant_id: str = "") -> "SoilPrope
                         "hydraulics_from_soil": _hydraulics_from_soil(
                             h.get("fieldCapacity"), h.get("wiltingPoint")
                         ),
-                        **_fertility_from_horizons(horizons),
                     }
     except Exception:
         pass
@@ -996,43 +920,27 @@ async def get_penetrometer_data(
             return None
 
         mpa_values = []
-        depths = set()
         for e in entities:
-            # Penetrometer readings live in horizons.value[]; the entity root
-            # only serves legacy entities written before horizons existed.
-            readings: list[tuple[object, object, object]] = []
-            hs = e.get("horizons")
-            if isinstance(hs, dict) and "value" in hs:
-                hs = hs["value"]
-            if isinstance(hs, dict):
-                hs = [hs]
-            if isinstance(hs, list):
-                for h in hs:
-                    if not isinstance(h, dict):
-                        continue
-                    pr = h.get("penetrationResistance")
-                    if isinstance(pr, dict):
-                        pr = pr.get("value")
-                    if pr is not None:
-                        readings.append((pr, h.get("depthFrom"), h.get("depthTo")))
-            if not readings:
-                pr = e.get("penetrationResistance")
-                if isinstance(pr, dict):
-                    pr = pr.get("value")
-                if pr is not None:
-                    readings.append((pr, e.get("depthFrom"), e.get("depthTo")))
-            for pr, df, dt in readings:
+            pr = e.get("penetrationResistance")
+            if isinstance(pr, dict):
+                pr = pr.get("value")
+            if pr is not None:
                 try:
                     val = float(pr)
                     if val > 0:
                         mpa_values.append(val)
                 except (ValueError, TypeError):
                     pass
-                if df is not None and dt is not None:
-                    depths.add(f"{df}-{dt}")
 
         if len(mpa_values) < 1:
             return None
+
+        depths = set()
+        for e in entities:
+            df = e.get("depthFrom", {}).get("value") if isinstance(e.get("depthFrom"), dict) else e.get("depthFrom")
+            dt = e.get("depthTo", {}).get("value") if isinstance(e.get("depthTo"), dict) else e.get("depthTo")
+            if df is not None and dt is not None:
+                depths.add(f"{df}-{dt}")
 
         return {
             "available": True,

@@ -137,6 +137,7 @@ const en = {
             selectPromptHint: 'Choose a parcel from the list to view its crop health details.',
             viewInViewer: 'View in 3D viewer',
             subtitle: 'Agronomic synthesis — water, vigor, disease and yield',
+            backToParcels: 'Back to parcels',
         },
         fleet: {
             surprises: 'With surprises',
@@ -537,6 +538,7 @@ const es = {
             selectPromptHint: 'Elige una parcela de la lista para ver el detalle de su salud de cultivo.',
             viewInViewer: 'Ver en visor 3D',
             subtitle: 'Síntesis agronómica — agua, vigor, enfermedad y rendimiento',
+            backToParcels: 'Volver a parcelas',
         },
         fleet: {
             surprises: 'Con sorpresa',
@@ -904,6 +906,7 @@ const ca = {
             selectPromptHint: 'Tria una parcel·la de la llista per veure el detall de la seva salut de cultiu.',
             viewInViewer: 'Veure al visor 3D',
             subtitle: 'Síntesi agronòmica — aigua, vigor, malaltia i rendiment',
+            backToParcels: 'Tornar a parcel·les',
         },
         fleet: {
             surprises: 'Amb sorpresa',
@@ -1240,6 +1243,7 @@ const eu = {
             selectPromptHint: 'Aukeratu partzela bat zerrendatik laborantzaren osasun xehetasunak ikusteko.',
             viewInViewer: '3D bisorean ikusi',
             subtitle: 'Síntesi agronomikoa — ura, bizitasuna, gaixotasuna eta emekortasuna',
+            backToParcels: 'Itzuli partzeletara',
         },
         fleet: {
             surprises: 'Sorpresarekin',
@@ -1576,6 +1580,7 @@ const fr = {
             selectPromptHint: 'Choisissez une parcelle dans la liste pour voir le détail de sa santé.',
             viewInViewer: 'Voir dans le visualiseur 3D',
             subtitle: 'Synthèse agronomique — eau, vigueur, maladie et rendement',
+            backToParcels: 'Retour aux parcelles',
         },
         fleet: {
             surprises: 'Avec surprise',
@@ -1912,6 +1917,7 @@ const pt = {
             selectPromptHint: 'Escolha uma parcela da lista para ver o detalhe da sua saúde de cultivo.',
             viewInViewer: 'Ver no visualizador 3D',
             subtitle: 'Síntese agronómica — água, vigor, doença e rendimento',
+            backToParcels: 'Voltar às parcelas',
         },
         fleet: {
             surprises: 'Com surpresa',

@@ -194,6 +194,20 @@ class SoilProperties(BaseModel):
     # True only when BOTH field capacity and wilting point were read from the Soil
     # module as finite numbers (fc > wp); False when any value is a default.
     hydraulics_from_soil: bool = False
+    # Fertility from lab analysis (None when the parcel has no lab analysis
+    # and only SoilGrids/LUCAS modeled data — never a zero dressed as a value).
+    nitrate_n_mg_kg: float | None = None
+    ammonium_n_mg_kg: float | None = None
+    total_nitrogen_pct: float | None = None
+    phosphorus_available_mg_kg: float | None = None
+    phosphorus_method: str | None = None
+    potassium_exchangeable_mg_kg: float | None = None
+    potassium_method: str | None = None
+    # Derived available mineral stock in the topsoil layer (kg/ha) when a lab
+    # analysis exists.
+    nitrogen_kg_ha: float | None = None
+    phosphorus_kg_ha: float | None = None
+    potassium_kg_ha: float | None = None
 
 
 @dataclass(frozen=True)

@@ -14,8 +14,13 @@ describe('layerColor', () => {
     expect(layerColor(assessment({ compositeStressIndex: 71.8 }), 'composite').fill).toBe(RED);
     expect(layerColor(assessment({ compositeStressIndex: 12 }), 'composite').fill).toBe(GREEN);
   });
-  it('keeps CWSI on its 0-1 scale', () => {
-    expect(layerColor(assessment({ cwsiValue: 0.7 }), 'cwsi').fill).toBe(RED);
-    expect(layerColor(assessment({ cwsiValue: 0.1 }), 'cwsi').fill).toBe(GREEN);
+  it('colours the cwsi mode from the resolved level, not from cwsiValue', () => {
+    expect(layerColor(assessment({ waterStressLevel: 'high', cwsiValue: 0.1 }), 'cwsi').fill).toBe(RED);
+    expect(layerColor(assessment({ waterStressLevel: 'none', cwsiValue: 0.9 }), 'cwsi').fill).toBe(GREEN);
+  });
+  it('paints grey for no_data, not_needed and a missing level', () => {
+    for (const lv of ['no_data', 'not_needed', undefined]) {
+      expect(layerColor(assessment({ waterStressLevel: lv, cwsiValue: 0.9 }), 'cwsi').fill).toBe('#9ca3af');
+    }
   });
 });

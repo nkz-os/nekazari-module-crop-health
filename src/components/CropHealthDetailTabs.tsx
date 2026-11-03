@@ -8,6 +8,7 @@ import YieldForecastSection from './YieldForecastSection';
 import ZoneHealthPanel from './ZoneHealthPanel';
 import CropHealthRisksPanel from './CropHealthRisksPanel';
 import { formatRelativeTime } from '../utils/relativeTime';
+import { levelIntent, levelKey, normalizeLevel } from '../utils/waterStress';
 import type { TFunction } from 'i18next';
 import type {
   AssessmentData,
@@ -15,6 +16,8 @@ import type {
   CorrelationStats,
   DiseaseRisk,
   PhenologyParams,
+  SourceAttribution,
+  WaterStressBaseline,
   TrendPoint,
   ZoneAssessmentData,
   ZonesResponse,
@@ -70,6 +73,86 @@ function waterStressValue(
   }
   return `${index.toFixed(2)} · ${t(`detail.fidelity.${fidelity}`)} · ${formatRelativeTime(observedAt, t)}`;
 }
+
+const num2 = (v: number | null | undefined): string => (typeof v === 'number' && Number.isFinite(v) ? v.toFixed(2) : '—');
+
+function upperText(b: WaterStressBaseline): string {
+  const u = b.upper;
+  if (u.valueC != null) return `${num2(u.valueC)} °C`;
+  if (u.a0C != null && u.a1CPerKpa != null) return `${num2(u.a0C)} + ${num2(u.a1CPerKpa)}·VPD`;
+  return '—';
+}
+
+/** Technician detail of the water-stress level: method, value, VPD, baselines served and their sources. */
+const WaterStressTechnician: React.FC<{
+  assessment: AssessmentData;
+  phenology: PhenologyParams | null;
+  t: TFunction;
+}> = ({ assessment, phenology, t }) => {
+  const method = assessment.waterStressMethod;
+  const value =
+    method === 'cwsi_sensor'
+      ? assessment.cwsiValue
+      : method === 'balance' && assessment.waterStressIndex != null
+        ? 1 - assessment.waterStressIndex
+        : null;
+  const valueLabel = method === 'balance' ? 'Ks' : 'CWSI';
+  const baselines = phenology?.water_stress_reference?.baselines ?? [];
+  const wanted = assessment.waterStressReferenceSources ?? [];
+  const attributions: SourceAttribution[] = (phenology?.attributions ?? []).filter(
+    (a) => wanted.length === 0 || wanted.includes(a.source_id),
+  );
+  return (
+    <MetricSection>
+      <span className="text-xs text-nkz-text-secondary font-medium uppercase tracking-wider block mb-1">
+        {t('waterStress.technician.title')}
+      </span>
+      <div className="flex items-center gap-2 mb-1">
+        <Badge intent={levelIntent(assessment.waterStressLevel) === 'neutral' ? 'default' : levelIntent(assessment.waterStressLevel)}>
+          {t(levelKey(assessment.waterStressLevel))}
+        </Badge>
+        <span className="text-xs text-nkz-text-muted">{t(`waterStress.method.${method ?? 'none'}`)}</span>
+      </div>
+      <div className="grid grid-cols-2 gap-1 text-xs">
+        <div><span className="text-nkz-text-muted">{valueLabel}</span><br /><strong className="text-nkz-text-primary">{num2(value)}</strong></div>
+        {assessment.vpdKpa != null && (
+          <div><span className="text-nkz-text-muted">VPD</span><br /><strong className="text-nkz-text-primary">{num2(assessment.vpdKpa)} kPa</strong></div>
+        )}
+      </div>
+      {assessment.waterStressPhaseBasis && (
+        <p className="text-xs text-nkz-text-muted mt-1">{t(`waterStress.phaseBasis.${assessment.waterStressPhaseBasis}`)}</p>
+      )}
+      {baselines.length > 0 && (
+        <div className="mt-2">
+          <span className="text-xs text-nkz-text-muted block">{t('waterStress.technician.baseline')}</span>
+          {baselines.map((b) => (
+            <div key={b.id} className="mt-0.5">
+              <div className="grid grid-cols-3 gap-1 text-center text-xs">
+              <div><span className="text-nkz-text-muted">a0</span><br /><strong className="text-nkz-text-primary">{num2(b.a0C)} °C</strong></div>
+              <div><span className="text-nkz-text-muted">a1</span><br /><strong className="text-nkz-text-primary">{num2(b.a1CPerKpa)} °C/kPa</strong></div>
+              <div><span className="text-nkz-text-muted">{t('waterStress.technician.upper')}</span><br /><strong className="text-nkz-text-primary">{upperText(b)}</strong></div>
+              </div>
+              {b.assumption && <p className="text-xs text-nkz-text-muted">{b.assumption}</p>}
+            </div>
+          ))}
+        </div>
+      )}
+      {attributions.length > 0 && (
+        <div className="mt-2">
+          <span className="text-xs text-nkz-text-muted block">{t('waterStress.technician.sources')}</span>
+          {attributions.map((a) => {
+            const href = a.url ?? a.attribution_url;
+            return (
+              <p key={a.source_id} className="text-xs text-nkz-text-muted">
+                📚 {href ? <a className="text-nkz-accent-strong underline" href={href} target="_blank" rel="noopener noreferrer">{a.text}</a> : a.text}
+              </p>
+            );
+          })}
+        </div>
+      )}
+    </MetricSection>
+  );
+};
 
 const CropHealthDetailTabs: React.FC<CropHealthDetailTabsProps> = ({
   parcelId,
@@ -139,7 +222,9 @@ const CropHealthDetailTabs: React.FC<CropHealthDetailTabsProps> = ({
             </span>
             {trendCW.length >= 2 && <Sparkline data={trendCW} color="var(--nkz-color-danger)" />}
           </div>
-          <ProgressBar value={assessment.cwsiValue * 100} intent={assessment.cwsiValue > 0.6 ? 'negative' : assessment.cwsiValue > 0.3 ? 'warning' : 'positive'} />
+          <ProgressBar value={assessment.cwsiValue * 100} intent={levelIntent(assessment.waterStressLevel) === 'neutral' ? 'default' : levelIntent(assessment.waterStressLevel)} />
+          <p className="text-xs text-nkz-text-primary mt-1">{t(levelKey(assessment.waterStressLevel))}</p>
+          {assessment.waterStressPhaseNote === 'rdi' && <p className="text-xs text-nkz-text-muted">{t('waterStress.note.rdi')}</p>}
           {trendDir != null && (
             <p className="text-xs mt-1" style={{ color: Number(trendDir) > 0 ? 'var(--nkz-color-danger)' : 'var(--nkz-color-success)' }}>
               {Number(trendDir) > 0 ? '↑' : '↓'} {Math.abs(Number(trendDir)).toFixed(2)} 7d
@@ -149,6 +234,8 @@ const CropHealthDetailTabs: React.FC<CropHealthDetailTabsProps> = ({
           )}
         </MetricSection>
       )}
+
+      <WaterStressTechnician assessment={assessment} phenology={phenology} t={t as TFunction} />
 
       {/* MDS Section */}
       {assessment.mdsValue != null && (
@@ -385,10 +472,8 @@ const CropHealthDetailTabs: React.FC<CropHealthDetailTabsProps> = ({
           <span className="text-xs text-nkz-text-secondary font-medium uppercase tracking-wider block mb-1">
             {t('contextPanel.phenologyParamsLabel')}
           </span>
-          <div className="grid grid-cols-4 gap-1 text-center text-xs">
+          <div className="grid grid-cols-2 gap-1 text-center text-xs">
             <div><span className="text-nkz-text-muted">Kc</span><br /><strong className="text-nkz-text-primary">{phenology.kc?.toFixed(2)}</strong></div>
-            <div><span className="text-nkz-text-muted">D1</span><br /><strong className="text-nkz-text-primary">{formatBaselineC(phenology.d1)}</strong></div>
-            <div><span className="text-nkz-text-muted">D2</span><br /><strong className="text-nkz-text-primary">{formatBaselineC(phenology.d2)}</strong></div>
             <div><span className="text-nkz-text-muted">MDS ref</span><br /><strong className="text-nkz-text-primary">{phenology.mds_ref?.toFixed(0)}µm</strong></div>
           </div>
           {phenology.provenance && (
@@ -497,7 +582,7 @@ const CropHealthDetailTabs: React.FC<CropHealthDetailTabsProps> = ({
               {t(actionLabels[assessment.recommendedAction] || assessment.recommendedAction)}
             </strong>
             <p className="text-xs text-nkz-text-muted mt-0.5">
-              {assessment.cwsiValue != null && assessment.cwsiValue > 0.6 && `${t('detail.hints.cwsiHigh')} `}
+              {normalizeLevel(assessment.waterStressLevel) === 'high' && `${t('detail.hints.cwsiHigh')} `}
               {assessment.mdsSeverity === 'CRITICAL' && `${t('detail.hints.mdsCritical')} `}
               {assessment.waterBalanceDeficit != null && assessment.waterBalanceDeficit < -5 && `${t('detail.hints.deficit')} `}
               {t('contextPanel.basedOn', {
@@ -521,7 +606,7 @@ const CropHealthDetailTabs: React.FC<CropHealthDetailTabsProps> = ({
               <div key={i} className="flex items-center gap-2 text-xs">
                 <span className="text-nkz-text-muted w-20">{p.date?.slice(0, 10)}</span>
                 <span style={{ color: (p.ndvi || 0) > 0.5 ? 'var(--nkz-color-success)' : 'var(--nkz-color-warning)' }}>NDVI {(p.ndvi || 0).toFixed(2)}</span>
-                <span style={{ color: (p.cwsi || 0) > 0.5 ? 'var(--nkz-color-danger)' : 'var(--nkz-color-success)' }}>CWSI {(p.cwsi || 0).toFixed(2)}</span>
+                <span className="text-nkz-text-secondary">CWSI {(p.cwsi || 0).toFixed(2)}</span>
               </div>
             ))}
           </div>

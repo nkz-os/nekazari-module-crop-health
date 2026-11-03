@@ -4,6 +4,7 @@ import { DAY_MS, latestAtOrBefore, snapToUtcDay } from '@nekazari/viewer-kit';
 import { cropHealthFetch } from '../api/cropHealthApi';
 import { MAP_LAYER_MODE_KEY, readMapLayerMode, type MapLayerMode } from '../constants';
 import type { AssessmentData, ZoneAssessmentData } from '../types/assessment';
+import { LEVEL_SEVERITY, normalizeLevel } from '../utils/waterStress';
 import {
   SEVERITY_COLORS, emphasisStyle, parcelOnlyLabel, polygonRings, readZoneFromLocation, zoneCentroid, zoneEmphasis,
   zoneFillAlpha, zoneKey, zoneLabelStyle, zoneLabelText, zoneMapLabel, zoneNumbers, zoneOutlineStyle, zoneSelection, pinnedZoneExists, type ZoneRef,
@@ -51,6 +52,11 @@ export function layerColor(a: AssessmentData, mode: MapLayerMode): { fill: strin
   if (mode === 'severity') {
     return SEVERITY_COLORS[a.overallSeverity] || SEVERITY_COLORS.LOW;
   }
+  if (mode === 'cwsi') {
+    // The backend's resolved level is the only source of the cuts; no level means no data.
+    const sev = LEVEL_SEVERITY[normalizeLevel(a.waterStressLevel)];
+    return sev ? SEVERITY_COLORS[sev] : NO_DATA_COLOR;
+  }
   const value = layerValue(a, mode);
   if (value == null) return NO_DATA_COLOR;
   if (mode === 'vigor') {
@@ -58,8 +64,8 @@ export function layerColor(a: AssessmentData, mode: MapLayerMode): { fill: strin
     if (value >= 40) return { fill: '#d97706', alpha: 0.45 };
     return { fill: '#dc2626', alpha: 0.5 };
   }
-  // CWSI is 0-1; the composite index is 0-100 (engines/composite.py).
-  const [high, mid] = mode === 'composite' ? [60, 30] : [0.6, 0.3];
+  // The composite index is 0-100 (engines/composite.py).
+  const [high, mid] = [60, 30];
   if (value >= high) return { fill: '#dc2626', alpha: 0.5 };
   if (value >= mid) return { fill: '#d97706', alpha: 0.45 };
   return { fill: '#16a34a', alpha: 0.35 };
@@ -74,6 +80,8 @@ function historicalAssessment(latest: AssessmentData, point: DailyPoint | null):
     ...latest,
     compositeStressIndex: point?.composite ?? undefined,
     cwsiValue: point?.cwsi ?? undefined,
+    // History points carry no resolved level: the layer shows no data rather than recompute cuts.
+    waterStressLevel: undefined,
     overallSeverity: point?.severity ?? '',
     vigorIndex: undefined,
   };

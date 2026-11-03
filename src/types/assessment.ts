@@ -1,7 +1,38 @@
+/** One served CWSI baseline of `phenology-params.water_stress_reference` (bioorch). */
+export interface WaterStressBaseline {
+  id: string;
+  cultivar?: string;
+  condition?: string;
+  a0C: number;
+  a1CPerKpa: number;
+  upper: { form: string; valueC?: number; a0C?: number; a1CPerKpa?: number };
+  valid?: Record<string, unknown>;
+  site?: string;
+  sourceId: string;
+  ref?: string;
+  assumption?: string;
+}
+
+export interface WaterStressReference {
+  baselines: WaterStressBaseline[];
+  stages?: Record<string, unknown>;
+  sourceIds?: string[];
+}
+
+/** Structured attribution of a source (bioorch `get_attributions`). */
+export interface SourceAttribution {
+  source_id: string;
+  text: string;
+  url?: string;
+  attribution_url?: string;
+}
+
 export interface PhenologyParams {
   kc?: number;
   d1?: number;
   d2?: number;
+  water_stress_reference?: WaterStressReference | null;
+  attributions?: SourceAttribution[];
   mds_ref?: number;
   match_level?: string;
   stage?: string;
@@ -127,6 +158,14 @@ export interface AssessmentData {
     source: string;
     hasData: boolean;
   };
+  /** Resolved by the backend; absent on assessments written before the single level existed. */
+  waterStressLevel?: 'none' | 'mild' | 'moderate' | 'high' | 'no_data' | 'not_needed' | null;
+  waterStressMethod?: 'cwsi_sensor' | 'balance' | 'none' | null;
+  waterStressPhaseNote?: 'rdi' | null;
+  waterStressReferenceSources?: string[] | null;
+  /** Optional, may be served later: how the phase was determined. */
+  waterStressPhaseBasis?: 'gdd' | 'gdd_ndvi' | null;
+  vpdKpa?: number | null;
   waterStressIndex?: number | null;
   waterStressFidelity?: 'iot_sensor' | 'parcel_weather' | 'regional_proxy' | 'unavailable' | null;
   waterStressObservedAt?: string | null;

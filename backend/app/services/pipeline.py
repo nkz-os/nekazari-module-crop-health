@@ -240,6 +240,34 @@ def _determine_overall_severity(assessment: CropHealthAssessment) -> Severity:
     return max(severities, key=lambda s: order[s])
 
 
+def _refresh_rollup_level(rollup: CropHealthAssessment, phenology) -> None:
+    """Re-resolve the water-stress level once the parcel-level Ks exists.
+
+    Zones are assessed without the parcel's water stress, so the rollup's inherited
+    indicator can be no_data. A sensor-CWSI level is already final; any other is
+    resolved again from the rollup's Ks, and severity/action are updated before any
+    event is emitted. A not_needed stage recomputes severity from scratch (no water alarm);
+    otherwise the worse of the zone-derived severity and the new level wins.
+    """
+    old = rollup.water_stress_indicator
+    if old is not None and old.method == "cwsi_sensor":
+        return
+    ref = getattr(phenology, "water_stress_reference", None) if phenology else None
+    stage = rollup.phenology_stage if rollup.gdd_accumulated is not None else None
+    flags = ref.stages.get(stage) if (ref is not None and stage is not None) else None
+    rollup.water_stress_indicator = resolve_indicator(
+        rollup.cwsi, rollup.water_stress, flags, reference=ref,
+    )
+    new_sev = _determine_overall_severity(rollup)
+    if rollup.water_stress_indicator.level != "not_needed":
+        new_sev = max(new_sev, rollup.overall_severity, key=_SEV_RANK.__getitem__)
+    rollup.overall_severity = new_sev
+    rollup.recommended_action = _determine_action(new_sev)
+
+
+_SEV_RANK = {Severity.LOW: 0, Severity.MEDIUM: 1, Severity.HIGH: 2, Severity.CRITICAL: 3}
+
+
 def _determine_action(severity: Severity) -> RecommendedAction:
     """Map overall severity to recommended action."""
     return {
@@ -844,6 +872,7 @@ async def trigger(
         rollup.soil_water_balance, model_fidelity, now_ts, daily_shade, root_depth_mm,
         shade_observed_at,
     )
+    _refresh_rollup_level(rollup, phenology)
     rollup_entity = rollup.to_ngsi_ld()
     if await _publish_assessment(rollup_entity, tenant_id):
         await _clear_stale_water_stress(rollup_entity, tenant_id)
@@ -2295,6 +2324,7 @@ async def compute_assessment(
         "parcel_weather" if rollup.soil_water_balance else "unavailable",
         now_ts, daily_shade, root_depth_mm, shade_observed_at,
     )
+    _refresh_rollup_level(rollup, phenology)
 
     from app.schemas import CropRequirements
 

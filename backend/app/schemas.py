@@ -780,7 +780,8 @@ class CropHealthAssessment(BaseModel):
         envelope, then overrides id/type and adds the zone relationship.
         """
         entity = self.to_ngsi_ld()
-        for attr in ("waterStressIndex", "waterStressFidelity", "waterStressObservedAt", "shadeFraction", "shadeObservedAt",
+        # The RDI note is a parcel-level attribute; zone entities are never stale-cleared.
+        for attr in ("waterStressPhaseNote", "waterStressIndex", "waterStressFidelity", "waterStressObservedAt", "shadeFraction", "shadeObservedAt",
                      "underPanelWaterStressIndex", "underPanelWaterStressFidelity",
                      "underPanelWaterStressObservedAt"):
             entity.pop(attr, None)

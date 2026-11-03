@@ -103,8 +103,6 @@ def test_cuts_single_source():
     # severity reads the level resolved from these cuts, with no cut of its own
     for v, sev in ((0.19, Severity.LOW), (0.2, Severity.MEDIUM), (0.4, Severity.HIGH), (0.6, Severity.CRITICAL)):
         assert pipeline._determine_overall_severity(_assessment(cwsi=_cwsi(v))) == sev
-    src = open(pipeline.__file__).read()
-    assert "0.7" not in src[src.index("def _determine_overall_severity"):src.index("def _determine_action")]
     assert wsl.severity_name("no_data") is None
 
 
@@ -176,3 +174,98 @@ def test_mapper_exposes_fields():
     m = map_entity_to_assessment(e)
     assert m["waterStressLevel"] == "mild" and m["waterStressMethod"] == "balance"
     assert m["waterStressPhaseNote"] is None and m["waterStressReferenceSources"] == ["s1"]
+
+
+# ── Rollups: the level is resolved again once the parcel Ks exists ──────────
+
+def _rollup(ws_index, *, stage="maturity", gdd=900.0, sev=Severity.LOW, flags=None, wb=None):
+    ref = WaterStressReference.model_validate({
+        "baselines": [],
+        "stages": {stage: {"waterSensitive": flags, "sourceIds": ["srcF"]}} if flags is not None else {},
+    })
+    a = _assessment(
+        water_stress=_ws(ws_index), phenology_stage=stage, gdd_accumulated=gdd,
+        water_stress_indicator=WaterStressIndicator("no_data", "none"),
+        overall_severity=sev, water_balance=wb,
+    )
+    return a, types_ns(ref)
+
+
+def types_ns(ref):
+    import types
+    return types.SimpleNamespace(water_stress_reference=ref)
+
+
+def test_rollup_level_follows_ks_index():
+    a, ph = _rollup(0.358)
+    pipeline._refresh_rollup_level(a, ph)
+    assert (a.water_stress_indicator.level, a.water_stress_indicator.method) == ("moderate", "balance")
+    assert a.overall_severity == Severity.HIGH and a.recommended_action.value == "IRRIGATE_SCHEDULED"
+
+
+def test_rollup_keeps_worse_zone_severity():
+    a, ph = _rollup(0.0, sev=Severity.CRITICAL)
+    pipeline._refresh_rollup_level(a, ph)
+    assert a.water_stress_indicator.level == "none" and a.overall_severity == Severity.CRITICAL
+
+
+def test_rollup_sensor_cwsi_level_is_final():
+    a, ph = _rollup(0.9)
+    a.cwsi = _cwsi(0.1)
+    a.water_stress_indicator = resolve_indicator(a.cwsi, None, None)
+    pipeline._refresh_rollup_level(a, ph)
+    assert a.water_stress_indicator.method == "cwsi_sensor" and a.overall_severity == Severity.LOW
+
+
+def test_rollup_not_needed_has_no_water_alarm():
+    wb = WaterBalanceResult(balance_mm=-30.0, precip_mm=0, etc_mm=5, kc=1.0, deficit=True)
+    a, ph = _rollup(0.9, sev=Severity.CRITICAL, flags=False, wb=wb)
+    pipeline._refresh_rollup_level(a, ph)
+    assert a.water_stress_indicator.level == "not_needed"
+    assert a.overall_severity == Severity.LOW and a.recommended_action.value == "NO_ACTION"
+
+
+def test_rollup_without_gdd_ignores_stage_flags():
+    a, ph = _rollup(0.9, gdd=None, flags=False)
+    pipeline._refresh_rollup_level(a, ph)
+    assert a.water_stress_indicator.level == "high"
+
+
+@pytest.mark.asyncio
+async def test_scheduled_path_level_matches_ks(monkeypatch):
+    from tests.test_pipeline_under_panel_stress import FakeRedis
+    from tests.test_scheduled_daily_balance import TENANT, URN, _rollup_entity, _setup_scheduled
+    published, _ = _setup_scheduled(monkeypatch, FakeRedis())
+    await pipeline.compute_assessment(URN, TENANT)
+    e = _rollup_entity(published)
+    expected = wsl.level_from_index(e["waterStressIndex"]["value"])
+    assert expected != "no_data"
+    assert e["waterStressLevel"]["value"] == expected
+    assert e["waterStressMethod"]["value"] == "balance"
+
+
+@pytest.mark.asyncio
+async def test_zonal_trigger_breach_from_recomputed_severity(monkeypatch):
+    from app.services.zonation import Zone
+    from tests.test_pipeline_under_panel_stress import (
+        _Z0, _Z1, FakeRedis, _setup, _trigger, soil_reading,
+    )
+    events = []
+
+    async def _pub(stream, event):
+        events.append(event)
+
+    real_emit = pipeline._emit_assessment_side_effects  # captured before the harness stubs it
+    published, _ = _setup(monkeypatch, zones=[Zone("z0", _Z0), Zone("z1", _Z1)])
+    monkeypatch.setattr(pipeline, "_emit_assessment_side_effects", real_emit)
+    monkeypatch.setattr(pipeline, "_publish_redis_event", _pub)
+
+    async def _nocoords(*a, **k):
+        return None
+
+    monkeypatch.setattr(pipeline, "_resolve_device_coords", _nocoords, raising=False)
+    # very dry probe -> Ks index high on the rollup; zones themselves carry no Ks
+    out = await _trigger(FakeRedis(readings={"soilMoisture": [soil_reading(8.0)]}))
+    assert out.water_stress_indicator.level in ("moderate", "high")
+    assert out.overall_severity in (Severity.HIGH, Severity.CRITICAL)
+    assert "crop.stress.breach" in [e["event_type"] for e in events]

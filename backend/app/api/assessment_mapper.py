@@ -286,6 +286,8 @@ def map_entity_to_assessment(entity: dict[str, Any]) -> dict[str, Any]:
         "waterStressMethod": prop_value(entity, "waterStressMethod"),
         "waterStressPhaseNote": prop_value(entity, "waterStressPhaseNote"),
         "waterStressReferenceSources": prop_value(entity, "waterStressReferenceSources", []),
+        "waterStressPhaseBasis": prop_value(entity, "waterStressPhaseBasis"),
+        "cwsiBaselineId": prop_value(entity, "cwsiBaselineId"),
         "waterStressIndex": prop_value(entity, "waterStressIndex"),
         "waterStressFidelity": prop_value(entity, "waterStressFidelity"),
         "waterStressObservedAt": datetime_value(entity, "waterStressObservedAt"),

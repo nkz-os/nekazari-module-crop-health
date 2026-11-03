@@ -8,13 +8,19 @@ All NGSI-LD entities follow the Smart Data Models conventions.
 from __future__ import annotations
 
 import enum
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictFloat, StrictInt, StrictStr, model_validator
+from pydantic import (
+    BaseModel, ConfigDict, Field, StrictBool, StrictFloat, StrictInt, StrictStr,
+    ValidationError, field_validator, model_validator,
+)
 
 from app.engines.water_stress_level import WaterStressIndicator
+
+logger = logging.getLogger(__name__)
 
 
 # ── Enums ─────────────────────────────────────────────────────────────────────
@@ -163,11 +169,55 @@ class StageWaterFlags(_RefModel):
     ref: StrictStr | None = None
 
 
+class SenescenceRule(_RefModel):
+    """How the end of the season is read from the NDVI series (post-maturity)."""
+    method: Literal["timesat_amplitude"]
+    end_fraction: _Num = Field(..., alias="endFraction", gt=0, lt=1)
+    gate_stage: StrictStr = Field(..., alias="gateStage")
+    source_id: StrictStr = Field(..., alias="sourceId")
+    ref: StrictStr | None = None
+
+
+class Citation(_RefModel):
+    """Citation text of one source id used by the reference."""
+    source_id: StrictStr = Field(..., alias="sourceId")
+    text: StrictStr
+    url: StrictStr | None = None
+
+
 class WaterStressReference(_RefModel):
-    """Water-stress reference of a species as served by bioorch."""
+    """Water-stress reference of a species as served by bioorch.
+
+    ``stages`` may carry the key ``post_maturity`` (flags used once the senescence
+    rule confirms the end of the season). ``senescence`` and ``citations`` are
+    optional extras: a malformed one degrades to None / [] with one warning and
+    never drops the rest of the reference.
+    """
     baselines: list[CwsiBaseline] = Field(default_factory=list)
     stages: dict[str, StageWaterFlags] = Field(default_factory=dict)
     source_ids: list[StrictStr] = Field(default_factory=list, alias="sourceIds")
+    senescence: SenescenceRule | None = None
+    citations: list[Citation] = Field(default_factory=list)
+
+    @field_validator("senescence", mode="wrap")
+    @classmethod
+    def _lenient_senescence(cls, value: Any, handler: Any) -> SenescenceRule | None:
+        try:
+            return handler(value)
+        except ValidationError as exc:
+            logger.warning("water_stress_reference.senescence ignored (malformed): %s",
+                           str(exc).splitlines()[0] if str(exc) else "invalid")
+            return None
+
+    @field_validator("citations", mode="wrap")
+    @classmethod
+    def _lenient_citations(cls, value: Any, handler: Any) -> list[Citation]:
+        try:
+            return handler(value)
+        except ValidationError as exc:
+            logger.warning("water_stress_reference.citations ignored (malformed): %s",
+                           str(exc).splitlines()[0] if str(exc) else "invalid")
+            return []
 
 
 class PhenologyParams(BaseModel):
@@ -503,6 +553,9 @@ class CropHealthAssessment(BaseModel):
     soil_properties: SoilProperties | None = None
     # The single water-stress level (water_stress_level.resolve_indicator).
     water_stress_indicator: WaterStressIndicator | None = None
+    # Where the stage flags behind the level came from: "gdd" (GDD-derived stage) or
+    # "gdd_ndvi" (post-maturity: GDD gate plus NDVI end of season); None = no stage flags.
+    water_stress_phase_basis: str | None = None
     # ── Zone (management-zone) context ──
     # When set, the assessment represents a single AgriParcelZone of the parcel
     # and is serialised via ``to_zone_ngsi_ld`` under the SEPARATE
@@ -727,6 +780,10 @@ class CropHealthAssessment(BaseModel):
             if wi.phase_note is not None:
                 entity["waterStressPhaseNote"] = {"type": "Property", "value": wi.phase_note}
             entity["waterStressReferenceSources"] = {"type": "Property", "value": list(wi.source_ids)}
+        if self.water_stress_phase_basis is not None:
+            entity["waterStressPhaseBasis"] = {"type": "Property", "value": self.water_stress_phase_basis}
+        if self.cwsi is not None and self.cwsi.baseline_id is not None:
+            entity["cwsiBaselineId"] = {"type": "Property", "value": self.cwsi.baseline_id}
         if self.water_stress is not None:
             ws = self.water_stress
             entity["waterStressFidelity"] = {"type": "Property", "value": ws.fidelity}

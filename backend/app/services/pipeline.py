@@ -35,6 +35,7 @@ from app.engines.under_panel_stress import (
     valid_theta_readings,
 )
 from app.engines.phenology_progress import derive_stage_from_gdd
+from app.engines.senescence import end_of_season_reached
 from app.engines.water_stress_level import resolve_indicator, severity_name
 from app.engines.water_stress import (
     cwsi_from_baseline,
@@ -240,6 +241,57 @@ def _determine_overall_severity(assessment: CropHealthAssessment) -> Severity:
     return max(severities, key=lambda s: order[s])
 
 
+POST_MATURITY_STAGE = "post_maturity"
+# ASSUMPTION: with no known season start the NDVI window looks back 240 days.
+_NDVI_SEASON_FALLBACK_DAYS = 240
+# Orion page for one season of per-parcel/zone EOProducts (one per sensing date).
+_NDVI_SERIES_LIMIT = 500
+
+
+def _stage_at_or_after(stage_table, stage: str | None, gate: str) -> bool:
+    """True when ``stage`` is ``gate`` or later in the stage table order (by GDD)."""
+    stages = stage_table.stages if isinstance(stage_table, StageTable) else (stage_table or {})
+    if stage is None or stage not in stages or gate not in stages:
+        return False
+    ordered = [name for name, _ in sorted(stages.items(), key=lambda kv: kv[1][0])]
+    return ordered.index(stage) >= ordered.index(gate)
+
+
+def _season_window_start(season_start: str | None, now: datetime) -> date:
+    if season_start:
+        try:
+            return date.fromisoformat(str(season_start)[:10])
+        except ValueError:
+            logger.warning("post-maturity: bad season_start %r — using %d days back",
+                           season_start, _NDVI_SEASON_FALLBACK_DAYS)
+    return now.date() - timedelta(days=_NDVI_SEASON_FALLBACK_DAYS)
+
+
+async def _resolve_stage_flags(
+    ref, gdd_stage: str | None, stage_table, *, tenant_id: str, parcel_id: str,
+    zone_urn: str | None, season_start: str | None, now: datetime,
+):
+    """Stage flags for the level and where they came from (``"gdd"`` | ``"gdd_ndvi"`` | None).
+
+    Post-maturity flags apply only when the reference carries them and a senescence
+    rule, the GDD-derived stage is at or after the rule's gate stage, AND the NDVI
+    season series confirms the end of season. GDD alone never declares it; no series
+    or too few points keeps the normal stage flags (the alert stays).
+    """
+    if ref is None or gdd_stage is None:
+        return None, None
+    rule = ref.senescence
+    post = ref.stages.get(POST_MATURITY_STAGE)
+    if rule is not None and post is not None and _stage_at_or_after(stage_table, gdd_stage, rule.gate_stage):
+        series = await _fetch_ndvi_series(
+            tenant_id, parcel_id, zone_urn, _season_window_start(season_start, now),
+        )
+        if end_of_season_reached(series, float(rule.end_fraction)) is True:
+            return post, "gdd_ndvi"
+    flags = ref.stages.get(gdd_stage)
+    return flags, ("gdd" if flags is not None else None)
+
+
 def _refresh_rollup_level(rollup: CropHealthAssessment, phenology) -> None:
     """Re-resolve the water-stress level once the parcel-level Ks exists.
 
@@ -254,7 +306,12 @@ def _refresh_rollup_level(rollup: CropHealthAssessment, phenology) -> None:
         return
     ref = getattr(phenology, "water_stress_reference", None) if phenology else None
     stage = rollup.phenology_stage if rollup.gdd_accumulated is not None else None
-    flags = ref.stages.get(stage) if (ref is not None and stage is not None) else None
+    if rollup.water_stress_phase_basis == "gdd_ndvi" and ref is not None:
+        # The worst zone already confirmed the end of season (GDD gate + NDVI); keep it.
+        flags = ref.stages.get(POST_MATURITY_STAGE)
+    else:
+        flags = ref.stages.get(stage) if (ref is not None and stage is not None) else None
+        rollup.water_stress_phase_basis = "gdd" if flags is not None else None
     rollup.water_stress_indicator = resolve_indicator(
         rollup.cwsi, rollup.water_stress, flags, reference=ref,
     )
@@ -313,7 +370,7 @@ _WATER_STRESS_OPTIONAL_ATTRS = (
     "underPanelWaterStressIndex", "underPanelWaterStressFidelity",
     "underPanelWaterStressObservedAt",
     "waterStressLevel", "waterStressMethod", "waterStressPhaseNote",
-    "waterStressReferenceSources",
+    "waterStressReferenceSources", "waterStressPhaseBasis", "cwsiBaselineId",
 )
 _AIR_TEMP_RANGE_C = (-50.0, 60.0)
 _RH_RANGE_PCT = (0.0, 100.0)
@@ -682,6 +739,7 @@ async def trigger(
 
     # GDD with resolved season start (field-op reality > AgriCrop plan > default)
     gdd = None
+    season_start = None
     try:
         from app.services.context_client import resolve_season_start
 
@@ -789,6 +847,7 @@ async def trigger(
             parcel_balance=parcel_balance,
             now=now,
             stage_table=stage_table,
+            season_start=season_start,
             publish=True,
             daily_shade=daily_shade,
             shade_observed_at=shade_observed_at,
@@ -834,6 +893,7 @@ async def trigger(
                 parcel_balance=parcel_balance,
                 now=now,
                 stage_table=stage_table,
+                season_start=season_start,
                 publish=False,
                 daily_shade=daily_shade,
                 shade_observed_at=shade_observed_at,
@@ -911,6 +971,7 @@ async def _run_engines(
     zone_urn: str | None = None,
     fidelity_out: dict | None = None,
     wetness_class: str | None = None,
+    season_start: str | None = None,
 ) -> CropHealthAssessment:
     """Shared engine-fusion core.
 
@@ -1024,7 +1085,10 @@ async def _run_engines(
     # The single water-stress level: sensor CWSI, else the Ks index, else no_data;
     # the GDD stage's published flags may turn it into not_needed or add an RDI note.
     _ref = getattr(phenology, "water_stress_reference", None) if phenology else None
-    _stage_flags = _ref.stages.get(gdd_stage) if (_ref is not None and gdd_stage is not None) else None
+    _stage_flags, assessment.water_stress_phase_basis = await _resolve_stage_flags(
+        _ref, gdd_stage, stage_table, tenant_id=tenant_id, parcel_id=effective_parcel,
+        zone_urn=zone_urn, season_start=season_start or assessment.season_start, now=now,
+    )
     assessment.water_stress_indicator = resolve_indicator(
         assessment.cwsi, assessment.water_stress, _stage_flags, reference=_ref,
     )
@@ -3168,6 +3232,55 @@ async def _fetch_parcel_ndvi(
     except Exception as exc:
         logger.warning("_fetch_parcel_ndvi: failed for parcel %s — returning None: %s", parcel_id, exc)
     return None, "unavailable"
+
+
+def _sensing_day(entity: dict) -> date | None:
+    raw = entity.get("sensingDate")
+    if isinstance(raw, dict):
+        raw = raw.get("value")
+    if not raw:
+        return None
+    try:
+        text = str(raw)
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).date() if "T" in text \
+            else datetime.strptime(text[:10], "%Y-%m-%d").date()
+    except ValueError:
+        return None
+
+
+async def _fetch_ndvi_series(
+    tenant_id: str, parcel_id: str, zone_urn: str | None, since: date,
+) -> list[tuple[date, float]]:
+    """Season NDVI series ``[(sensing date, mean)]``, oldest first; ``[]`` on any failure.
+
+    With ``zone_urn`` only that zone's own products are read (no parcel fallback: a
+    parcel series must not confirm a zone's end of season). The ``sensingDate`` term is
+    a quoted string, as Orion needs for string dates.
+    """
+    since_s = since.isoformat()
+    if zone_urn:
+        q = f'hasAgriParcelZone=="{zone_urn}";sensingDate>="{since_s}"'
+    else:
+        urn = f"urn:ngsi-ld:AgriParcel:{parcel_id}"
+        q = f'(hasAgriParcel=="{urn}"|refAgriParcel=="{urn}");sensingDate>="{since_s}"'
+    try:
+        entities = await _query_eoproducts(tenant_id, q, _NDVI_SERIES_LIMIT)
+    except Exception as exc:
+        logger.warning("_fetch_ndvi_series: failed for parcel %s zone %s: %s", parcel_id, zone_urn, exc)
+        return []
+    out: list[tuple[date, float]] = []
+    for e in entities:
+        day = _sensing_day(e)
+        if day is None or e.get("ndvi") is None:
+            continue
+        try:
+            v = _extract_eoproduct_scalar(e, "ndvi")
+        except (TypeError, ValueError):
+            continue
+        if v is not None:
+            out.append((day, v))
+    out.sort(key=lambda p: p[0])
+    return out
 
 
 async def _fetch_parcel_smi(

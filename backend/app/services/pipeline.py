@@ -112,10 +112,25 @@ async def _ir_cwsi_from_baseline(
 ):
     """CWSI from IR readings and the published baseline; None (with a logged reason) when
     any input is missing or outside the baseline's validity. Never raises."""
+    species = getattr(phenology, "species", None)
+    try:
+        return await _ir_cwsi_unguarded(
+            readings, weather=weather, phenology=phenology, stage=stage, cultivar=cultivar,
+            tenant_id=tenant_id, parcel_id=parcel_id, now=now,
+        )
+    except (ValueError, TypeError, AttributeError, ArithmeticError) as exc:
+        logger.warning(
+            "CWSI skipped: unusable inputs (%s) parcel=%s species=%s", exc, parcel_id, species,
+        )
+        return None
+
+
+async def _ir_cwsi_unguarded(
+    readings, *, weather, phenology, stage, cultivar, tenant_id, parcel_id, now,
+):
     ref = getattr(phenology, "water_stress_reference", None)
     species = getattr(phenology, "species", None)
-    base = select_baseline(ref, stage, cultivar)
-    if base is None:
+    if ref is None:
         logger.info(
             "CWSI skipped: no published baseline tenant=%s parcel=%s species=%s stage=%s",
             tenant_id, parcel_id, species, stage,
@@ -129,10 +144,23 @@ async def _ir_cwsi_from_baseline(
         return None
     lon = coords[1]  # (lat, lon)
     now_h = solar_hour(now.timestamp(), lon)
-    in_window = [r.value for r in readings if in_solar_window(base, solar_hour(r.ts, lon))]
+    base = select_baseline(ref, stage, cultivar, now_h)
+    if base is None:
+        logger.info(
+            "CWSI skipped: no published baseline valid now tenant=%s parcel=%s species=%s stage=%s",
+            tenant_id, parcel_id, species, stage,
+        )
+        return None
+    # ASSUMPTION: same plausible range as air temperature
+    lo, hi = _AIR_TEMP_RANGE_C
+    in_window = [
+        r.value for r in readings
+        if math.isfinite(r.value) and lo <= r.value <= hi
+        and in_solar_window(base, solar_hour(r.ts, lon))
+    ]
     if not in_window:
         logger.info(
-            "CWSI skipped: no IR reading inside the baseline solar window tenant=%s parcel=%s baseline=%s",
+            "CWSI skipped: no valid IR reading inside the baseline solar window tenant=%s parcel=%s baseline=%s",
             tenant_id, parcel_id, base.id,
         )
         return None
@@ -878,8 +906,11 @@ async def _run_engines(
     # stage is derived from GDD — deterministic regardless of which path
     # (sensor webhook vs scheduled compute) writes the daily-keyed entity.
     stage_table = stage_table or {}
+    # Only a GDD-derived stage may select a CWSI baseline; without GDD it stays None.
+    gdd_stage: str | None = None
     if gdd is not None and stage_table:
-        assessment.phenology_stage = derive_stage_from_gdd(gdd, stage_table)
+        gdd_stage = derive_stage_from_gdd(gdd, stage_table)
+        assessment.phenology_stage = gdd_stage
 
     # ── 2. Execute engines ───────────────────────────────────────────────
 
@@ -897,7 +928,7 @@ async def _run_engines(
                 readings,
                 weather=weather,
                 phenology=phenology,
-                stage=assessment.phenology_stage,
+                stage=gdd_stage,
                 cultivar=variety_name,
                 tenant_id=tenant_id,
                 parcel_id=effective_parcel,

@@ -24,10 +24,10 @@ from app.schemas import CWSIResult, CwsiBaseline, WaterStressReference
 CWSI_BASELINE_MIN_C = -5.0
 CWSI_BASELINE_MAX_C = 20.0
 
-# Below this VPD the canopy-air temperature difference is too small to separate
-# stressed from unstressed canopies. Gonzalez-Dugo & Zarco-Tejada 2022,
-# Irrig. Sci., doi:10.1007/s00271-022-00819-6: "not recommended for VPDs below
-# 2 kPa". A baseline's own valid.vpdKpaMin, when higher, wins.
+# Below this VPD the canopy-air temperature difference is too small to tell
+# stressed from unstressed canopies, so the method is not applied. Source:
+# Gonzalez-Dugo & Zarco-Tejada 2022, Irrig. Sci., doi:10.1007/s00271-022-00819-6
+# (2 kPa floor). A baseline's own valid.vpdKpaMin, when higher, wins.
 CWSI_MIN_VPD_KPA = 2.0
 
 
@@ -177,26 +177,38 @@ def cwsi_with_weather(
 # ── CWSI from published VPD-dependent baselines ──────────────────────────────
 
 
-def select_baseline(
-    ref: WaterStressReference | None, stage: str | None, cultivar: str | None
-) -> CwsiBaseline | None:
-    """Pick the baseline for a stage: cultivar match, then stage match, then
-    ``stages: null`` (all stages). First in file order within each tier.
+def _norm(name: str | None) -> str | None:
+    return name.strip().casefold() if isinstance(name, str) else None
 
-    A baseline naming a cultivar only applies to that cultivar.
+
+def select_baseline(
+    ref: WaterStressReference | None,
+    stage: str | None,
+    cultivar: str | None,
+    solar_hour: float | None = None,
+) -> CwsiBaseline | None:
+    """Pick the baseline: cultivar match, then stage match, then ``stages: null``.
+
+    Within a tier, the first row (file order) whose solar-hour window contains
+    ``solar_hour`` wins; rows without a window match any hour. With
+    ``solar_hour=None`` the window is not considered. A tier with no row valid at
+    that hour falls through to the next tier. Cultivar match ignores case/spaces.
     """
     if ref is None:
         return None
-    candidates = [b for b in ref.baselines if b.cultivar is None or b.cultivar == cultivar]
-    for b in candidates:
-        if cultivar is not None and b.cultivar == cultivar and (b.stages is None or stage in b.stages):
-            return b
-    for b in candidates:
-        if b.stages is not None and stage is not None and stage in b.stages:
-            return b
-    for b in candidates:
-        if b.stages is None:
-            return b
+    cv = _norm(cultivar)
+    candidates = [b for b in ref.baselines if b.cultivar is None or _norm(b.cultivar) == cv]
+    tiers = (
+        [b for b in candidates if cv is not None and _norm(b.cultivar) == cv
+         and (b.stages is None or (stage is not None and stage in b.stages))],
+        [b for b in candidates if b.cultivar is None and b.stages is not None
+         and stage is not None and stage in b.stages],
+        [b for b in candidates if b.cultivar is None and b.stages is None],
+    )
+    for tier in tiers:
+        for b in tier:
+            if solar_hour is None or in_solar_window(b, solar_hour):
+                return b
     return None
 
 
@@ -232,11 +244,14 @@ def solar_hour(ts_unix: float, longitude_deg: float) -> float:
 
 
 def in_solar_window(b: CwsiBaseline, hour: float) -> bool:
-    """True when ``hour`` lies inside the baseline's solar-hour window (open ends allowed)."""
+    """True when ``hour`` is in the half-open window [from, to) (open ends allowed).
+
+    Half-open so adjacent windows (to of one row == from of the next) never overlap.
+    """
     lo, hi = b.valid.solar_hour_from, b.valid.solar_hour_to
     if lo is not None and hour < lo:
         return False
-    if hi is not None and hour > hi:
+    if hi is not None and hour >= hi:
         return False
     return True
 
@@ -256,6 +271,8 @@ def cwsi_from_baseline(
     None when the reading is outside the baseline's validity (solar-hour window,
     VPD range, VPD below the published minimum) or when UL <= NWSB.
     """
+    if not all(math.isfinite(v) for v in (temp_canopy_c, temp_air_c, rh_pct)):
+        return None
     if not (0 <= rh_pct <= 100):
         return None
     if not in_solar_window(b, solar_hour):
@@ -271,6 +288,8 @@ def cwsi_from_baseline(
     if upper is None or upper <= nwsb:
         return None
     raw = ((temp_canopy_c - temp_air_c) - nwsb) / (upper - nwsb)
+    if not math.isfinite(raw):
+        return None
     return CWSIResult(
         cwsi=round(max(0.0, min(1.0, raw)), 4),
         vpd_kpa=round(vpd, 4),

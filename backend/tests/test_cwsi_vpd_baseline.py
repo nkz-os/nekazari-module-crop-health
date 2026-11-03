@@ -183,7 +183,7 @@ async def test_median_of_window_used(monkeypatch):
     _params_with(monkeypatch, _hot_ref())
     _coords(monkeypatch)
     _owner(monkeypatch, OPEN_FIELD)
-    pts = [ParcelReading(DEVICE, NOW - 60 * i, v, "CEL") for i, v in enumerate([30.0, 38.0, 99.0], 1)]
+    pts = [ParcelReading(DEVICE, NOW - 60 * i, v, "CEL") for i, v in enumerate([30.0, 38.0, 45.0], 1)]
     await _run(MetricType.LEAF_TEMPERATURE, GateRedis(window={"leafTemperature": pts}))
     assert seen["tc"] == 38.0
 
@@ -208,3 +208,90 @@ async def test_satellite_path_disabled_logs_reason(monkeypatch, caplog):
         "CWSI satellite skipped: phase 2 (per-pixel hourly meteo and Landsat scene time)" in r.getMessage()
         for r in caplog.records
     )
+
+
+# ── fix round 1 ─────────────────────────────────────────────────────────────
+
+def _w(id, lo, hi, **kw):
+    return _b(id, valid={"solarHourFrom": lo, "solarHourTo": hi, "clearSky": True}, **kw)
+
+
+def test_window_is_half_open_adjacent_rows():
+    ref = WaterStressReference(baselines=[_w("h11", 11, 12), _w("h12", 12, 13)])
+    assert select_baseline(ref, None, None, 12.0).id == "h12"
+    assert select_baseline(ref, None, None, 11.99).id == "h11"
+    assert select_baseline(ref, None, None, 13.0) is None
+    assert cwsi_from_baseline(40.0, 35.0, 20.0, ref.baselines[0], 12.0) is None
+    assert cwsi_from_baseline(40.0, 35.0, 20.0, ref.baselines[1], 12.0) is not None
+
+
+def test_select_by_solar_hour_among_null_stage_rows():
+    ref = WaterStressReference(baselines=[_w("h10", 10, 11), _w("h11", 11, 12), _w("h12", 12, 13)])
+    assert select_baseline(ref, None, None, 12.5).id == "h12"
+    assert select_baseline(ref, "flowering", None, 10.2).id == "h10"
+    # no hour: file order
+    assert select_baseline(ref, None, None).id == "h10"
+
+
+def test_tier_without_valid_hour_falls_through():
+    staged = _w("staged", 10, 11, stages=["flowering"])
+    generic = _w("generic", 11, 14)
+    ref = WaterStressReference(baselines=[staged, generic])
+    assert select_baseline(ref, "flowering", None, 12.0).id == "generic"
+    assert select_baseline(ref, "flowering", None, 10.5).id == "staged"
+
+
+def test_cultivar_match_case_insensitive():
+    ref = WaterStressReference(baselines=[_b("g"), _b("c", cultivar="Alpha")])
+    assert select_baseline(ref, None, "  alpha ").id == "c"
+
+
+def test_non_finite_inputs_none():
+    nan = float("nan")
+    assert cwsi_from_baseline(nan, 35.0, 20.0, _b(), 12.0) is None
+    assert cwsi_from_baseline(40.0, nan, 20.0, _b(), 12.0) is None
+    assert cwsi_from_baseline(40.0, 35.0, nan, _b(), 12.0) is None
+
+
+@pytest.mark.asyncio
+async def test_pipeline_stage_specific_row_not_chosen_without_gdd(monkeypatch):
+    staged_only = WaterStressReference(baselines=[_w("s", 10, 16, stages=["vegetative"])])
+    assert (await _trigger(monkeypatch, staged_only)).cwsi is None
+
+
+@pytest.mark.asyncio
+async def test_pipeline_noon_selects_noon_row(monkeypatch):
+    ref = WaterStressReference(baselines=[_w("h10", 10, 11), _w("h11", 11, 12), _w("h12", 12, 13)])
+    a = await _trigger(monkeypatch, ref, lon=7.5)  # NOW = 12:00 UTC -> solar hour 12.5
+    assert a.cwsi is not None and a.cwsi.baseline_id == "h12"
+
+
+@pytest.mark.asyncio
+async def test_nan_reading_does_not_give_cwsi_one(monkeypatch):
+    seen = {}
+    real = pipeline.cwsi_from_baseline
+
+    def spy(tc, *a, **k):
+        seen["tc"] = tc
+        return real(tc, *a, **k)
+
+    monkeypatch.setattr(pipeline, "cwsi_from_baseline", spy)
+    published, _ = _setup(monkeypatch, soil=SOIL, wm={"air_temp_c": 35.0, "rh_pct": 20.0, "et0_mm": 5.0})
+    _params_with(monkeypatch, _hot_ref())
+    _coords(monkeypatch)
+    _owner(monkeypatch, OPEN_FIELD)
+    vals = [float("nan"), 38.0, 500.0, 36.0, float("inf")]
+    pts = [ParcelReading(DEVICE, NOW - 60 * i, v, "CEL") for i, v in enumerate(vals, 1)]
+    await _run(MetricType.LEAF_TEMPERATURE, GateRedis(window={"leafTemperature": pts}))
+    assert seen["tc"] == 37.0  # median of 38 and 36 only
+
+
+@pytest.mark.asyncio
+async def test_all_invalid_readings_no_cwsi(monkeypatch):
+    published, _ = _setup(monkeypatch, soil=SOIL, wm={"air_temp_c": 35.0, "rh_pct": 20.0, "et0_mm": 5.0})
+    _params_with(monkeypatch, _hot_ref())
+    _coords(monkeypatch)
+    _owner(monkeypatch, OPEN_FIELD)
+    pts = [ParcelReading(DEVICE, NOW - 60 * i, v, "CEL") for i, v in enumerate([float("nan"), 999.0], 1)]
+    await _run(MetricType.LEAF_TEMPERATURE, GateRedis(window={"leafTemperature": pts}))
+    assert published["assessments"][-1].cwsi is None

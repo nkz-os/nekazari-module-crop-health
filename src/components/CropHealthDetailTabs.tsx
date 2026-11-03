@@ -16,7 +16,6 @@ import type {
   CorrelationStats,
   DiseaseRisk,
   PhenologyParams,
-  SourceAttribution,
   WaterStressBaseline,
   TrendPoint,
   ZoneAssessmentData,
@@ -97,11 +96,14 @@ const WaterStressTechnician: React.FC<{
         ? 1 - assessment.waterStressIndex
         : null;
   const valueLabel = method === 'balance' ? 'Ks' : 'CWSI';
-  const baselines = phenology?.water_stress_reference?.baselines ?? [];
+  // Only the baseline the assessment used, and only the citations of the sources it named:
+  // an unknown id or an empty list shows nothing rather than everything the species has.
+  const usedId = assessment.cwsiBaselineId;
+  const baselines = usedId
+    ? (phenology?.water_stress_reference?.baselines ?? []).filter((b) => b.id === usedId)
+    : [];
   const wanted = assessment.waterStressReferenceSources ?? [];
-  const attributions: SourceAttribution[] = (phenology?.attributions ?? []).filter(
-    (a) => wanted.length === 0 || wanted.includes(a.source_id),
-  );
+  const citations = (phenology?.water_stress_reference?.citations ?? []).filter((c) => wanted.includes(c.sourceId));
   return (
     <MetricSection>
       <span className="text-xs text-nkz-text-secondary font-medium uppercase tracking-wider block mb-1">
@@ -137,17 +139,14 @@ const WaterStressTechnician: React.FC<{
           ))}
         </div>
       )}
-      {attributions.length > 0 && (
+      {citations.length > 0 && (
         <div className="mt-2">
           <span className="text-xs text-nkz-text-muted block">{t('waterStress.technician.sources')}</span>
-          {attributions.map((a) => {
-            const href = a.url ?? a.attribution_url;
-            return (
-              <p key={a.source_id} className="text-xs text-nkz-text-muted">
-                📚 {href ? <a className="text-nkz-accent-strong underline" href={href} target="_blank" rel="noopener noreferrer">{a.text}</a> : a.text}
-              </p>
-            );
-          })}
+          {citations.map((c) => (
+            <p key={c.sourceId} className="text-xs text-nkz-text-muted">
+              📚 {c.url ? <a className="text-nkz-accent-strong underline" href={c.url} target="_blank" rel="noopener noreferrer">{c.text}</a> : c.text}
+            </p>
+          ))}
         </div>
       )}
     </MetricSection>

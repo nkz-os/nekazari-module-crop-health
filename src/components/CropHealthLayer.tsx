@@ -75,13 +75,13 @@ export function layerColor(a: AssessmentData, mode: MapLayerMode): { fill: strin
  * The parcel's latest assessment with the values it had on the cursor's day.
  * Vigor has no history, so it is cleared and that mode shows no data.
  */
-function historicalAssessment(latest: AssessmentData, point: DailyPoint | null): AssessmentData {
+export function historicalAssessment(latest: AssessmentData, point: DailyPoint | null): AssessmentData {
   return {
     ...latest,
     compositeStressIndex: point?.composite ?? undefined,
     cwsiValue: point?.cwsi ?? undefined,
-    // History points carry no resolved level: the layer shows no data rather than recompute cuts.
-    waterStressLevel: undefined,
+    // The level the backend resolved that day; a point without one shows no data (cuts are never recomputed).
+    waterStressLevel: (point?.waterStressLevel as AssessmentData['waterStressLevel']) ?? undefined,
     overallSeverity: point?.severity ?? '',
     vigorIndex: undefined,
   };

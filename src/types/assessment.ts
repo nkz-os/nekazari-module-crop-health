@@ -13,10 +13,18 @@ export interface WaterStressBaseline {
   assumption?: string;
 }
 
+/** Citation text of one source id of the reference (bioorch `water_stress_reference.citations`). */
+export interface WaterStressCitation {
+  sourceId: string;
+  text: string;
+  url?: string | null;
+}
+
 export interface WaterStressReference {
   baselines: WaterStressBaseline[];
   stages?: Record<string, unknown>;
   sourceIds?: string[];
+  citations?: WaterStressCitation[];
 }
 
 /** Structured attribution of a source (bioorch `get_attributions`). */
@@ -60,6 +68,8 @@ export interface HistoryPoint {
   balance?: number | null;
   composite?: number | null;
   severity?: string | null;
+  /** Water-stress level resolved by the backend that day; absent on older assessments. */
+  waterStressLevel?: string | null;
 }
 
 export interface CorrelationPoint {
@@ -163,8 +173,10 @@ export interface AssessmentData {
   waterStressMethod?: 'cwsi_sensor' | 'balance' | 'none' | null;
   waterStressPhaseNote?: 'rdi' | null;
   waterStressReferenceSources?: string[] | null;
-  /** Optional, may be served later: how the phase was determined. */
+  /** How the phase flags were determined: GDD stage, or GDD stage plus NDVI end of season. */
   waterStressPhaseBasis?: 'gdd' | 'gdd_ndvi' | null;
+  /** Id of the CWSI baseline used (one of `water_stress_reference.baselines`). */
+  cwsiBaselineId?: string | null;
   vpdKpa?: number | null;
   waterStressIndex?: number | null;
   waterStressFidelity?: 'iot_sensor' | 'parcel_weather' | 'regional_proxy' | 'unavailable' | null;

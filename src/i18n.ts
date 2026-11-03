@@ -19,7 +19,7 @@ const en = {
             level: { none: 'No stress', mild: 'Mild stress', moderate: 'Moderate stress', high: 'High stress', no_data: 'No data', not_needed: 'Stage with no water need' },
             note: { rdi: 'In this stage a moderate stress can be favourable if you use deficit irrigation.' },
             method: { cwsi_sensor: 'Canopy temperature sensor (CWSI)', balance: 'Water balance (Ks)', none: 'No method available' },
-            phaseBasis: { gdd: 'Stage from thermal time (GDD)', gdd_ndvi: 'Stage from thermal time (GDD) and NDVI' },
+            phaseBasis: { gdd: 'Stage from growing degree-days', gdd_ndvi: 'Stage from growing degree-days and NDVI' },
             technician: { title: 'Water stress detail', baseline: 'Reference baseline', upper: 'Upper limit', sources: 'Sources' },
         },
         contextPanel: {
@@ -427,7 +427,7 @@ const es = {
             level: { none: 'Sin estrés', mild: 'Estrés leve', moderate: 'Estrés moderado', high: 'Estrés alto', no_data: 'Sin dato', not_needed: 'Fase sin necesidad de agua' },
             note: { rdi: 'En esta fase un estrés moderado puede ser favorable si haces riego deficitario.' },
             method: { cwsi_sensor: 'Sensor de temperatura de copa (CWSI)', balance: 'Balance hídrico (Ks)', none: 'Sin método disponible' },
-            phaseBasis: { gdd: 'Fase por tiempo térmico (GDD)', gdd_ndvi: 'Fase por tiempo térmico (GDD) y NDVI' },
+            phaseBasis: { gdd: 'Fase por grados-día', gdd_ndvi: 'Fase por grados-día y NDVI' },
             technician: { title: 'Detalle del estrés hídrico', baseline: 'Línea base de referencia', upper: 'Límite superior', sources: 'Fuentes' },
         },
         contextPanel: {
@@ -803,7 +803,7 @@ const ca = {
             level: { none: 'Sense estrès', mild: 'Estrès lleu', moderate: 'Estrès moderat', high: 'Estrès alt', no_data: 'Sense dada', not_needed: 'Fase sense necessitat d\'aigua' },
             note: { rdi: 'En aquesta fase un estrès moderat pot ser favorable si fas reg deficitari.' },
             method: { cwsi_sensor: 'Sensor de temperatura de la capçada (CWSI)', balance: 'Balanç hídric (Ks)', none: 'Sense mètode disponible' },
-            phaseBasis: { gdd: 'Fase per temps tèrmic (GDD)', gdd_ndvi: 'Fase per temps tèrmic (GDD) i NDVI' },
+            phaseBasis: { gdd: 'Fase per graus-dia', gdd_ndvi: 'Fase per graus-dia i NDVI' },
             technician: { title: 'Detall de l\'estrès hídric', baseline: 'Línia base de referència', upper: 'Límit superior', sources: 'Fonts' },
         },
         contextPanel: {
@@ -1147,7 +1147,7 @@ const eu = {
             level: { none: 'Estresik ez', mild: 'Estres arina', moderate: 'Estres ertaina', high: 'Estres handia', no_data: 'Daturik ez', not_needed: 'Urik behar ez duen fasea' },
             note: { rdi: 'Fase honetan, estres ertaina onuragarria izan daiteke ureztatze defizitarioa egiten baduzu.' },
             method: { cwsi_sensor: 'Zuhaitz-hostoen tenperatura sentsorea (CWSI)', balance: 'Ur-balantzea (Ks)', none: 'Metodorik ez dago' },
-            phaseBasis: { gdd: 'Fasea denbora termikotik (GDD)', gdd_ndvi: 'Fasea denbora termikotik (GDD) eta NDVItik' },
+            phaseBasis: { gdd: 'Fasea gradu-egunen arabera', gdd_ndvi: 'Fasea gradu-egunen eta NDVIren arabera' },
             technician: { title: 'Ur-estresaren xehetasuna', baseline: 'Erreferentziazko oinarri-lerroa', upper: 'Goiko muga', sources: 'Iturriak' },
         },
         contextPanel: {
@@ -1491,7 +1491,7 @@ const fr = {
             level: { none: 'Pas de stress', mild: 'Stress léger', moderate: 'Stress modéré', high: 'Stress élevé', no_data: 'Pas de donnée', not_needed: 'Stade sans besoin en eau' },
             note: { rdi: 'À ce stade, un stress modéré peut être favorable si vous pratiquez l\'irrigation déficitaire.' },
             method: { cwsi_sensor: 'Capteur de température du feuillage (CWSI)', balance: 'Bilan hydrique (Ks)', none: 'Aucune méthode disponible' },
-            phaseBasis: { gdd: 'Stade selon le temps thermique (GDD)', gdd_ndvi: 'Stade selon le temps thermique (GDD) et le NDVI' },
+            phaseBasis: { gdd: 'Stade selon les degrés-jours', gdd_ndvi: 'Stade selon les degrés-jours et le NDVI' },
             technician: { title: 'Détail du stress hydrique', baseline: 'Ligne de base de référence', upper: 'Limite supérieure', sources: 'Sources' },
         },
         contextPanel: {
@@ -1835,7 +1835,7 @@ const pt = {
             level: { none: 'Sem stress', mild: 'Stress ligeiro', moderate: 'Stress moderado', high: 'Stress elevado', no_data: 'Sem dados', not_needed: 'Fase sem necessidade de água' },
             note: { rdi: 'Nesta fase, um stress moderado pode ser favorável se fizer rega deficitária.' },
             method: { cwsi_sensor: 'Sensor de temperatura do coberto (CWSI)', balance: 'Balanço hídrico (Ks)', none: 'Nenhum método disponível' },
-            phaseBasis: { gdd: 'Fase por tempo térmico (GDD)', gdd_ndvi: 'Fase por tempo térmico (GDD) e NDVI' },
+            phaseBasis: { gdd: 'Fase por graus-dia', gdd_ndvi: 'Fase por graus-dia e NDVI' },
             technician: { title: 'Detalhe do stress hídrico', baseline: 'Linha de base de referência', upper: 'Limite superior', sources: 'Fontes' },
         },
         contextPanel: {

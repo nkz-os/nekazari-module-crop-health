@@ -9,7 +9,7 @@ vi.mock('./YieldForecastSection', () => ({ default: () => null }));
 vi.mock('./CropHealthRisksPanel', () => ({ default: () => <i>risks-panel</i> }));
 vi.mock('./ZoneHealthPanel', () => ({ default: () => null }));
 
-import CropHealthDetailTabs from './CropHealthDetailTabs';
+import CropHealthDetailTabs, { formatBaselineC } from './CropHealthDetailTabs';
 
 const render = (extra: Record<string, unknown>) =>
   renderToStaticMarkup(
@@ -78,5 +78,17 @@ describe('CropHealthDetailTabs without an assessment', () => {
   it('still shows the disease risks when there are some', () => {
     expect(r([{ disease: 'downy_mildew' }])).toContain('risks-panel');
     expect(r([])).not.toContain('risks-panel');
+  });
+});
+
+describe('formatBaselineC', () => {
+  it('shows a dash, never a bare unit, when absent', () => {
+    expect(formatBaselineC(undefined)).toBe('—');
+    expect(formatBaselineC(null)).toBe('—');
+    expect(formatBaselineC(Number.NaN)).toBe('—');
+  });
+  it('formats a baseline', () => {
+    expect(formatBaselineC(2)).toBe('2.0°C');
+    expect(formatBaselineC(7.04)).toBe('7.0°C');
   });
 });

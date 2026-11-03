@@ -24,6 +24,7 @@ from cachetools import TTLCache
 from app.config import get_settings
 from nkz_platform_sdk.crop_timeline import fetch_crop_timeline
 from nkz_platform_sdk.orion import OrionClient
+from app.engines.water_stress import cwsi_baselines_plausible
 from app.schemas import (
     PhenologyAlternative,
     PhenologyParams,
@@ -187,9 +188,22 @@ async def get_phenology_params(
                     )
                     for a in (data.get("alternatives") or [])
                 ]
+                raw_d1, raw_d2 = data.get("d1"), data.get("d2")
+                if cwsi_baselines_plausible(raw_d1, raw_d2):
+                    d1_val, d2_val, baseline_src = float(raw_d1), float(raw_d2), "bioorch"
+                else:
+                    d1_val, d2_val, baseline_src = _DEFAULT_PARAMS.d1, _DEFAULT_PARAMS.d2, "default"
+                    logger.warning(
+                        "CWSI baselines from bioorchestrator not usable as degC, "
+                        "using defaults: species=%s stage=%s received_d1=%r received_d2=%r "
+                        "default_d1=%s default_d2=%s",
+                        data.get("species", species), data.get("stage", stage),
+                        raw_d1, raw_d2, d1_val, d2_val,
+                    )
                 params = PhenologyParams(
-                    d1=data.get("d1", _DEFAULT_PARAMS.d1),
-                    d2=data.get("d2", _DEFAULT_PARAMS.d2),
+                    d1=d1_val,
+                    d2=d2_val,
+                    cwsi_baseline_source=baseline_src,
                     kc=data.get("kc", _DEFAULT_PARAMS.kc),
                     mds_ref=data.get("mds_ref", _DEFAULT_PARAMS.mds_ref),
                     species=data.get("species", species),
@@ -198,8 +212,12 @@ async def get_phenology_params(
                     scientific_name=data.get("scientific_name"),
                     stage_description=data.get("stage_description"),
                     kc_confidence_interval=data.get("kc_confidence_interval"),
-                    d1_confidence_interval=data.get("d1_confidence_interval"),
-                    d2_confidence_interval=data.get("d2_confidence_interval"),
+                    d1_confidence_interval=(
+                        data.get("d1_confidence_interval") if baseline_src == "bioorch" else None
+                    ),
+                    d2_confidence_interval=(
+                        data.get("d2_confidence_interval") if baseline_src == "bioorch" else None
+                    ),
                     mds_ref_confidence_interval=data.get("mds_ref_confidence_interval"),
                     cultivar=data.get("cultivar"),
                     management=data.get("management"),

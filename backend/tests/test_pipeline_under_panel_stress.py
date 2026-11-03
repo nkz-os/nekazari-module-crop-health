@@ -567,3 +567,40 @@ async def test_missing_susceptibility_score_skips_compaction(monkeypatch, caplog
     await _trigger(FakeRedis(readings={"soilMoisture": [soil_reading(15.0)]}))
     assert published["assessments"][-1].compaction_risk is None
     assert "compaction risk evaluation failed" not in caplog.text
+
+
+# ── CWSI baseline guard (second line of defence) ─────────────────────────────
+
+
+def _with_lst_and_baselines(monkeypatch, d1, d2):
+    async def _params(*a, **k):
+        return types.SimpleNamespace(
+            stage="mid-season", kc=0.8, mds_ref=100.0, ky=0.45, d1=d1, d2=d2,
+            species="wheat")
+
+    async def _lst(*a, **k):
+        return 30.0, "2026-07-14"
+
+    monkeypatch.setattr(pipeline, "get_phenology_params", _params, raising=False)
+    monkeypatch.setattr(pipeline, "_fetch_parcel_lst_with_date", _lst, raising=False)
+
+
+@pytest.mark.asyncio
+async def test_cwsi_none_not_zero_when_baselines_are_day_counts(monkeypatch, caplog):
+    published, _ = _setup(monkeypatch)
+    _with_lst_and_baselines(monkeypatch, 105.0, 180.0)
+    with caplog.at_level("WARNING"):
+        await _trigger(FakeRedis(state=dict(STATE)))
+    assert "cwsiValue" not in _entity(published)
+    assert published["assessments"][-1].cwsi is None
+    assert any("CWSI skipped" in r.message and "tenant-a" in r.message for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_cwsi_computed_with_plausible_baselines(monkeypatch):
+    published, _ = _setup(monkeypatch)
+    _with_lst_and_baselines(monkeypatch, 2.0, 8.0)
+    await _trigger(FakeRedis(state=dict(STATE)))
+    result = published["assessments"][-1].cwsi
+    assert result is not None
+    assert result.cwsi == round((30.0 - 24.0 - 2.0) / 6.0, 4)

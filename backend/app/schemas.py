@@ -120,6 +120,9 @@ class PhenologyParams(BaseModel):
     species: str = "generic"
     stage: str = "vegetative"
     is_default: bool = True  # True if using hardcoded fallbacks
+    # Provenance of d1/d2 only: "bioorch" when accepted from BioOrchestrator,
+    # "default" when crop-health's own baselines are used.
+    cwsi_baseline_source: str = "default"
 
     # Extended fields from BioOrchestrator (v0.2+)
     scientific_name: str | None = None

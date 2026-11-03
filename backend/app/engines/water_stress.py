@@ -17,6 +17,20 @@ import math
 
 from app.schemas import CWSIResult
 
+# Plausible window (degC) for canopy-minus-air temperature baselines (NWSB d1,
+# stress limit d2). Values outside it are not temperatures (e.g. stage day
+# counts) and must never be fed to the CWSI formula.
+CWSI_BASELINE_MIN_C = -5.0
+CWSI_BASELINE_MAX_C = 20.0
+
+
+def cwsi_baselines_plausible(d1: object, d2: object) -> bool:
+    """True when d1, d2 are real numbers with MIN <= d1 < d2 <= MAX (degC)."""
+    for v in (d1, d2):
+        if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v):
+            return False
+    return CWSI_BASELINE_MIN_C <= d1 < d2 <= CWSI_BASELINE_MAX_C
+
 
 def saturation_vapor_pressure(temp_c: float) -> float:
     """Saturation vapor pressure at temperature T (kPa).
@@ -90,10 +104,13 @@ def cwsi(
         CWSIResult with CWSI value, VPD, and input parameters.
 
     Raises:
-        ValueError: If d1 == d2 (division by zero).
+        ValueError: If d1, d2 are outside the plausible degC window or d1 >= d2.
     """
-    if d2 == d1:
-        raise ValueError(f"d2 must differ from d1 to avoid division by zero (d1={d1}, d2={d2})")
+    if not cwsi_baselines_plausible(d1, d2):
+        raise ValueError(
+            f"CWSI baselines must satisfy {CWSI_BASELINE_MIN_C} <= d1 < d2 <= "
+            f"{CWSI_BASELINE_MAX_C} degC (d1={d1}, d2={d2})"
+        )
 
     diff = temp_canopy - temp_air
     raw = (diff - d1) / (d2 - d1)

@@ -318,7 +318,8 @@ def _refresh_rollup_level(
         derive_stage_from_gdd(parcel_gdd, stage_table)
         if (parcel_gdd is not None and stage_table) else None
     )
-    bases = [z.water_stress_phase_basis for z in (zone_results or [rollup]) if z.water_stress_phase_basis]
+    # Unanimity over ALL assessed zones: a zone with no phase basis blocks it too.
+    bases = [z.water_stress_phase_basis for z in (zone_results or [rollup])]
     rule = ref.senescence if ref is not None else None
     post_flags = ref.stages.get(POST_MATURITY_STAGE) if ref is not None else None
     unanimous = bool(
@@ -341,6 +342,8 @@ def _refresh_rollup_level(
             stage = rollup.phenology_stage if rollup.gdd_accumulated is not None else None
         flags = ref.stages.get(stage) if (ref is not None and stage is not None) else None
         rollup.water_stress_phase_basis = "gdd" if flags is not None else None
+        if parcel_stage is not None:
+            rollup.phenology_stage = parcel_stage  # published stage agrees with the flags used
     rollup.water_stress_indicator = resolve_indicator(
         rollup.cwsi, rollup.water_stress, flags, reference=ref,
     )

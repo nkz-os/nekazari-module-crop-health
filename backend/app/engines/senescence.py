@@ -116,11 +116,10 @@ def end_of_season_reached(points: list[tuple[date, float]], end_fraction: float)
     """
     if not (0.0 < end_fraction < 1.0):
         return None
-    pts = _clean(points)
-    if len(pts) < MIN_OBSERVATIONS:
+    cleaned = _clean(points)
+    if len(cleaned) < MIN_OBSERVATIONS:
         return None
-    pts = _despike(pts)
-    grid = _resample(pts)
+    grid = _resample(_despike(cleaned))
     if len(grid) < SG_WINDOW:
         return None
     sm = _savgol(grid, SG_WINDOW, SG_ORDER)
@@ -138,6 +137,8 @@ def end_of_season_reached(points: list[tuple[date, float]], end_fraction: float)
     # cropping) is read from its highest peak only.
     if sm[-1] > threshold:
         return False
-    peak_day = pts[0][0] + timedelta(days=peak * GRID_STEP_DAYS)
-    tail = [v for d, v in pts if d > peak_day][-MIN_SUSTAINED_OBSERVATIONS:]
+    # The sustained tail is read from the cleaned observations BEFORE despiking: the filter
+    # leaves the last point raw and would otherwise pair a clear acquisition with a cloudy one.
+    peak_day = cleaned[0][0] + timedelta(days=peak * GRID_STEP_DAYS)
+    tail = [v for d, v in cleaned if d > peak_day][-MIN_SUSTAINED_OBSERVATIONS:]
     return len(tail) >= MIN_SUSTAINED_OBSERVATIONS and all(v <= threshold for v in tail)

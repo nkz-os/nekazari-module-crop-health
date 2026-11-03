@@ -87,3 +87,9 @@ def test_duplicate_dates_keep_the_highest_ndvi():
     cloudy = [(d, 0.0) for d, _ in pts]  # contaminated duplicates must not win
     assert end_of_season_reached(pts + cloudy, 0.2) is True
     # two-peak seasons are read from the highest peak (documented limit, not tested further)
+
+
+def test_cloud_clear_cloud_last_is_not_the_end():
+    # Two separate cloudy acquisitions with a clear green one between them, last is cloudy.
+    for step in (5, 10):
+        assert end_of_season_reached(_series(RISE + [0.84, 0.20, 0.84, 0.15], step=step), 0.2) is not True

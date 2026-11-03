@@ -364,3 +364,15 @@ def test_history_includes_level():
     assert "waterStressLevel" in get.call_args.kwargs["params"]["attrs"]
     pts = out.json()["points"]
     assert pts[1]["waterStressLevel"] == "mild" and pts[0]["waterStressLevel"] is None
+
+
+def test_zone_without_phase_basis_blocks_parcel_post_maturity():
+    zones = [_zone_result("z0", "gdd_ndvi"), _zone_result("z1", None, "no_data")]
+    r = _rollup_of(zones, 1200.0)
+    assert r.water_stress_indicator.level == "high" and r.water_stress_phase_basis == "gdd"
+
+
+def test_published_stage_follows_parcel_gdd_stage_when_flags_are_the_parcels():
+    zones = [_zone_result("z0", "gdd_ndvi"), _zone_result("z1", "gdd")]  # zones say "maturity"
+    r = _rollup_of(zones, 700.0)  # parcel GDD 700 -> heading
+    assert r.phenology_stage == "heading" and r.water_stress_phase_basis == "gdd"

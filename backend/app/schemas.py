@@ -75,7 +75,7 @@ class TimeseriesPoint(BaseModel):
 class WeatherSnapshot(BaseModel):
     """Subset of weather_observations relevant for crop health."""
     temp_air: float = Field(..., description="Air temperature °C")
-    humidity_pct: float = Field(..., description="Relative humidity %")
+    humidity_pct: float | None = Field(None, description="Relative humidity %; None when unavailable")
     precip_mm: float = Field(0.0, description="Precipitation mm")
     eto_mm: float = Field(0.0, description="Reference evapotranspiration mm")
     radiation_wm2: float | None = Field(None, description="Solar radiation W/m²")

@@ -846,7 +846,12 @@ async def _run_engines(
     # ── 2. Execute engines ───────────────────────────────────────────────
 
     # CWSI (triggered by leaf temperature sensor)
-    if metric_type == MetricType.LEAF_TEMPERATURE.value and weather and not from_under_panel:
+    if (
+        metric_type == MetricType.LEAF_TEMPERATURE.value
+        and weather
+        and weather.humidity_pct is not None  # no RH, no VPD, no CWSI
+        and not from_under_panel
+    ):
         readings = await redis_state.get_window(entity_id, "leafTemperature", hours=1)
         if readings:
             latest_tc = readings[-1].value
@@ -862,7 +867,13 @@ async def _run_engines(
             )
 
     # CWSI from satellite LST (sensorless / degraded path when no IR sensor)
-    if assessment.cwsi is None and weather and phenology.d1 is not None and phenology.d2 is not None:
+    if (
+        assessment.cwsi is None
+        and weather
+        and weather.humidity_pct is not None  # no RH, no VPD, no CWSI
+        and phenology.d1 is not None
+        and phenology.d2 is not None
+    ):
         lst_data = await _fetch_parcel_lst_with_date(effective_parcel, tenant_id)
         if lst_data:
             lst_val, lst_date = lst_data
@@ -1558,7 +1569,7 @@ def _snapshot_from_meteo(meteo) -> WeatherSnapshot | None:
         return None
     return WeatherSnapshot(
         temp_air=meteo.air_temp_c,
-        humidity_pct=meteo.rh_pct if meteo.rh_pct is not None else 50.0,
+        humidity_pct=meteo.rh_pct,
         precip_mm=0.0,
         eto_mm=meteo.et0_mm if meteo.et0_mm is not None else 0.0,
     )

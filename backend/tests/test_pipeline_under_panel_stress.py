@@ -586,21 +586,13 @@ def _with_lst_and_baselines(monkeypatch, d1, d2):
 
 
 @pytest.mark.asyncio
-async def test_cwsi_none_not_zero_when_baselines_are_day_counts(monkeypatch, caplog):
+@pytest.mark.parametrize("d1,d2", [(105.0, 180.0), (2.0, 8.0)])
+async def test_satellite_lst_never_gives_cwsi(monkeypatch, caplog, d1, d2):
+    # Phase 1: the satellite path is off; legacy d1/d2 (plausible or not) never make a CWSI.
     published, _ = _setup(monkeypatch)
-    _with_lst_and_baselines(monkeypatch, 105.0, 180.0)
-    with caplog.at_level("WARNING"):
+    _with_lst_and_baselines(monkeypatch, d1, d2)
+    with caplog.at_level("INFO"):
         await _trigger(FakeRedis(state=dict(STATE)))
     assert "cwsiValue" not in _entity(published)
     assert published["assessments"][-1].cwsi is None
-    assert any("CWSI skipped" in r.message and "tenant-a" in r.message for r in caplog.records)
-
-
-@pytest.mark.asyncio
-async def test_cwsi_computed_with_plausible_baselines(monkeypatch):
-    published, _ = _setup(monkeypatch)
-    _with_lst_and_baselines(monkeypatch, 2.0, 8.0)
-    await _trigger(FakeRedis(state=dict(STATE)))
-    result = published["assessments"][-1].cwsi
-    assert result is not None
-    assert result.cwsi == round((30.0 - 24.0 - 2.0) / 6.0, 4)
+    assert any("CWSI satellite skipped: phase 2" in r.getMessage() for r in caplog.records)

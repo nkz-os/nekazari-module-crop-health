@@ -14,14 +14,21 @@ References:
 from __future__ import annotations
 
 import math
+from datetime import datetime, timezone
 
-from app.schemas import CWSIResult
+from app.schemas import CWSIResult, CwsiBaseline, WaterStressReference
 
 # Plausible window (degC) for canopy-minus-air temperature baselines (NWSB d1,
 # stress limit d2). Values outside it are not temperatures (e.g. stage day
 # counts) and must never be fed to the CWSI formula.
 CWSI_BASELINE_MIN_C = -5.0
 CWSI_BASELINE_MAX_C = 20.0
+
+# Below this VPD the canopy-air temperature difference is too small to separate
+# stressed from unstressed canopies. Gonzalez-Dugo & Zarco-Tejada 2022,
+# Irrig. Sci., doi:10.1007/s00271-022-00819-6: "not recommended for VPDs below
+# 2 kPa". A baseline's own valid.vpdKpaMin, when higher, wins.
+CWSI_MIN_VPD_KPA = 2.0
 
 
 def cwsi_baselines_plausible(d1: object, d2: object) -> bool:
@@ -164,4 +171,117 @@ def cwsi_with_weather(
         data_fidelity=result.data_fidelity,
         temp_source=result.temp_source,
         lst_sensing_date=result.lst_sensing_date,
+    )
+
+
+# ── CWSI from published VPD-dependent baselines ──────────────────────────────
+
+
+def select_baseline(
+    ref: WaterStressReference | None, stage: str | None, cultivar: str | None
+) -> CwsiBaseline | None:
+    """Pick the baseline for a stage: cultivar match, then stage match, then
+    ``stages: null`` (all stages). First in file order within each tier.
+
+    A baseline naming a cultivar only applies to that cultivar.
+    """
+    if ref is None:
+        return None
+    candidates = [b for b in ref.baselines if b.cultivar is None or b.cultivar == cultivar]
+    for b in candidates:
+        if cultivar is not None and b.cultivar == cultivar and (b.stages is None or stage in b.stages):
+            return b
+    for b in candidates:
+        if b.stages is not None and stage is not None and stage in b.stages:
+            return b
+    for b in candidates:
+        if b.stages is None:
+            return b
+    return None
+
+
+def nwsb_c(b: CwsiBaseline, vpd_kpa: float) -> float:
+    """Non-water-stressed baseline (Tc - Ta, degC) = a0 + a1 * VPD."""
+    return float(b.a0_c) + float(b.a1_c_per_kpa) * vpd_kpa
+
+
+def upper_limit_c(b: CwsiBaseline, temp_air_c: float, vpd_kpa: float) -> float | None:
+    """Upper limit (Tc - Ta, degC) of a fully stressed canopy.
+
+    Only ``constant`` and ``linear_vpd`` are computed. The Idso 1981 formula was
+    not found in any source read, so ``idso1981`` returns None (no CWSI) rather
+    than an invented formula.
+    """
+    u = b.upper
+    if u.form == "constant":
+        return float(u.value_c)
+    if u.form == "linear_vpd":
+        return float(u.a0_c) + float(u.a1_c_per_kpa) * vpd_kpa
+    return None
+
+
+def solar_hour(ts_unix: float, longitude_deg: float) -> float:
+    """Local solar hour (0-24) = UTC hour + longitude / 15.
+
+    ASSUMPTION: the equation of time is ignored (error under 20 min); confirm
+    with the owner before merge.
+    """
+    utc = datetime.fromtimestamp(ts_unix, tz=timezone.utc)
+    utc_h = utc.hour + utc.minute / 60.0 + utc.second / 3600.0
+    return (utc_h + longitude_deg / 15.0) % 24.0
+
+
+def in_solar_window(b: CwsiBaseline, hour: float) -> bool:
+    """True when ``hour`` lies inside the baseline's solar-hour window (open ends allowed)."""
+    lo, hi = b.valid.solar_hour_from, b.valid.solar_hour_to
+    if lo is not None and hour < lo:
+        return False
+    if hi is not None and hour > hi:
+        return False
+    return True
+
+
+def cwsi_from_baseline(
+    temp_canopy_c: float,
+    temp_air_c: float,
+    rh_pct: float,
+    b: CwsiBaseline,
+    solar_hour: float,
+    *,
+    data_fidelity: str = "onsite_calibrated",
+    temp_source: str = "leaf_temperature",
+) -> CWSIResult | None:
+    """CWSI = ((Tc - Ta) - NWSB) / (UL - NWSB), clamped to [0, 1].
+
+    None when the reading is outside the baseline's validity (solar-hour window,
+    VPD range, VPD below the published minimum) or when UL <= NWSB.
+    """
+    if not (0 <= rh_pct <= 100):
+        return None
+    if not in_solar_window(b, solar_hour):
+        return None
+    vpd = vapor_pressure_deficit(temp_air_c, rh_pct)
+    vpd_min = max(CWSI_MIN_VPD_KPA, b.valid.vpd_kpa_min or 0.0)
+    if vpd < vpd_min:
+        return None
+    if b.valid.vpd_kpa_max is not None and vpd > b.valid.vpd_kpa_max:
+        return None
+    nwsb = nwsb_c(b, vpd)
+    upper = upper_limit_c(b, temp_air_c, vpd)
+    if upper is None or upper <= nwsb:
+        return None
+    raw = ((temp_canopy_c - temp_air_c) - nwsb) / (upper - nwsb)
+    return CWSIResult(
+        cwsi=round(max(0.0, min(1.0, raw)), 4),
+        vpd_kpa=round(vpd, 4),
+        temp_canopy=temp_canopy_c,
+        temp_air=temp_air_c,
+        d1=round(nwsb, 4),
+        d2=round(upper, 4),
+        data_fidelity=data_fidelity,
+        temp_source=temp_source,
+        method_ref=b.ref,
+        baseline_id=b.id,
+        nwsb_c=round(nwsb, 4),
+        upper_c=round(upper, 4),
     )

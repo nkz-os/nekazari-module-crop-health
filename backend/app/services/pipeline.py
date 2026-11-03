@@ -18,6 +18,7 @@ from __future__ import annotations
 import dataclasses
 import logging
 import math
+import statistics
 from datetime import date, datetime, timedelta, timezone
 
 import httpx
@@ -34,7 +35,12 @@ from app.engines.under_panel_stress import (
     valid_theta_readings,
 )
 from app.engines.phenology_progress import derive_stage_from_gdd
-from app.engines.water_stress import cwsi_with_weather
+from app.engines.water_stress import (
+    cwsi_from_baseline,
+    in_solar_window,
+    select_baseline,
+    solar_hour,
+)
 from app.schemas import (
     CropHealthAssessment,
     MetricType,
@@ -101,18 +107,50 @@ _DEPLETION_FRACTION_P: dict[str, float] = {
     "CITSI": 0.50,  # citrus
 }
 
-def _safe_cwsi(*, ctx: tuple, **kwargs):
-    """cwsi_with_weather that never raises: unusable inputs give None, not a fake value."""
-    try:
-        return cwsi_with_weather(**kwargs)
-    except ValueError as exc:
-        tenant_id, parcel_id, species, stage = ctx
-        logger.warning(
-            "CWSI skipped: %s tenant=%s parcel=%s species=%s stage=%s temp_source=%s d1=%r d2=%r",
-            exc, tenant_id, parcel_id, species, stage,
-            kwargs.get("temp_source"), kwargs.get("d1"), kwargs.get("d2"),
+async def _ir_cwsi_from_baseline(
+    readings, *, weather, phenology, stage, cultivar, tenant_id, parcel_id, now,
+):
+    """CWSI from IR readings and the published baseline; None (with a logged reason) when
+    any input is missing or outside the baseline's validity. Never raises."""
+    ref = getattr(phenology, "water_stress_reference", None)
+    species = getattr(phenology, "species", None)
+    base = select_baseline(ref, stage, cultivar)
+    if base is None:
+        logger.info(
+            "CWSI skipped: no published baseline tenant=%s parcel=%s species=%s stage=%s",
+            tenant_id, parcel_id, species, stage,
         )
         return None
+    coords = await context_client._resolve_parcel_coords(parcel_id, tenant_id)
+    if not coords:
+        logger.info(
+            "CWSI skipped: parcel longitude unavailable tenant=%s parcel=%s", tenant_id, parcel_id,
+        )
+        return None
+    lon = coords[1]  # (lat, lon)
+    now_h = solar_hour(now.timestamp(), lon)
+    in_window = [r.value for r in readings if in_solar_window(base, solar_hour(r.ts, lon))]
+    if not in_window:
+        logger.info(
+            "CWSI skipped: no IR reading inside the baseline solar window tenant=%s parcel=%s baseline=%s",
+            tenant_id, parcel_id, base.id,
+        )
+        return None
+    result = cwsi_from_baseline(
+        statistics.median(in_window),
+        weather.temp_air,
+        weather.humidity_pct,
+        base,
+        now_h,
+        data_fidelity="onsite_calibrated",
+        temp_source="leaf_temperature",
+    )
+    if result is None:
+        logger.info(
+            "CWSI skipped: outside baseline validity (solar hour, VPD range or minimum VPD, or UL<=NWSB)"
+            " tenant=%s parcel=%s baseline=%s", tenant_id, parcel_id, base.id,
+        )
+    return result
 
 
 def _resolve_depletion_fraction(crop_context) -> float:
@@ -845,7 +883,8 @@ async def _run_engines(
 
     # ── 2. Execute engines ───────────────────────────────────────────────
 
-    # CWSI (triggered by leaf temperature sensor)
+    # CWSI from a published VPD-dependent baseline (IR leaf-temperature sensor).
+    # No water_stress_reference / baseline / RH / longitude -> no CWSI (Ks is the fallback).
     if (
         metric_type == MetricType.LEAF_TEMPERATURE.value
         and weather
@@ -854,40 +893,24 @@ async def _run_engines(
     ):
         readings = await redis_state.get_window(entity_id, "leafTemperature", hours=1)
         if readings:
-            latest_tc = readings[-1].value
-            assessment.cwsi = _safe_cwsi(
-                temp_canopy=latest_tc,
-                temp_air=weather.temp_air,
-                humidity_pct=weather.humidity_pct,
-                d1=phenology.d1,
-                d2=phenology.d2,
-                data_fidelity="onsite_calibrated",
-                temp_source="leaf_temperature",
-                ctx=(tenant_id, effective_parcel, getattr(phenology, "species", None), getattr(phenology, "stage", None)),
+            assessment.cwsi = await _ir_cwsi_from_baseline(
+                readings,
+                weather=weather,
+                phenology=phenology,
+                stage=assessment.phenology_stage,
+                cultivar=variety_name,
+                tenant_id=tenant_id,
+                parcel_id=effective_parcel,
+                now=now,
             )
 
-    # CWSI from satellite LST (sensorless / degraded path when no IR sensor)
-    if (
-        assessment.cwsi is None
-        and weather
-        and weather.humidity_pct is not None  # no RH, no VPD, no CWSI
-        and phenology.d1 is not None
-        and phenology.d2 is not None
-    ):
-        lst_data = await _fetch_parcel_lst_with_date(effective_parcel, tenant_id)
-        if lst_data:
-            lst_val, lst_date = lst_data
-            assessment.cwsi = _safe_cwsi(
-                temp_canopy=lst_val,
-                temp_air=weather.temp_air,
-                humidity_pct=weather.humidity_pct,
-                d1=phenology.d1,
-                d2=phenology.d2,
-                data_fidelity="modeled_opendata",
-                temp_source="satellite_lst",
-                lst_sensing_date=lst_date if lst_date else None,
-                ctx=(tenant_id, effective_parcel, getattr(phenology, "species", None), getattr(phenology, "stage", None)),
-            )
+    # Satellite LST path: disabled in phase 1. Landsat LST has no per-pixel hourly
+    # meteo or scene time, so a VPD-dependent baseline cannot be applied honestly.
+    if assessment.cwsi is None:
+        logger.info(
+            "CWSI satellite skipped: phase 2 (per-pixel hourly meteo and Landsat scene time)"
+            " tenant=%s parcel=%s", tenant_id, effective_parcel,
+        )
 
     # MDS (triggered by trunk diameter dendrómetro)
     if metric_type == MetricType.TRUNK_DIAMETER.value and not from_under_panel:

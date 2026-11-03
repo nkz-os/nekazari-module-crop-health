@@ -223,6 +223,11 @@ class CWSIResult(BaseModel):
     data_fidelity: str = "regional_proxy"  # iot_canopy | satellite_lst | regional_proxy
     temp_source: str = "none"  # leaf_temperature | satellite_lst | weather_proxy
     lst_sensing_date: str | None = None  # YYYY-MM-DD of Landsat scene
+    # Published baseline used (None for the legacy d1/d2 path)
+    method_ref: str | None = None
+    baseline_id: str | None = None
+    nwsb_c: float | None = None
+    upper_c: float | None = None
 
 
 class MDSResult(BaseModel):

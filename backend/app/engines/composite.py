@@ -46,6 +46,7 @@ def evaluate_composite_stress(
     stage: str = "vegetative",
     ky_override: dict[str, float] | None = None,
     fidelity: str = "regional_proxy",
+    water_not_needed: bool = False,
 ) -> CompositeStressResult:
     """Combine all stress indicators weighted by phenological sensitivity.
 
@@ -58,6 +59,7 @@ def evaluate_composite_stress(
         stage: Current phenological stage name
         ky_override: Optional per-stage Ky overrides from BioOrchestrator
         fidelity: dataFidelity level
+        water_not_needed: stage needs no water; the water term is 0
 
     Returns:
         CompositeStressResult with weighted index and breakdown
@@ -92,7 +94,9 @@ def evaluate_composite_stress(
         water_score += balance_stress
         count += 1
 
-    if count > 0:
+    if water_not_needed:
+        water_score = 0.0
+    elif count > 0:
         water_score /= count
 
     # Thermal stress: map severity to 0-100

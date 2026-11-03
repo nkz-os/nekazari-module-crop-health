@@ -392,7 +392,8 @@ async def test_unavailable_after_iot_clears_stale_attributes(monkeypatch):
     published, _ = _setup(monkeypatch)
     await _trigger(FakeRedis(
         readings={"soilMoisture": [soil_reading(15.0)]}, shade={TODAY: 0.5}, shade_ts={TODAY: NOW - 60}))
-    assert published["deletes"] == []  # everything present, nothing stale
+    # everything present, nothing stale except the optional RDI note (no stage flag here)
+    assert [d[1] for d in published["deletes"]] == ["waterStressPhaseNote"]
     # later same-day trigger: nothing computable
     published2, _ = _setup(monkeypatch, wm={}, regional={})
     await _trigger(FakeRedis())
@@ -402,7 +403,7 @@ async def test_unavailable_after_iot_clears_stale_attributes(monkeypatch):
     assert attrs == {
         "waterStressIndex", "waterStressObservedAt", "shadeFraction", "shadeObservedAt",
         "underPanelWaterStressIndex", "underPanelWaterStressFidelity",
-        "underPanelWaterStressObservedAt",
+        "underPanelWaterStressObservedAt", "waterStressPhaseNote",
     }
 
 
@@ -413,7 +414,7 @@ async def test_only_omitted_attrs_are_deleted(monkeypatch):
     assert [d[1] for d in published["deletes"]] == [
         "shadeFraction", "shadeObservedAt",
         "underPanelWaterStressIndex", "underPanelWaterStressFidelity",
-        "underPanelWaterStressObservedAt",
+        "underPanelWaterStressObservedAt", "waterStressPhaseNote",
     ]
 
 
@@ -423,7 +424,7 @@ async def test_delete_404_is_success(monkeypatch):
     published["delete_behaviour"]["status"] = 404
     out = await _trigger(FakeRedis())
     assert out is not None
-    assert len(published["deletes"]) == 7  # does not stop after the first 404
+    assert len(published["deletes"]) == 8  # does not stop after the first 404
 
 
 @pytest.mark.asyncio
@@ -446,7 +447,7 @@ async def test_zonal_rollup_clears_stale_attributes(monkeypatch):
     await _trigger(FakeRedis())
     parcel = [e for e in published["entities"] if e["type"] == "CropHealthAssessment"][0]
     assert {d[0] for d in published["deletes"]} == {parcel["id"]}
-    assert len(published["deletes"]) == 7
+    assert len(published["deletes"]) == 8
 
 
 @pytest.mark.asyncio

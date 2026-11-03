@@ -35,6 +35,7 @@ from app.engines.under_panel_stress import (
     valid_theta_readings,
 )
 from app.engines.phenology_progress import derive_stage_from_gdd
+from app.engines.water_stress_level import resolve_indicator, severity_name
 from app.engines.water_stress import (
     cwsi_from_baseline,
     in_solar_window,
@@ -208,20 +209,22 @@ def _determine_overall_severity(assessment: CropHealthAssessment) -> Severity:
     """
     severities: list[Severity] = []
 
-    if assessment.cwsi:
-        if assessment.cwsi.cwsi >= 0.7:
-            severities.append(Severity.CRITICAL)
-        elif assessment.cwsi.cwsi >= 0.5:
-            severities.append(Severity.HIGH)
-        elif assessment.cwsi.cwsi >= 0.3:
-            severities.append(Severity.MEDIUM)
-        else:
-            severities.append(Severity.LOW)
+    indicator = assessment.water_stress_indicator
+    if indicator is None:
+        indicator = resolve_indicator(assessment.cwsi, assessment.water_stress, None)
+    level_sev = severity_name(indicator.level)
+    if level_sev is not None:
+        severities.append(Severity(level_sev))
 
     if assessment.mds:
         severities.append(assessment.mds.severity)
 
-    if assessment.water_balance and assessment.water_balance.deficit:
+    # A stage that needs no water raises no water alarm of any kind.
+    if (
+        indicator.level != "not_needed"
+        and assessment.water_balance
+        and assessment.water_balance.deficit
+    ):
         if assessment.water_balance.balance_mm < -15:
             severities.append(Severity.CRITICAL)
         elif assessment.water_balance.balance_mm < -5:
@@ -281,6 +284,8 @@ _WATER_STRESS_OPTIONAL_ATTRS = (
     "waterStressIndex", "waterStressObservedAt", "shadeFraction", "shadeObservedAt",
     "underPanelWaterStressIndex", "underPanelWaterStressFidelity",
     "underPanelWaterStressObservedAt",
+    "waterStressLevel", "waterStressMethod", "waterStressPhaseNote",
+    "waterStressReferenceSources",
 )
 _AIR_TEMP_RANGE_C = (-50.0, 60.0)
 _RH_RANGE_PCT = (0.0, 100.0)
@@ -987,6 +992,14 @@ async def _run_engines(
             et0_fidelity, _now_ts(), daily_shade, root_depth_mm, shade_observed_at,
         )
 
+    # The single water-stress level: sensor CWSI, else the Ks index, else no_data;
+    # the GDD stage's published flags may turn it into not_needed or add an RDI note.
+    _ref = getattr(phenology, "water_stress_reference", None) if phenology else None
+    _stage_flags = _ref.stages.get(gdd_stage) if (_ref is not None and gdd_stage is not None) else None
+    assessment.water_stress_indicator = resolve_indicator(
+        assessment.cwsi, assessment.water_stress, _stage_flags, reference=_ref,
+    )
+
     # Thermal stress (triggered by leaf temperature or opportunistically with weather)
     if weather:
         try:
@@ -1236,6 +1249,11 @@ async def _run_engines(
             thermal_severity=thermal_sev, vigor_index=vigor_idx,
             stage=stage_name,
             ky_override=ky_by_stage,
+            fidelity=assessment.cwsi.data_fidelity if assessment.cwsi else assessment.data_fidelity,
+            water_not_needed=(
+                assessment.water_stress_indicator is not None
+                and assessment.water_stress_indicator.level == "not_needed"
+            ),
         )
     except Exception as exc:
         logger.warning("pipeline: composite stress evaluation failed for parcel %s — skipped: %s", effective_parcel, exc)

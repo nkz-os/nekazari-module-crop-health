@@ -14,6 +14,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictFloat, StrictInt, StrictStr, model_validator
 
+from app.engines.water_stress_level import WaterStressIndicator
+
 
 # ── Enums ─────────────────────────────────────────────────────────────────────
 
@@ -499,6 +501,8 @@ class CropHealthAssessment(BaseModel):
     soil_water_balance: SoilWaterBalanceResult | None = None
     waterlogging_risk: WaterloggingRiskResult | None = None
     soil_properties: SoilProperties | None = None
+    # The single water-stress level (water_stress_level.resolve_indicator).
+    water_stress_indicator: WaterStressIndicator | None = None
     # ── Zone (management-zone) context ──
     # When set, the assessment represents a single AgriParcelZone of the parcel
     # and is serialised via ``to_zone_ngsi_ld`` under the SEPARATE
@@ -716,6 +720,13 @@ class CropHealthAssessment(BaseModel):
             detail = {"ph": ss.ph, "texture": ss.texture, "drainage": ss.drainage}
             if any(v is not None for v in detail.values()):
                 entity["soilSuitabilityDetail"] = {"type": "Property", "value": detail}
+        if self.water_stress_indicator is not None:
+            wi = self.water_stress_indicator
+            entity["waterStressLevel"] = {"type": "Property", "value": wi.level}
+            entity["waterStressMethod"] = {"type": "Property", "value": wi.method}
+            if wi.phase_note is not None:
+                entity["waterStressPhaseNote"] = {"type": "Property", "value": wi.phase_note}
+            entity["waterStressReferenceSources"] = {"type": "Property", "value": list(wi.source_ids)}
         if self.water_stress is not None:
             ws = self.water_stress
             entity["waterStressFidelity"] = {"type": "Property", "value": ws.fidelity}

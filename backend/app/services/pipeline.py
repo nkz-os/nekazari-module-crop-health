@@ -45,6 +45,7 @@ from app.engines.water_stress import (
 )
 from app.schemas import (
     CropHealthAssessment,
+    CWSIResult,
     MetricType,
     RecommendedAction,
     Severity,
@@ -108,6 +109,70 @@ _DEPLETION_FRACTION_P: dict[str, float] = {
     "PRUND": 0.50,  # almond
     "CITSI": 0.50,  # citrus
 }
+
+# The day's sensor CWSI (spec §9b): every valid in-window result is kept per parcel
+# (and zone) for the local solar day, and the day's value is their median, so a later
+# webhook without a leaf reading keeps the day's level. Nothing carries to the next day.
+_CWSI_DAY_TTL_S = 36 * 3600
+# ASSUMPTION: at most 288 stored results per day (one every 5 min) bound the Redis value.
+_CWSI_DAY_MAX_RESULTS = 288
+
+
+def _cwsi_day_key(tenant_id: str, parcel_id: str, zone_id: str | None, day: date) -> str:
+    return f"cwsi_day:{tenant_id}:{parcel_id}:{zone_id or 'parcel'}:{day.isoformat()}"
+
+
+async def _local_solar_day(tenant_id: str, parcel_id: str, now: datetime) -> date:
+    """Local solar date at ``now`` (UTC + longitude / 15 h, coordinates cached in-process)."""
+    coords = await context_client._resolve_parcel_coords(parcel_id, tenant_id)
+    if coords:
+        return (now.astimezone(timezone.utc) + timedelta(hours=float(coords[1]) / 15.0)).date()
+    # ASSUMPTION: without the parcel longitude the UTC date stands in for the solar date
+    # (they differ only within |lon|/15 h of midnight, far from the noon CWSI window).
+    return now.astimezone(timezone.utc).date()
+
+
+def _median_cwsi(results: list[CWSIResult]) -> CWSIResult:
+    """The day's CWSI: median value; the other fields are those of the upper-median result."""
+    ordered = sorted(results, key=lambda r: r.cwsi)
+    rep = ordered[len(ordered) // 2]
+    return rep.model_copy(update={"cwsi": round(statistics.median(r.cwsi for r in ordered), 4)})
+
+
+async def _day_cwsi(
+    day_store, tenant_id: str, parcel_id: str, zone_id: str | None, now: datetime,
+    current: CWSIResult | None,
+) -> CWSIResult | None:
+    """Store ``current`` (when given) and return the median of the day's stored results.
+
+    Any store failure degrades to ``current`` with a warning: the call never raises.
+    """
+    if day_store is None or not callable(getattr(day_store, "get_json", None)):
+        return current
+    try:
+        day = await _local_solar_day(tenant_id, parcel_id, now)
+        key = _cwsi_day_key(tenant_id, parcel_id, zone_id, day)
+        stored = await day_store.get_json(key)
+        entries = list((stored or {}).get("results") or [])
+        if current is not None:
+            entries.append({"ts": now.timestamp(), "result": current.model_dump()})
+            entries = entries[-_CWSI_DAY_MAX_RESULTS:]
+            await day_store.set_json(key, {"results": entries}, _CWSI_DAY_TTL_S)
+    except Exception as exc:  # noqa: BLE001 -- fail-safe: the current result still counts
+        logger.warning(
+            "CWSI day store unavailable tenant=%s parcel=%s zone=%s: %s", tenant_id, parcel_id, zone_id, exc,
+        )
+        return current
+    parsed: list[CWSIResult] = []
+    for entry in entries:
+        try:
+            parsed.append(CWSIResult.model_validate(entry["result"]))
+        except Exception as exc:  # noqa: BLE001 -- one bad entry must not drop the day
+            logger.warning("CWSI day store: malformed entry skipped key=%s: %s", key, exc)
+    if not parsed:
+        return current
+    return _median_cwsi(parsed)
+
 
 async def _ir_cwsi_from_baseline(
     readings, *, weather, phenology, stage, cultivar, tenant_id, parcel_id, now,
@@ -267,9 +332,44 @@ def _season_window_start(season_start: str | None, now: datetime) -> date:
     return now.date() - timedelta(days=_NDVI_SEASON_FALLBACK_DAYS)
 
 
+# The season series changes at most once per new scene: one Orion read per parcel/zone per day.
+_NDVI_SERIES_TTL_S = 26 * 3600
+
+
+async def _season_ndvi_series(
+    cache, tenant_id: str, parcel_id: str, zone_urn: str | None, since: date, now: datetime,
+) -> list[tuple[date, float]]:
+    """``_fetch_ndvi_series`` cached in Redis per parcel/zone, day and window start.
+
+    An empty series is not cached (it cannot be told from a failed read); any cache
+    failure falls back to the Orion read.
+    """
+    usable = cache is not None and callable(getattr(cache, "get_json", None))
+    key = (
+        f"ndvi_series:{tenant_id}:{parcel_id}:{zone_urn or 'parcel'}:"
+        f"{now.astimezone(timezone.utc).date().isoformat()}:{since.isoformat()}"
+    )
+    if usable:
+        try:
+            stored = await cache.get_json(key)
+            if stored and isinstance(stored.get("series"), list):
+                return [(date.fromisoformat(d), float(v)) for d, v in stored["series"]]
+        except Exception as exc:  # noqa: BLE001 -- the cache is an optimisation only
+            logger.warning("NDVI series cache unreadable key=%s: %s", key, exc)
+    series = await _fetch_ndvi_series(tenant_id, parcel_id, zone_urn, since)
+    if usable and series:
+        try:
+            await cache.set_json(
+                key, {"series": [[d.isoformat(), v] for d, v in series]}, _NDVI_SERIES_TTL_S,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("NDVI series cache not written key=%s: %s", key, exc)
+    return series
+
+
 async def _resolve_stage_flags(
     ref, gdd_stage: str | None, stage_table, *, tenant_id: str, parcel_id: str,
-    zone_urn: str | None, season_start: str | None, now: datetime,
+    zone_urn: str | None, season_start: str | None, now: datetime, cache=None,
 ):
     """Stage flags for the level and where they came from (``"gdd"`` | ``"gdd_ndvi"`` | None).
 
@@ -283,8 +383,8 @@ async def _resolve_stage_flags(
     rule = ref.senescence
     post = ref.stages.get(POST_MATURITY_STAGE)
     if rule is not None and post is not None and _stage_at_or_after(stage_table, gdd_stage, rule.gate_stage):
-        series = await _fetch_ndvi_series(
-            tenant_id, parcel_id, zone_urn, _season_window_start(season_start, now),
+        series = await _season_ndvi_series(
+            cache, tenant_id, parcel_id, zone_urn, _season_window_start(season_start, now), now,
         )
         if end_of_season_reached(series, float(rule.end_fraction)) is True:
             return post, "gdd_ndvi"
@@ -403,6 +503,7 @@ _WATER_STRESS_OPTIONAL_ATTRS = (
     "underPanelWaterStressObservedAt",
     "waterStressLevel", "waterStressMethod", "waterStressPhaseNote",
     "waterStressReferenceSources", "waterStressPhaseBasis", "cwsiBaselineId",
+    "cwsiValue", "vpdKpa", "cwsiDataFidelity", "cwsiTempSource",
 )
 _AIR_TEMP_RANGE_C = (-50.0, 60.0)
 _RH_RANGE_PCT = (0.0, 100.0)
@@ -886,6 +987,7 @@ async def trigger(
             et0_fidelity=model_fidelity,
             parcel_stress=True,
             sensor_context=sensor_context,
+            day_store=redis_state,
         )
 
     # Zonal: the device's window-engines run for its zone; others sensorless.
@@ -932,6 +1034,7 @@ async def trigger(
                 et0_fidelity=et0_fidelity,
                 sensor_context=sensor_context if is_sensor else None,
                 fidelity_out=used_fidelity,
+                day_store=redis_state,
             )
         except Exception as exc:
             logger.warning("trigger: zone %s failed for %s — skipped: %s", z.zone_id, effective_parcel, exc)
@@ -1004,6 +1107,7 @@ async def _run_engines(
     fidelity_out: dict | None = None,
     wetness_class: str | None = None,
     season_start: str | None = None,
+    day_store=None,
 ) -> CropHealthAssessment:
     """Shared engine-fusion core.
 
@@ -1025,6 +1129,9 @@ async def _run_engines(
 
     ``parcel_balance`` is the parcel's daily soil water balance (stepped once per
     closed day by the scheduled run); this function never steps it.
+
+    ``day_store`` (Redis) keeps the day's sensor CWSI per parcel/zone and the day's
+    NDVI season series; None disables both (no CWSI from earlier calls).
     """
     from_under_panel = sensor_context == UNDER_PANEL
 
@@ -1061,6 +1168,12 @@ async def _run_engines(
                 parcel_id=effective_parcel,
                 now=now,
             )
+
+    # The day's CWSI: this call's result joins the day's; a call without one reads the
+    # day's median, so the level does not flip to the balance on the next webhook.
+    assessment.cwsi = await _day_cwsi(
+        day_store, tenant_id, effective_parcel, assessment.zone_id, now, assessment.cwsi,
+    )
 
     # Satellite LST path: disabled in phase 1. Landsat LST has no per-pixel hourly
     # meteo or scene time, so a VPD-dependent baseline cannot be applied honestly.
@@ -1120,6 +1233,7 @@ async def _run_engines(
     _stage_flags, assessment.water_stress_phase_basis = await _resolve_stage_flags(
         _ref, gdd_stage, stage_table, tenant_id=tenant_id, parcel_id=effective_parcel,
         zone_urn=zone_urn, season_start=season_start or assessment.season_start, now=now,
+        cache=day_store,
     )
     assessment.water_stress_indicator = resolve_indicator(
         assessment.cwsi, assessment.water_stress, _stage_flags, reference=_ref,
@@ -2094,6 +2208,7 @@ async def _assess_zone(
     input_fidelity: dict[str, str] | None = None,
     zone_soil: dict | None = None,
     zone_twi: dict | None = None,
+    day_store=None,
 ) -> CropHealthAssessment:
     """Compute one zone's assessment, reusing the existing engine core.
 
@@ -2174,6 +2289,7 @@ async def _assess_zone(
         et0_fidelity=meteo.fidelity.get("et0_mm", "unavailable"),
         zone_urn=None if whole else zone.urn,
         fidelity_out=used_fidelity,
+        day_store=day_store,
     )
     if not whole:
         # What the engines actually used overrides the optimistic defaults.
@@ -2397,6 +2513,7 @@ async def compute_assessment(
                 input_fidelity=zi.fidelity if zi else None,
                 zone_soil=zi.soil if zi else None,
                 zone_twi=zi.twi if zi else None,
+                day_store=redis_state,
             )
         except Exception as exc:  # best-effort per zone — one bad zone must not sink the rest
             logger.warning("compute_assessment: zone %s failed for %s — skipped: %s", z.zone_id, parcel_short, exc)

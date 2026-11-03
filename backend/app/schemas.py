@@ -10,9 +10,9 @@ from __future__ import annotations
 import enum
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictFloat, StrictInt, StrictStr, model_validator
 
 
 # ── Enums ─────────────────────────────────────────────────────────────────────
@@ -103,6 +103,71 @@ class PhenologyAlternative(BaseModel):
     conditions: str | None = None
 
 
+class _RefModel(BaseModel):
+    """Base for bioorch water-stress reference objects (camelCase on the wire)."""
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+
+
+_Num = StrictFloat | StrictInt
+
+
+class UpperLimit(_RefModel):
+    """Upper limit (fully stressed canopy) of the CWSI baseline."""
+    form: Literal["constant", "linear_vpd", "idso1981"]
+    value_c: _Num | None = Field(None, alias="valueC")
+    a0_c: _Num | None = Field(None, alias="a0C")
+    a1_c_per_kpa: _Num | None = Field(None, alias="a1CPerKpa")
+
+    @model_validator(mode="after")
+    def _form_needs_its_numbers(self) -> "UpperLimit":
+        if self.form == "constant" and self.value_c is None:
+            raise ValueError("constant upper limit needs valueC")
+        if self.form == "linear_vpd" and (self.a0_c is None or self.a1_c_per_kpa is None):
+            raise ValueError("linear_vpd upper limit needs a0C and a1CPerKpa")
+        return self
+
+
+class ValidWindow(_RefModel):
+    """Conditions under which the baseline was measured and may be applied."""
+    solar_hour_from: _Num | None = Field(None, alias="solarHourFrom")
+    solar_hour_to: _Num | None = Field(None, alias="solarHourTo")
+    vpd_kpa_min: _Num | None = Field(None, alias="vpdKpaMin")
+    vpd_kpa_max: _Num | None = Field(None, alias="vpdKpaMax")
+    clear_sky: StrictBool = Field(..., alias="clearSky")
+
+
+class CwsiBaseline(_RefModel):
+    """Non-water-stressed baseline: (Tc - Ta) = a0 + a1 * VPD."""
+    id: StrictStr
+    cultivar: StrictStr | None = None
+    stages: list[StrictStr] | None = None  # None = all stages
+    condition: StrictStr | None = None
+    a0_c: _Num = Field(..., alias="a0C")
+    a1_c_per_kpa: _Num = Field(..., alias="a1CPerKpa")
+    upper: UpperLimit
+    valid: ValidWindow
+    site: StrictStr | None = None
+    evidence: StrictStr | None = None
+    source_id: StrictStr | None = Field(None, alias="sourceId")
+    ref: StrictStr | None = None
+    assumption: StrictStr | None = None
+
+
+class StageWaterFlags(_RefModel):
+    """Water sensitivity of one GDD stage. water_sensitive is true | false | "unknown"."""
+    water_sensitive: StrictBool | Literal["unknown"] = Field(..., alias="waterSensitive")
+    rdi_tolerant: StrictBool | None = Field(None, alias="rdiTolerant")
+    source_ids: list[StrictStr] = Field(default_factory=list, alias="sourceIds")
+    ref: StrictStr | None = None
+
+
+class WaterStressReference(_RefModel):
+    """Water-stress reference of a species as served by bioorch."""
+    baselines: list[CwsiBaseline] = Field(default_factory=list)
+    stages: dict[str, StageWaterFlags] = Field(default_factory=dict)
+    source_ids: list[StrictStr] = Field(default_factory=list, alias="sourceIds")
+
+
 class PhenologyParams(BaseModel):
     """Species- and stage-specific agronomic coefficients with provenance.
 
@@ -140,6 +205,8 @@ class PhenologyParams(BaseModel):
     stage_gdd_min: float | None = None
     stage_gdd_max: float | None = None
     stage_base_temp: float | None = None
+    # None when bioorch serves none or a malformed one (Ks fallback, never raises)
+    water_stress_reference: WaterStressReference | None = None
 
 
 # ── Engine Results ────────────────────────────────────────────────────────────

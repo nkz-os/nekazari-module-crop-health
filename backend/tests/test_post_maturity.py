@@ -14,6 +14,54 @@ from app.schemas import (
 from app.services import pipeline
 from tests.test_pipeline_zone_products import FakeOrion, PARCEL, PARCEL_URN, ZONE_URN
 
+_REAL_SERIES = pipeline._fetch_ndvi_series  # the autouse fixture stubs the module attribute
+
+@pytest.fixture(autouse=True)
+def _no_network(monkeypatch):
+    """Fail the test if anything tries a real connection (code under test swallows errors)."""
+    import socket
+    import traceback
+
+    attempts: list[str] = []
+
+    def _record(*args, **kwargs):
+        frames = [f for f in traceback.extract_stack() if "/app/" in f.filename]
+        attempts.append(f"{args[:1]} from {frames[-1].name if frames else '?'}")
+        raise OSError("network disabled in this test module")
+
+    monkeypatch.setattr(socket, "getaddrinfo", _record)
+    monkeypatch.setattr(socket.socket, "connect", _record)
+    yield
+    assert not attempts, f"real network access attempted: {attempts}"
+
+
+@pytest.fixture(autouse=True)
+def _offline_context(monkeypatch):
+    """Stub every Orion / soil lookup the engine core makes besides the NDVI series."""
+    from app.services import context_client as cc
+
+    def _const(value):
+        async def _f(*a, **k):
+            return value
+        return _f
+
+    for name, value in {
+        "_resolve_parcel_coords": None, "_resolve_parcel_geometry": None,
+        "get_lst_climatology": cc._climatology_unavailable_lst("stub"),
+        "get_ndvi_climatology": cc._climatology_unavailable("stub"),
+        "get_soil_susceptibility": None, "get_multiyear_vigor_anomaly": None,
+        "get_penetrometer_data": None, "get_agri_crop": None,
+        "get_soil_properties": SoilProperties(),
+    }.items():
+        monkeypatch.setattr(cc, name, _const(value))
+    for name, value in {
+        "_fetch_parcel_ndvi": (None, "unavailable"), "_fetch_parcel_lst_with_date": None,
+        "_fetch_parcel_lst": None, "_fetch_parcel_smi": (None, "unavailable"),
+        "_fetch_parcel_sar": (None, "unavailable"), "_fetch_ndvi_series": [],
+    }.items():
+        monkeypatch.setattr(pipeline, name, _const(value))
+
+
 NOW = datetime(2026, 7, 20, 12, tzinfo=timezone.utc)
 START = date(2026, 3, 1)
 
@@ -31,6 +79,7 @@ def _series(values, step=10):
 
 def _ref(post=True, senescence=True, gate="heading"):
     stages = {
+        "tillering": {"waterSensitive": True, "sourceIds": ["fao66"]},
         "heading": {"waterSensitive": True, "sourceIds": ["fao66"]},
         "maturity": {"waterSensitive": True, "sourceIds": ["fao66"]},
     }
@@ -51,15 +100,7 @@ async def _engines(ref, gdd, series, *, zone_urn=None, calls=None):
             calls.append((tenant_id, parcel_id, zone, since))
         return series
 
-    async def _none(*a, **k):
-        return None
-
-    with patch.object(pipeline, "_fetch_ndvi_series", _fake_series), \
-         patch.object(pipeline, "_fetch_parcel_ndvi", AsyncMock(return_value=(None, "unavailable"))), \
-         patch.object(pipeline, "_fetch_parcel_lst_with_date", _none), \
-         patch.object(pipeline, "_fetch_parcel_lst", _none), \
-         patch.object(pipeline, "_fetch_parcel_smi", AsyncMock(return_value=(None, "unavailable"))), \
-         patch.object(pipeline, "_fetch_parcel_sar", AsyncMock(return_value=(None, "unavailable"))):
+    with patch.object(pipeline, "_fetch_ndvi_series", _fake_series):
         await pipeline._run_engines(
             a, metric_type="", weather=None,
             phenology=PhenologyParams(stage="flowering", water_stress_reference=ref),
@@ -114,8 +155,7 @@ async def test_post_maturity_requires_gate_and_ndvi():
     # NDVI confirms but GDD says the crop has not reached the gate: never post-maturity.
     early = await _engines(_ref(), 300.0, _series(GREEN_THEN_DROP))
     assert early.phenology_stage == "tillering"
-    # (the reference has no flags for "tillering", so there is no phase basis either)
-    assert early.water_stress_indicator.level == "no_data" and early.water_stress_phase_basis is None
+    assert early.water_stress_indicator.level == "no_data" and early.water_stress_phase_basis == "gdd"
     # Gate reached but the NDVI is still green: normal stage flags.
     green = await _engines(_ref(), 700.0, _series(STILL_GREEN))
     assert green.water_stress_indicator.level == "no_data" and green.water_stress_phase_basis == "gdd"
@@ -145,15 +185,6 @@ async def test_no_gdd_never_post_maturity_and_no_basis():
 
 
 @pytest.mark.asyncio
-async def test_zone_path_uses_zone_series_and_gdd():
-    calls: list = []
-    # The zone's own GDD (not the parcel's) opens the gate; the zone's series is requested.
-    a = await _engines(_ref(), 650.0, _series(GREEN_THEN_DROP), zone_urn=ZONE_URN, calls=calls)
-    assert a.water_stress_phase_basis == "gdd_ndvi"
-    assert calls == [("acme", PARCEL, ZONE_URN, START)]
-
-
-@pytest.mark.asyncio
 async def test_season_start_missing_falls_back_to_240_days():
     calls: list = []
     a = CropHealthAssessment(parcel_id=PARCEL, assessed_at=NOW)
@@ -162,8 +193,7 @@ async def test_season_start_missing_falls_back_to_240_days():
         calls.append(since)
         return []
 
-    with patch.object(pipeline, "_fetch_ndvi_series", _fake), \
-         patch.object(pipeline, "_fetch_parcel_ndvi", AsyncMock(return_value=(None, "unavailable"))):
+    with patch.object(pipeline, "_fetch_ndvi_series", _fake):
         await pipeline._run_engines(
             a, metric_type="", weather=None,
             phenology=PhenologyParams(stage="flowering", water_stress_reference=_ref()),
@@ -191,8 +221,8 @@ async def test_series_query_zone_and_parcel():
         _eo("hasAgriParcel", PARCEL_URN, 10, 0.9), _eo("hasAgriParcel", PARCEL_URN, 30, "bad"),
     ])
     with patch("nkz_platform_sdk.orion.OrionClient", return_value=fo):
-        zone = await pipeline._fetch_ndvi_series("acme", PARCEL, ZONE_URN, START)
-        parcel = await pipeline._fetch_ndvi_series("acme", PARCEL, None, START)
+        zone = await _REAL_SERIES("acme", PARCEL, ZONE_URN, START)
+        parcel = await _REAL_SERIES("acme", PARCEL, None, START)
     assert zone == [(START, 0.2), (START + timedelta(days=20), 0.5)]
     assert parcel == [(START + timedelta(days=10), 0.9)]
     assert f'sensingDate>="{START.isoformat()}"' in fo.queries[0] and "hasAgriParcelZone" in fo.queries[0]
@@ -209,7 +239,7 @@ async def test_series_query_failure_is_empty():
             pass
 
     with patch("nkz_platform_sdk.orion.OrionClient", return_value=Boom()):
-        assert await pipeline._fetch_ndvi_series("acme", PARCEL, None, START) == []
+        assert await _REAL_SERIES("acme", PARCEL, None, START) == []
 
 
 # ── Orion attrs, API fields, history ─────────────────────────────────────────
@@ -235,16 +265,80 @@ def test_phase_basis_and_baseline_id_attrs_written_and_cleared():
     assert m2["waterStressPhaseBasis"] is None and m2["cwsiBaselineId"] is None
 
 
-def test_rollup_keeps_post_maturity_flags():
+def _zone_result(zone_id, basis, level="not_needed"):
     from app.engines.water_stress_level import WaterStressIndicator
-    import types
-    a = CropHealthAssessment(
-        parcel_id="p", assessed_at=NOW, phenology_stage="maturity", gdd_accumulated=1200.0,
-        water_stress_phase_basis="gdd_ndvi",
-        water_stress_indicator=WaterStressIndicator("not_needed", "none"),
+    return CropHealthAssessment(
+        parcel_id="p", assessed_at=NOW, zone_id=zone_id, phenology_stage="maturity",
+        gdd_accumulated=1200.0, water_stress_phase_basis=basis,
+        water_stress_indicator=WaterStressIndicator(level, "none"),
     )
-    pipeline._refresh_rollup_level(a, types.SimpleNamespace(water_stress_reference=_ref()))
-    assert a.water_stress_indicator.level == "not_needed" and a.water_stress_phase_basis == "gdd_ndvi"
+
+
+def _rollup_of(zones, parcel_gdd):
+    import types
+    from app.schemas import WaterStress
+    rollup = pipeline._aggregate_rollup("p", zones)
+    rollup.water_stress = WaterStress(index=0.9, fidelity="parcel_weather", observed_at=None,
+                                      shade_fraction=None)  # Ks 0.1 -> high
+    pipeline._refresh_rollup_level(
+        rollup, types.SimpleNamespace(water_stress_reference=_ref()), zones,
+        parcel_gdd=parcel_gdd, stage_table=StageTable(stages=dict(TABLE)),
+    )
+    return rollup
+
+
+def test_one_confirming_zone_does_not_switch_off_the_parcel_alarm():
+    for order in (("gdd_ndvi", "gdd"), ("gdd", "gdd_ndvi")):
+        zones = [_zone_result("z0", order[0], "not_needed" if order[0] == "gdd_ndvi" else "no_data"),
+                 _zone_result("z1", order[1], "not_needed" if order[1] == "gdd_ndvi" else "no_data")]
+        r = _rollup_of(zones, 1200.0)
+        assert r.water_stress_indicator.level == "high", order
+        assert r.water_stress_phase_basis == "gdd"
+
+
+def test_unanimous_zones_and_parcel_gate_give_not_needed():
+    zones = [_zone_result("z0", "gdd_ndvi"), _zone_result("z1", "gdd_ndvi")]
+    r = _rollup_of(zones, 1200.0)
+    assert r.water_stress_indicator.level == "not_needed" and r.water_stress_phase_basis == "gdd_ndvi"
+    # the parcel's own GDD stage must pass the gate too
+    low = _rollup_of([_zone_result("z0", "gdd_ndvi"), _zone_result("z1", "gdd_ndvi")], 300.0)
+    assert low.water_stress_indicator.level == "high" and low.water_stress_phase_basis == "gdd"
+
+
+@pytest.mark.asyncio
+async def test_zone_path_uses_zone_series_and_gdd():
+    """Through _assess_zone: parcel GDD + each zone's own delta decide each zone's gate."""
+    from app.services.zonation import Zone
+    sq = {"type": "Polygon", "coordinates": [[[0, 0], [0, 1], [1, 1], [1, 0], [0, 0]]]}
+    z_hi = Zone("hi", sq, urn="urn:ngsi-ld:AgriParcelZone:acme:p1:hi")
+    z_lo = Zone("lo", sq, urn="urn:ngsi-ld:AgriParcelZone:acme:p1:lo")
+    seen: list = []
+
+    async def _series_by_zone(tenant_id, parcel_id, zone, since):
+        seen.append((zone, since))
+        return _series(GREEN_THEN_DROP)
+
+    async def _meteo(*a, **k):
+        from app.services.meteo_context import MeteoContext
+        return MeteoContext(dominant_fidelity="unavailable")
+
+    crop_ctx = {
+        "phenology": PhenologyParams(stage="flowering", water_stress_reference=_ref()),
+        "thresholds": StageTable(stages=dict(TABLE)), "gdd": 450.0, "species": "generic",
+        "variety_name": None, "now": NOW, "season_start": "2026-03-01",
+        "soil": SoilProperties(), "root_depth_mm": 600.0,
+    }
+    with patch.object(pipeline, "_fetch_ndvi_series", _series_by_zone), \
+         patch.object(pipeline, "resolve_meteo_context", _meteo):
+        hi = await pipeline._assess_zone(z_hi, "urn:ngsi-ld:AgriParcel:acme:p1", "p1", "acme",
+                                         crop_ctx, None, False, gdd_delta=+100.0)
+        lo = await pipeline._assess_zone(z_lo, "urn:ngsi-ld:AgriParcel:acme:p1", "p1", "acme",
+                                         crop_ctx, None, False, gdd_delta=-50.0)
+    assert (hi.phenology_stage, hi.water_stress_phase_basis) == ("heading", "gdd_ndvi")
+    assert hi.water_stress_indicator.level == "not_needed"
+    assert (lo.phenology_stage, lo.water_stress_phase_basis) == ("tillering", "gdd")
+    # only the zone above the gate asked for a series, and it asked for its own zone's
+    assert seen == [(z_hi.urn, START)]
 
 
 def test_history_includes_level():

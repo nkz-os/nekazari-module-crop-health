@@ -292,7 +292,14 @@ async def _resolve_stage_flags(
     return flags, ("gdd" if flags is not None else None)
 
 
-def _refresh_rollup_level(rollup: CropHealthAssessment, phenology) -> None:
+def _refresh_rollup_level(
+    rollup: CropHealthAssessment,
+    phenology,
+    zone_results: list[CropHealthAssessment] | None = None,
+    *,
+    parcel_gdd: float | None = None,
+    stage_table=None,
+) -> None:
     """Re-resolve the water-stress level once the parcel-level Ks exists.
 
     Zones are assessed without the parcel's water stress, so the rollup's inherited
@@ -300,16 +307,38 @@ def _refresh_rollup_level(rollup: CropHealthAssessment, phenology) -> None:
     resolved again from the rollup's Ks, and severity/action are updated before any
     event is emitted. A not_needed stage recomputes severity from scratch (no water alarm);
     otherwise the worse of the zone-derived severity and the new level wins.
+
+    Post-maturity applies at parcel level only when EVERY zone that has a phase basis
+    reports ``gdd_ndvi`` AND the parcel's own GDD stage passes the rule's gate; one
+    confirming zone must not switch off the parcel's water alarm. Otherwise the
+    parcel's GDD-stage flags apply (basis ``gdd``).
     """
+    ref = getattr(phenology, "water_stress_reference", None) if phenology else None
+    parcel_stage = (
+        derive_stage_from_gdd(parcel_gdd, stage_table)
+        if (parcel_gdd is not None and stage_table) else None
+    )
+    bases = [z.water_stress_phase_basis for z in (zone_results or [rollup]) if z.water_stress_phase_basis]
+    rule = ref.senescence if ref is not None else None
+    post_flags = ref.stages.get(POST_MATURITY_STAGE) if ref is not None else None
+    unanimous = bool(
+        bases and all(b == "gdd_ndvi" for b in bases)
+        and rule is not None and post_flags is not None
+        and parcel_stage is not None
+        and _stage_at_or_after(stage_table, parcel_stage, rule.gate_stage)
+    )
     old = rollup.water_stress_indicator
     if old is not None and old.method == "cwsi_sensor":
-        return
-    ref = getattr(phenology, "water_stress_reference", None) if phenology else None
-    stage = rollup.phenology_stage if rollup.gdd_accumulated is not None else None
-    if rollup.water_stress_phase_basis == "gdd_ndvi" and ref is not None:
-        # The worst zone already confirmed the end of season (GDD gate + NDVI); keep it.
-        flags = ref.stages.get(POST_MATURITY_STAGE)
+        # Final, unless it was inherited from a zone's post-maturity that the parcel does not share.
+        if not (rollup.water_stress_phase_basis == "gdd_ndvi" and not unanimous):
+            return
+    if unanimous:
+        flags = post_flags
+        rollup.water_stress_phase_basis = "gdd_ndvi"
     else:
+        stage = parcel_stage
+        if stage is None:
+            stage = rollup.phenology_stage if rollup.gdd_accumulated is not None else None
         flags = ref.stages.get(stage) if (ref is not None and stage is not None) else None
         rollup.water_stress_phase_basis = "gdd" if flags is not None else None
     rollup.water_stress_indicator = resolve_indicator(
@@ -932,7 +961,7 @@ async def trigger(
         rollup.soil_water_balance, model_fidelity, now_ts, daily_shade, root_depth_mm,
         shade_observed_at,
     )
-    _refresh_rollup_level(rollup, phenology)
+    _refresh_rollup_level(rollup, phenology, zone_results, parcel_gdd=gdd, stage_table=stage_table)
     rollup_entity = rollup.to_ngsi_ld()
     if await _publish_assessment(rollup_entity, tenant_id):
         await _clear_stale_water_stress(rollup_entity, tenant_id)
@@ -2388,7 +2417,10 @@ async def compute_assessment(
         "parcel_weather" if rollup.soil_water_balance else "unavailable",
         now_ts, daily_shade, root_depth_mm, shade_observed_at,
     )
-    _refresh_rollup_level(rollup, phenology)
+    _refresh_rollup_level(
+        rollup, phenology, zone_results,
+        parcel_gdd=crop_ctx["gdd"], stage_table=crop_ctx["thresholds"],
+    )
 
     from app.schemas import CropRequirements
 
@@ -3268,7 +3300,7 @@ async def _fetch_ndvi_series(
     except Exception as exc:
         logger.warning("_fetch_ndvi_series: failed for parcel %s zone %s: %s", parcel_id, zone_urn, exc)
         return []
-    out: list[tuple[date, float]] = []
+    out: list[tuple[date, float]] = []  # duplicates per date are resolved by the engine (max NDVI)
     for e in entities:
         day = _sensing_day(e)
         if day is None or e.get("ndvi") is None:

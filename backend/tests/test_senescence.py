@@ -65,3 +65,25 @@ def test_flat_series_has_no_season():
 
 def test_series_starting_after_peak_has_no_base():
     assert end_of_season_reached(_series([0.9, 0.7, 0.5, 0.3, 0.2, 0.2, 0.2, 0.2, 0.2]), 0.2) is None
+
+
+def test_last_point_outlier_is_not_the_end():
+    # One very low last acquisition (cloud/shadow) after a green plateau.
+    assert end_of_season_reached(_series(RISE + STILL_GREEN + [0.15]), 0.2) is not True
+
+
+def test_dip_then_recover_is_false():
+    # A two-observation cloudy dip at 10-day spacing that recovers.
+    dip = RISE + [0.80, 0.30, 0.25, 0.80, 0.84, 0.85]
+    assert end_of_season_reached(_series(dip), 0.2) is False
+
+
+def test_sustained_decline_is_true():
+    assert end_of_season_reached(_series(RISE + [0.60, 0.35, 0.22, 0.20, 0.19]), 0.2) is True
+
+
+def test_duplicate_dates_keep_the_highest_ndvi():
+    pts = _series(RISE + DROP)
+    cloudy = [(d, 0.0) for d, _ in pts]  # contaminated duplicates must not win
+    assert end_of_season_reached(pts + cloudy, 0.2) is True
+    # two-peak seasons are read from the highest peak (documented limit, not tested further)

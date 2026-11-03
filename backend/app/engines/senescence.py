@@ -13,7 +13,7 @@ Pure Python on purpose: numpy/scipy are not runtime dependencies of this module.
 from __future__ import annotations
 
 import math
-from datetime import date
+from datetime import date, timedelta
 
 # ASSUMPTION: the series is resampled to a 5-day grid (Sentinel-2 revisit); TIMESAT
 # fits regularly sampled data and its guide states no step.
@@ -28,10 +28,16 @@ MIN_OBSERVATIONS = 8
 # ASSUMPTION: a seasonal amplitude below 0.2 NDVI is not a crop season (bare soil or
 # noise); TIMESAT has an amplitude cut-off but gives no value.
 MIN_AMPLITUDE = 0.2
+# TIMESAT removes spikes (median in a window) before fitting; sources-maturity.md
+# section 3.2. ASSUMPTION: a median-of-3 on the observations; the window is not sourced.
+SPIKE_WINDOW = 3
+# ASSUMPTION: the end of season must be sustained by at least the last 2 observations
+# (a single low acquisition, e.g. a cloud or shadow, never ends a season).
+MIN_SUSTAINED_OBSERVATIONS = 2
 
 
 def _clean(points: list[tuple[date, float]]) -> list[tuple[date, float]]:
-    """Finite NDVI within [-1, 1], one value per date (last wins), sorted by date."""
+    """Finite NDVI within [-1, 1], one value per date (the highest: cloud contamination lowers NDVI), sorted by date."""
     by_day: dict[date, float] = {}
     for d, v in points:
         try:
@@ -39,8 +45,20 @@ def _clean(points: list[tuple[date, float]]) -> list[tuple[date, float]]:
         except (TypeError, ValueError):
             continue
         if math.isfinite(x) and -1.0 <= x <= 1.0:
-            by_day[d] = x
+            by_day[d] = max(x, by_day.get(d, x))
     return sorted(by_day.items())
+
+
+def _despike(points: list[tuple[date, float]]) -> list[tuple[date, float]]:
+    """Median-of-3 on the interior observations; the first and last are kept as they are."""
+    if len(points) < SPIKE_WINDOW:
+        return points
+    vals = [v for _, v in points]
+    out = [points[0]]
+    for i in range(1, len(points) - 1):
+        out.append((points[i][0], sorted(vals[i - 1:i + 2])[1]))
+    out.append(points[-1])
+    return out
 
 
 def _resample(points: list[tuple[date, float]]) -> list[float]:
@@ -101,6 +119,7 @@ def end_of_season_reached(points: list[tuple[date, float]], end_fraction: float)
     pts = _clean(points)
     if len(pts) < MIN_OBSERVATIONS:
         return None
+    pts = _despike(pts)
     grid = _resample(pts)
     if len(grid) < SG_WINDOW:
         return None
@@ -113,4 +132,12 @@ def end_of_season_reached(points: list[tuple[date, float]], end_fraction: float)
     if amplitude < MIN_AMPLITUDE:
         return None
     threshold = base + end_fraction * amplitude
-    return any(v <= threshold for v in sm[peak + 1:])
+    # Sustained crossing: the smoothed series ends at or below the threshold AND the last
+    # observations (after the peak) are too. A transient dip that recovers, or one low
+    # last acquisition, is not an end of season. Note: a season with two peaks (double
+    # cropping) is read from its highest peak only.
+    if sm[-1] > threshold:
+        return False
+    peak_day = pts[0][0] + timedelta(days=peak * GRID_STEP_DAYS)
+    tail = [v for d, v in pts if d > peak_day][-MIN_SUSTAINED_OBSERVATIONS:]
+    return len(tail) >= MIN_SUSTAINED_OBSERVATIONS and all(v <= threshold for v in tail)

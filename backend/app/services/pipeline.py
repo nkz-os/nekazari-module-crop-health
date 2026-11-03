@@ -101,6 +101,20 @@ _DEPLETION_FRACTION_P: dict[str, float] = {
     "CITSI": 0.50,  # citrus
 }
 
+def _safe_cwsi(*, ctx: tuple, **kwargs):
+    """cwsi_with_weather that never raises: unusable inputs give None, not a fake value."""
+    try:
+        return cwsi_with_weather(**kwargs)
+    except ValueError as exc:
+        tenant_id, parcel_id, species, stage = ctx
+        logger.warning(
+            "CWSI skipped: %s tenant=%s parcel=%s species=%s stage=%s temp_source=%s d1=%r d2=%r",
+            exc, tenant_id, parcel_id, species, stage,
+            kwargs.get("temp_source"), kwargs.get("d1"), kwargs.get("d2"),
+        )
+        return None
+
+
 def _resolve_depletion_fraction(crop_context) -> float:
     """Resolve FAO-56 depletion fraction p from crop context.
     
@@ -836,7 +850,7 @@ async def _run_engines(
         readings = await redis_state.get_window(entity_id, "leafTemperature", hours=1)
         if readings:
             latest_tc = readings[-1].value
-            assessment.cwsi = cwsi_with_weather(
+            assessment.cwsi = _safe_cwsi(
                 temp_canopy=latest_tc,
                 temp_air=weather.temp_air,
                 humidity_pct=weather.humidity_pct,
@@ -844,6 +858,7 @@ async def _run_engines(
                 d2=phenology.d2,
                 data_fidelity="onsite_calibrated",
                 temp_source="leaf_temperature",
+                ctx=(tenant_id, effective_parcel, getattr(phenology, "species", None), getattr(phenology, "stage", None)),
             )
 
     # CWSI from satellite LST (sensorless / degraded path when no IR sensor)
@@ -851,7 +866,7 @@ async def _run_engines(
         lst_data = await _fetch_parcel_lst_with_date(effective_parcel, tenant_id)
         if lst_data:
             lst_val, lst_date = lst_data
-            assessment.cwsi = cwsi_with_weather(
+            assessment.cwsi = _safe_cwsi(
                 temp_canopy=lst_val,
                 temp_air=weather.temp_air,
                 humidity_pct=weather.humidity_pct,
@@ -860,6 +875,7 @@ async def _run_engines(
                 data_fidelity="modeled_opendata",
                 temp_source="satellite_lst",
                 lst_sensing_date=lst_date if lst_date else None,
+                ctx=(tenant_id, effective_parcel, getattr(phenology, "species", None), getattr(phenology, "stage", None)),
             )
 
     # MDS (triggered by trunk diameter dendrómetro)

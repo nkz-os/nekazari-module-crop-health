@@ -44,7 +44,7 @@ def _owner(monkeypatch, context):
 def _with_cwsi_params(monkeypatch):
     async def _params(*a, **k):
         return types.SimpleNamespace(
-            stage="vegetative", kc=0.8, mds_ref=100.0, ky=0.45, d1=2.0, d2=-2.0)
+            stage="vegetative", kc=0.8, mds_ref=100.0, ky=0.45, d1=-2.0, d2=2.0)
 
     monkeypatch.setattr(pipeline, "get_phenology_params", _params, raising=False)
 

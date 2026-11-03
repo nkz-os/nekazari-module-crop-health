@@ -194,3 +194,24 @@ class TestWaterBalance:
         result = dynamic_water_balance(0.0, 6.0, 1.0)
         assert result.balance_mm == -6.0
         assert result.deficit
+
+
+class TestCwsiBaselineGuard:
+    """d1/d2 must be degC baselines; stage day counts are rejected."""
+
+    def test_day_counts_raise(self):
+        with pytest.raises(ValueError):
+            cwsi(35.0, 30.0, 105.0, 180.0)
+
+    def test_day_counts_raise_with_weather(self):
+        with pytest.raises(ValueError):
+            cwsi_with_weather(35.0, 30.0, 50.0, 105.0, 180.0)
+
+    def test_inverted_or_non_finite_raise(self):
+        with pytest.raises(ValueError):
+            cwsi(35.0, 30.0, 8.0, 2.0)
+        with pytest.raises(ValueError):
+            cwsi(35.0, 30.0, float("nan"), 8.0)
+
+    def test_defaults_unchanged(self):
+        assert cwsi(35.0, 30.0, 2.0, 8.0).cwsi == 0.5

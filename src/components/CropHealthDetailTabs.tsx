@@ -20,6 +20,10 @@ import type {
   ZonesResponse,
 } from '../types/assessment';
 
+/** CWSI baseline in °C, or a dash when absent: never a bare unit. */
+export const formatBaselineC = (v: number | null | undefined): string =>
+  typeof v === 'number' && Number.isFinite(v) ? `${v.toFixed(1)}°C` : '—';
+
 type DetailTab = 'water' | 'plant' | 'risks';
 
 interface CropHealthDetailTabsProps {
@@ -383,8 +387,8 @@ const CropHealthDetailTabs: React.FC<CropHealthDetailTabsProps> = ({
           </span>
           <div className="grid grid-cols-4 gap-1 text-center text-xs">
             <div><span className="text-nkz-text-muted">Kc</span><br /><strong className="text-nkz-text-primary">{phenology.kc?.toFixed(2)}</strong></div>
-            <div><span className="text-nkz-text-muted">D1</span><br /><strong className="text-nkz-text-primary">{phenology.d1?.toFixed(1)}°C</strong></div>
-            <div><span className="text-nkz-text-muted">D2</span><br /><strong className="text-nkz-text-primary">{phenology.d2?.toFixed(1)}°C</strong></div>
+            <div><span className="text-nkz-text-muted">D1</span><br /><strong className="text-nkz-text-primary">{formatBaselineC(phenology.d1)}</strong></div>
+            <div><span className="text-nkz-text-muted">D2</span><br /><strong className="text-nkz-text-primary">{formatBaselineC(phenology.d2)}</strong></div>
             <div><span className="text-nkz-text-muted">MDS ref</span><br /><strong className="text-nkz-text-primary">{phenology.mds_ref?.toFixed(0)}µm</strong></div>
           </div>
           {phenology.provenance && (

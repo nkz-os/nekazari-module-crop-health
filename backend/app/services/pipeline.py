@@ -2585,7 +2585,7 @@ async def compute_assessment(
     if gdd is not None:
         gdd = float(gdd)
 
-    # Phenology params (engine inputs: kc, d1/d2, mds_ref, stage thresholds)
+    # Phenology params (engine inputs: kc, mds_ref, stage thresholds)
     phenology = await get_phenology_params(species=species, gdd=gdd)
 
     now_ts = _now_ts()

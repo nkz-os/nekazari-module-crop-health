@@ -257,30 +257,22 @@ class WaterStressReference(_RefModel):
 class PhenologyParams(BaseModel):
     """Species- and stage-specific agronomic coefficients with provenance.
 
-    D1/D2: CWSI baselines (crop-specific, stage-dependent).
     Kc: crop coefficient for water balance.
     mds_ref: reference MDS for the species at current stage.
 
     Confidence intervals and provenance are present when data comes
     from the BioOrchestrator knowledge graph (non-default).
     """
-    d1: float = Field(2.0, description="NWSB — non-water-stressed baseline (°C)")
-    d2: float = Field(8.0, description="Maximum stress baseline (°C)")
     kc: float = Field(0.85, description="Crop coefficient")
     mds_ref: float = Field(150.0, description="Reference MDS (µm)")
     species: str = "generic"
     stage: str = "vegetative"
     is_default: bool = True  # True if using hardcoded fallbacks
-    # Provenance of d1/d2 only: "bioorch" when accepted from BioOrchestrator,
-    # "default" when crop-health's own baselines are used.
-    cwsi_baseline_source: str = "default"
 
     # Extended fields from BioOrchestrator (v0.2+)
     scientific_name: str | None = None
     stage_description: str | None = None
     kc_confidence_interval: list[float] | None = None
-    d1_confidence_interval: list[float] | None = None
-    d2_confidence_interval: list[float] | None = None
     mds_ref_confidence_interval: list[float] | None = None
     cultivar: str | None = None
     management: str | None = None

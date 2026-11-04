@@ -42,10 +42,10 @@ def test_linear_vpd_upper():
     assert upper_limit_c(b, 30.0, 3.0) == pytest.approx(8.356)
 
 
-def test_idso1981_upper_not_computed():
+def test_idso1981_upper_is_computed_from_vpg():
     b = _b(upper={"form": "idso1981"})
-    assert upper_limit_c(b, 30.0, 3.0) is None
-    assert cwsi_from_baseline(30.0, 30.0, 20.0, b, 12.0) is None
+    ul = upper_limit_c(b, 30.0, 3.0)
+    assert ul is not None and ul > float(b.a0_c)
 
 
 def test_cwsi_clamped_0_1():

@@ -162,6 +162,8 @@ class ValidWindow(_RefModel):
     solar_hour_to: _Num | None = Field(None, alias="solarHourTo")
     vpd_kpa_min: _Num | None = Field(None, alias="vpdKpaMin")
     vpd_kpa_max: _Num | None = Field(None, alias="vpdKpaMax")
+    hours_after_sunrise: _Num | None = Field(None, alias="hoursAfterSunrise", ge=0)
+    hours_before_sunset: _Num | None = Field(None, alias="hoursBeforeSunset", ge=0)
     clear_sky: StrictBool = Field(..., alias="clearSky")
 
 

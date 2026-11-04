@@ -190,6 +190,8 @@ def select_baseline(
     stage: str | None,
     cultivar: str | None,
     solar_hour: float | None = None,
+    lat_deg: float | None = None,
+    ts_unix: float | None = None,
 ) -> CwsiBaseline | None:
     """Pick the baseline: cultivar and stage match, cultivar for all stages, then stage
     match, then ``stages: null``.
@@ -214,7 +216,7 @@ def select_baseline(
     )
     for tier in tiers:
         for b in tier:
-            if solar_hour is None or in_solar_window(b, solar_hour):
+            if solar_hour is None or in_solar_window(b, solar_hour, lat_deg, ts_unix):
                 return b
     return None
 
@@ -227,15 +229,20 @@ def nwsb_c(b: CwsiBaseline, vpd_kpa: float) -> float:
 def upper_limit_c(b: CwsiBaseline, temp_air_c: float, vpd_kpa: float) -> float | None:
     """Upper limit (Tc - Ta, degC) of a fully stressed canopy.
 
-    Only ``constant`` and ``linear_vpd`` are computed. The Idso 1981 formula was
-    not found in any source read, so ``idso1981`` returns None (no CWSI) rather
-    than an invented formula.
+    ``idso1981``: the non-stressed line is extended to negative VPD by the leaf-air
+    vapour pressure gradient at VPD = 0, VPG = es(Ta + a0) - es(Ta) (kPa, the same es as
+    the VPD), so UL = a0 - a1 * VPG with a1 < 0 (Idso et al. 1981, Agric. Meteorol.
+    24:45-55, pp. 51-52).
     """
     u = b.upper
     if u.form == "constant":
         return float(u.value_c)
     if u.form == "linear_vpd":
         return float(u.a0_c) + float(u.a1_c_per_kpa) * vpd_kpa
+    if u.form == "idso1981":
+        a0, a1 = float(b.a0_c), float(b.a1_c_per_kpa)
+        vpg = saturation_vapor_pressure(temp_air_c + a0) - saturation_vapor_pressure(temp_air_c)
+        return a0 - a1 * vpg
     return None
 
 
@@ -318,12 +325,48 @@ def sky_clear(
     return rs_wm2 / rso >= CLEAR_SKY_MIN_RS_RSO
 
 
-def in_solar_window(b: CwsiBaseline, hour: float) -> bool:
+def daylight_window_solar_hours(
+    lat_deg: float, ts_unix: float, hours_after_sunrise: float, hours_before_sunset: float,
+) -> tuple[float, float] | None:
+    """Solar-hour window [12 - N/2 + after, 12 + N/2 - before], N = 24 * ws / pi.
+
+    ws is the sunset hour angle (FAO-56 eq. 25) with the declination of eq. 24 for the
+    day of the year of ``ts_unix`` (UTC). None when the latitude is unusable.
+    """
+    if (
+        isinstance(lat_deg, bool) or not isinstance(lat_deg, (int, float))
+        or not math.isfinite(lat_deg) or abs(lat_deg) > 90
+    ):
+        return None
+    j = datetime.fromtimestamp(ts_unix, tz=timezone.utc).timetuple().tm_yday
+    delta = 0.409 * math.sin(2 * math.pi * j / 365 - 1.39)  # eq. 24
+    ws = math.acos(max(-1.0, min(1.0, -math.tan(math.radians(lat_deg)) * math.tan(delta))))
+    half_day_h = 12 * ws / math.pi  # N / 2
+    return (
+        12 - half_day_h + float(hours_after_sunrise),
+        12 + half_day_h - float(hours_before_sunset),
+    )
+
+
+def in_solar_window(
+    b: CwsiBaseline, hour: float, lat_deg: float | None = None, ts_unix: float | None = None,
+) -> bool:
     """True when ``hour`` is in the half-open window [from, to) (open ends allowed).
 
     Half-open so adjacent windows (to of one row == from of the next) never overlap.
+    A row with ``hours_after_sunrise`` / ``hours_before_sunset`` and no explicit
+    ``solar_hour_from/to`` uses the daylight window of the latitude and date; without
+    them it is not valid (no CWSI rather than a guess).
     """
     lo, hi = b.valid.solar_hour_from, b.valid.solar_hour_to
+    after, before = b.valid.hours_after_sunrise, b.valid.hours_before_sunset
+    if lo is None and hi is None and (after is not None or before is not None):
+        if lat_deg is None or ts_unix is None:
+            return False
+        win = daylight_window_solar_hours(lat_deg, ts_unix, after or 0.0, before or 0.0)
+        if win is None:
+            return False
+        lo, hi = win
     if lo is not None and hour < lo:
         return False
     if hi is not None and hour >= hi:
@@ -338,6 +381,8 @@ def cwsi_from_baseline(
     b: CwsiBaseline,
     solar_hour: float,
     *,
+    lat_deg: float | None = None,
+    ts_unix: float | None = None,
     data_fidelity: str = "onsite_calibrated",
     temp_source: str = "leaf_temperature",
 ) -> CWSIResult | None:
@@ -350,7 +395,7 @@ def cwsi_from_baseline(
         return None
     if not (0 <= rh_pct <= 100):
         return None
-    if not in_solar_window(b, solar_hour):
+    if not in_solar_window(b, solar_hour, lat_deg, ts_unix):
         return None
     vpd = vapor_pressure_deficit(temp_air_c, rh_pct)
     vpd_min = max(CWSI_MIN_VPD_KPA, b.valid.vpd_kpa_min or 0.0)

@@ -214,10 +214,11 @@ async def _ir_cwsi_unguarded(
         return None
     lon = coords[1]  # (lat, lon)
     now_h = solar_hour(now.timestamp(), lon)
-    base = select_baseline(ref, stage, cultivar, now_h)
+    lat = coords[0]
+    base = select_baseline(ref, stage, cultivar, now_h, lat, now.timestamp())
     if base is None:
         logger.info(
-            "CWSI skipped: no published baseline valid now tenant=%s parcel=%s species=%s stage=%s",
+            "CWSI skipped: no published baseline valid now (outside window or latitude unusable) tenant=%s parcel=%s species=%s stage=%s",
             tenant_id, parcel_id, species, stage,
         )
         return None
@@ -226,7 +227,7 @@ async def _ir_cwsi_unguarded(
     in_window = [
         r for r in readings
         if math.isfinite(r.value) and lo <= r.value <= hi
-        and in_solar_window(base, solar_hour(r.ts, lon))
+        and in_solar_window(base, solar_hour(r.ts, lon), lat, r.ts)
     ]
     if not in_window:
         logger.info(
@@ -254,6 +255,8 @@ async def _ir_cwsi_unguarded(
         rh.value,
         base,
         now_h,
+        lat_deg=lat,
+        ts_unix=now.timestamp(),
         data_fidelity="onsite_calibrated",
         temp_source="leaf_temperature",
     )

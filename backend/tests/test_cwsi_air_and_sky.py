@@ -130,7 +130,8 @@ async def _cwsi_run(monkeypatch, *, wm=None, regional=None, by_context=None, lea
     return published["assessments"][-1]
 
 
-_AIR = {"air_temp_c": 35.0, "rh_pct": 20.0, "et0_mm": 5.0}
+# A WeatherObserved linked to the parcel (hasAgriParcel/refAgriParcel), as _regional_meteo marks it.
+_AIR = {"air_temp_c": 35.0, "rh_pct": 20.0, "et0_mm": 5.0, "parcel_linked": True}
 
 
 @pytest.mark.asyncio
@@ -138,7 +139,7 @@ async def test_weather_map_daily_mean_air_never_gives_cwsi(monkeypatch, caplog):
     with caplog.at_level(logging.INFO):
         a = await _cwsi_run(
             monkeypatch, wm={"air_temp_c": 35.0, "et0_mm": 5.0},
-            regional={"rh_pct": 20.0, "observed_at_ts": NOW - 600},
+            regional={"rh_pct": 20.0, "observed_at_ts": NOW - 600, "parcel_linked": True},
         )
     assert a.cwsi is None
     assert a.water_stress_indicator.method != "cwsi_sensor"

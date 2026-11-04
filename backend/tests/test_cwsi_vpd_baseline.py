@@ -120,8 +120,8 @@ def _hot_ref():
 
 
 def _hourly(air):
-    """Air as our hourly WeatherObserved 10 min before NOW (instantaneous for the CWSI)."""
-    return {"wm": {}, "regional": {**air, "observed_at_ts": NOW - 600}}
+    """Air as our hourly WeatherObserved linked to the parcel, 10 min before NOW (instantaneous for the CWSI)."""
+    return {"wm": {}, "regional": {**air, "observed_at_ts": NOW - 600, "parcel_linked": True}}
 
 
 async def _trigger(monkeypatch, ref, *, lon=0.0, wm=None, ts_offsets=(60,)):

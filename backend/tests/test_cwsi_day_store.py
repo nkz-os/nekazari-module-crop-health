@@ -44,7 +44,8 @@ def _ref():
 def _wire(monkeypatch, at_ts, *, lon=0.0):
     published, _ = _setup(
         monkeypatch, soil=SOIL, wm={},
-        regional={"air_temp_c": 35.0, "rh_pct": 20.0, "et0_mm": 5.0, "observed_at_ts": at_ts - 600},
+        regional={"air_temp_c": 35.0, "rh_pct": 20.0, "et0_mm": 5.0, "observed_at_ts": at_ts - 600,
+                  "parcel_linked": True},
     )
 
     async def _params(*a, **k):

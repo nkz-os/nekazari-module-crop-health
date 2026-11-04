@@ -80,6 +80,20 @@ class TimeseriesPoint(BaseModel):
 # ── Weather Data ──────────────────────────────────────────────────────────────
 
 
+class InstantValue(BaseModel):
+    """A candidate instantaneous value of one meteo variable, to pair with a leaf reading.
+
+    ``source`` is ``iot_sensor`` (the parcel's own open-field sensor) or
+    ``regional_proxy`` (an hourly WeatherObserved linked to the parcel);
+    ``observed_ts`` is its observation epoch time when the source gives one.
+    """
+    model_config = ConfigDict(frozen=True)
+
+    value: float
+    source: Literal["iot_sensor", "regional_proxy"]
+    observed_ts: float | None = None
+
+
 class WeatherSnapshot(BaseModel):
     """Subset of weather_observations relevant for crop health."""
     temp_air: float = Field(..., description="Air temperature °C")
@@ -91,6 +105,9 @@ class WeatherSnapshot(BaseModel):
     # came from (resolve_meteo_context vocab) and, when known, its observation epoch time.
     fidelity: dict[str, str] = Field(default_factory=dict)
     observed_at_ts: dict[str, float] = Field(default_factory=dict)
+    # Per variable, the sources that may pair with a leaf reading (CWSI), best first.
+    # Kept apart from the precedence-resolved values above, which other engines use.
+    instantaneous: dict[str, list[InstantValue]] = Field(default_factory=dict)
 
 
 # ── Phenology Parameters (from BioOrchestrator or defaults) ──────────────────

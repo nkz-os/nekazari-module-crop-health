@@ -48,6 +48,7 @@ from app.engines.water_stress import (
 from app.schemas import (
     CropHealthAssessment,
     CWSIResult,
+    InstantValue,
     MetricType,
     RecommendedAction,
     Severity,
@@ -234,20 +235,23 @@ async def _ir_cwsi_unguarded(
         )
         return None
     reading_ts = max(r.ts for r in in_window)
-    # Air and humidity of the same moment (spec §5.1): a parcel sensor, or our hourly
-    # WeatherObserved within an hour of the reading. A daily mean (weather-map, zone
-    # series) never pairs with a leaf reading.
-    if not (_instantaneous(weather, "air_temp_c", reading_ts)
-            and _instantaneous(weather, "rh_pct", reading_ts)):
+    # Air and humidity of the same moment (spec §5.1, §14), chosen per variable: the
+    # parcel's own open-field sensor, else an hourly WeatherObserved linked to the parcel
+    # within an hour of the reading. A daily mean (weather-map, zone series), an
+    # under-panel sensor or another parcel's station never pairs with a leaf reading.
+    air = _instant_value(weather, "air_temp_c", reading_ts)
+    rh = _instant_value(weather, "rh_pct", reading_ts)
+    if air is None or rh is None:
         logger.info(
-            "CWSI skipped: air not instantaneous tenant=%s parcel=%s air=%s rh=%s",
-            tenant_id, parcel_id, weather.fidelity.get("air_temp_c"), weather.fidelity.get("rh_pct"),
+            "CWSI skipped: air not instantaneous tenant=%s parcel=%s air=%s rh=%s candidates=%s",
+            tenant_id, parcel_id, air.source if air else None, rh.source if rh else None,
+            {v: [c.source for c in cs] for v, cs in (weather.instantaneous or {}).items()},
         )
         return None
     result = cwsi_from_baseline(
         statistics.median(r.value for r in in_window),
-        weather.temp_air,
-        weather.humidity_pct,
+        air.value,
+        rh.value,
         base,
         now_h,
         data_fidelity="onsite_calibrated",
@@ -260,7 +264,8 @@ async def _ir_cwsi_unguarded(
         )
         return None
     if base.valid.clear_sky:
-        rs = weather.radiation_wm2 if _instantaneous(weather, "solar_radiation_wm2", reading_ts) else None
+        rs_value = _instant_value(weather, "solar_radiation_wm2", reading_ts)
+        rs = rs_value.value if rs_value else None
         clear = sky_clear(rs, coords[0], lon, reading_ts, _PARCEL_ELEVATION_M)
         if clear is False:
             logger.info(
@@ -286,19 +291,27 @@ _INSTANT_MAX_SKEW_S = 3600.0
 _PARCEL_ELEVATION_M = 0.0
 
 
-def _instantaneous(weather, var: str, reading_ts: float) -> bool:
-    """True when ``var`` of the snapshot is an instantaneous value usable with a reading at ``reading_ts``.
+def _instant_value(weather, var: str, reading_ts: float) -> InstantValue | None:
+    """The first candidate of ``var`` usable with a leaf reading at ``reading_ts``, or None.
 
-    A fresh parcel sensor (``iot_sensor``) qualifies; our hourly WeatherObserved
-    (``regional_proxy``) only with an observation time within an hour of the reading.
-    Weather-map and zone values are daily and never qualify.
+    Candidates come from ``weather.instantaneous`` (best first), never from the
+    precedence-resolved snapshot: a fresh open-field parcel sensor (``iot_sensor``)
+    qualifies; a WeatherObserved linked to the parcel (``regional_proxy``) only with an
+    observation time within an hour of the reading.
     """
-    fidelity = (getattr(weather, "fidelity", None) or {}).get(var)
-    observed = (getattr(weather, "observed_at_ts", None) or {}).get(var)
-    within = observed is not None and math.isfinite(observed) and abs(reading_ts - observed) <= _INSTANT_MAX_SKEW_S
-    if fidelity == "iot_sensor":
-        return observed is None or within
-    return fidelity == "regional_proxy" and within
+    for cand in (getattr(weather, "instantaneous", None) or {}).get(var, []):
+        if not math.isfinite(cand.value):
+            continue
+        observed = cand.observed_ts
+        within = (
+            observed is not None and math.isfinite(observed)
+            and abs(reading_ts - observed) <= _INSTANT_MAX_SKEW_S
+        )
+        if cand.source == "iot_sensor" and (observed is None or within):
+            return cand
+        if cand.source == "regional_proxy" and within:
+            return cand
+    return None
 
 
 def _resolve_depletion_fraction(crop_context) -> float:
@@ -726,7 +739,40 @@ async def _sensor_air_ctx(redis_state, tenant_id: str, parcel_id: str, now_ts: f
     )
     if rh is not None:
         ctx["rh_pct"] = rh
-    # The parcel's own open-field pyranometer (sky check of the CWSI), latest fresh reading.
+    ctx.update(await _open_field_pyranometer(redis_state, tenant_id, parcel_id, now_ts))
+    return ctx
+
+
+async def _cwsi_sensor_ctx(redis_state, tenant_id: str, parcel_id: str, now_ts: float) -> dict:
+    """Instantaneous air / RH / Rs for the open-field CWSI from the parcel's OPEN-FIELD sensors only.
+
+    Under-panel air and humidity are a different microclimate and never pair with an
+    open-field leaf reading (spec §14 R3); they stay pooled only in ``_sensor_air_ctx``.
+    """
+    ctx: dict = {}
+    temp = _mean_in_range(
+        await _read_parcel_readings(
+            redis_state, tenant_id, parcel_id, OPEN_FIELD, MetricType.AIR_TEMPERATURE.value, now_ts,
+        ),
+        *_AIR_TEMP_RANGE_C,
+    )
+    if temp is not None:
+        ctx["air_temp_c"] = temp
+    rh = _mean_in_range(
+        await _read_parcel_readings(
+            redis_state, tenant_id, parcel_id, OPEN_FIELD, MetricType.RELATIVE_HUMIDITY.value, now_ts,
+        ),
+        *_RH_RANGE_PCT,
+    )
+    if rh is not None:
+        ctx["rh_pct"] = rh
+    ctx.update(await _open_field_pyranometer(redis_state, tenant_id, parcel_id, now_ts))
+    return ctx
+
+
+async def _open_field_pyranometer(redis_state, tenant_id: str, parcel_id: str, now_ts: float) -> dict:
+    """The parcel's own open-field pyranometer (sky check of the CWSI), latest fresh reading."""
+    ctx: dict = {}
     pyr = [
         r for r in await _read_parcel_readings(
             redis_state, tenant_id, parcel_id, OPEN_FIELD, MetricType.SOLAR_RADIATION.value, now_ts,
@@ -1008,6 +1054,7 @@ async def trigger(
     meteo = await resolve_meteo_context(
         effective_parcel, tenant_id,
         sensor_ctx=await _sensor_air_ctx(redis_state, tenant_id, effective_parcel, now_ts),
+        instant_sensor_ctx=await _cwsi_sensor_ctx(redis_state, tenant_id, effective_parcel, now_ts),
         weather_map_fn=_weather_map_meteo,
         regional_fn=_regional_meteo,
     )
@@ -2007,6 +2054,7 @@ def _snapshot_from_meteo(meteo) -> WeatherSnapshot | None:
         radiation_wm2=getattr(meteo, "solar_radiation_wm2", None),
         fidelity=dict(getattr(meteo, "fidelity", {}) or {}),
         observed_at_ts=dict(getattr(meteo, "observed_at_ts", {}) or {}),
+        instantaneous=dict(getattr(meteo, "instantaneous", {}) or {}),
     )
 
 
@@ -2060,7 +2108,9 @@ async def _fetch_zone_daily(
 async def _regional_meteo(parcel_id: str, tenant_id: str) -> dict:
     """Regional fallback meteo from Orion WeatherObserved (fail-safe {}).
 
-    Queries the latest WeatherObserved for this parcel via Orion-LD.
+    Queries the latest WeatherObserved for this parcel via Orion-LD. Without one
+    linked to the parcel it falls back to the tenant's latest; ``parcel_linked`` says
+    which (the CWSI accepts only a linked observation; other users keep the fallback).
     Falls back to {} when no data exists or Orion is unreachable.
     """
     try:
@@ -2086,6 +2136,7 @@ async def _regional_meteo(parcel_id: str, tenant_id: str) -> dict:
                 headers=headers,
             )
             entities = resp.json() if resp.status_code == 200 else []
+            linked = bool(entities)
             # Fallback: latest WeatherObserved in the tenant
             if not entities:
                 resp = await cl.get(
@@ -2105,7 +2156,7 @@ async def _regional_meteo(parcel_id: str, tenant_id: str) -> dict:
             return {}
 
         wo = entities[0]
-        out: dict = {}
+        out: dict = {"parcel_linked": linked}
         # The platform context maps temperature/airTemperature (and
         # humidity/relativeHumidity) to one IRI; compaction picks either alias.
         temp = wo.get("temperature")

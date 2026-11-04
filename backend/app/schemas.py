@@ -560,6 +560,9 @@ class CropHealthAssessment(BaseModel):
     # Where the stage flags behind the level came from: "gdd" (GDD-derived stage) or
     # "gdd_ndvi" (post-maturity: GDD gate plus NDVI end of season); None = no stage flags.
     water_stress_phase_basis: Literal["gdd", "gdd_ndvi"] | None = None
+    # Stage flags behind the level (internal; never serialised): zones re-resolve their
+    # level with them once the parcel balance exists.
+    water_stress_stage_flags: StageWaterFlags | None = None
     # ── Zone (management-zone) context ──
     # When set, the assessment represents a single AgriParcelZone of the parcel
     # and is serialised via ``to_zone_ngsi_ld`` under the SEPARATE

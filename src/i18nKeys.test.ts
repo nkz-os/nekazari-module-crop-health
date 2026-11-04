@@ -79,3 +79,14 @@ describe('water stress strings parity', () => {
     });
   }
 });
+
+describe('water stress strings', () => {
+  for (const [lang, res] of Object.entries(resources)) {
+    it(`${lang} translates the water stress detail strings`, () => {
+      const ns = (res as any)['crop-health'];
+      expect(typeof ns.detail.hints.ksHigh).toBe('string');
+      expect(typeof ns.waterStress.technician.parcelBalance).toBe('string');
+      if (lang !== 'en') expect(ns.detail.waterStress).not.toBe('Water stress');
+    });
+  }
+});

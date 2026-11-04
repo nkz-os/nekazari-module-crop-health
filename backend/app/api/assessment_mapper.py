@@ -21,6 +21,13 @@ def datetime_value(entity: dict[str, Any], key: str) -> str | None:
     return val if isinstance(val, str) and val else None
 
 
+def _as_list(value: Any) -> list:
+    """Orion compacts a one-element array to its value: read it back as a list."""
+    if isinstance(value, list):
+        return value
+    return [value] if value else []
+
+
 def extract_parcel_id(entity: dict[str, Any]) -> str:
     ref = entity.get("hasAgriParcel") or entity.get("refAgriParcel")
     if isinstance(ref, dict):
@@ -223,6 +230,7 @@ def map_entity_to_assessment(entity: dict[str, Any]) -> dict[str, Any]:
         "cwsiDataFidelity": prop_value(entity, "cwsiDataFidelity"),
         "cwsiTempSource": prop_value(entity, "cwsiTempSource"),
         "cwsiLstDate": prop_value(entity, "cwsiLstDate"),
+        "vpdKpa": prop_value(entity, "vpdKpa"),
         "temperatureMeta": {
             "source": prop_value(entity, "cwsiTempSource", "none"),
             "fidelity": prop_value(entity, "cwsiDataFidelity", "unavailable"),
@@ -285,7 +293,7 @@ def map_entity_to_assessment(entity: dict[str, Any]) -> dict[str, Any]:
         "waterStressLevel": prop_value(entity, "waterStressLevel"),
         "waterStressMethod": prop_value(entity, "waterStressMethod"),
         "waterStressPhaseNote": prop_value(entity, "waterStressPhaseNote"),
-        "waterStressReferenceSources": prop_value(entity, "waterStressReferenceSources", []),
+        "waterStressReferenceSources": _as_list(prop_value(entity, "waterStressReferenceSources")),
         "waterStressPhaseBasis": prop_value(entity, "waterStressPhaseBasis"),
         "cwsiBaselineId": prop_value(entity, "cwsiBaselineId"),
         "waterStressIndex": prop_value(entity, "waterStressIndex"),

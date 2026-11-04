@@ -70,6 +70,14 @@ describe('water stress indicator', () => {
   it('shows no number for the level', () => {
     expect(lvl({ waterStressLevel: 'high', cwsiValue: 0.77 })).not.toContain('0.77');
   });
+  it('shows the deficit chip neutral, never red, in a stage that needs no water', () => {
+    const chip = (h: string) => (h.match(/<span class="([^"]*)">💧 20\.0mm deficit<\/span>/) ?? [])[1] ?? '';
+    const neutral = chip(lvl({ waterStressLevel: 'not_needed', waterBalanceDeficit: -20 }));
+    expect(neutral).toContain('text-nkz-text-secondary');
+    expect(neutral).not.toContain('danger');
+    expect(neutral).not.toContain('warning');
+    expect(chip(lvl({ waterStressLevel: 'high', waterBalanceDeficit: -20 }))).toContain('text-nkz-danger-strong');
+  });
 });
 
 describe('header job text', () => {

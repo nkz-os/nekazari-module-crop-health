@@ -82,6 +82,21 @@ function upperText(b: WaterStressBaseline): string {
   return '—';
 }
 
+/**
+ * Hints under the recommendation. A high level names the method that decided it (CWSI
+ * or the balance's Ks); a stage that needs no water gets no deficit hint.
+ */
+export function recommendationHints(assessment: AssessmentData, t: TFunction): string {
+  const level = normalizeLevel(assessment.waterStressLevel);
+  const out: string[] = [];
+  if (level === 'high') out.push(t(assessment.waterStressMethod === 'cwsi_sensor' ? 'detail.hints.cwsiHigh' : 'detail.hints.ksHigh'));
+  if (assessment.mdsSeverity === 'CRITICAL') out.push(t('detail.hints.mdsCritical'));
+  if (level !== 'not_needed' && assessment.waterBalanceDeficit != null && assessment.waterBalanceDeficit < -5) {
+    out.push(t('detail.hints.deficit'));
+  }
+  return out.map((h) => `${h} `).join('');
+}
+
 /** Technician detail of the water-stress level: method, value, VPD, baselines served and their sources. */
 const WaterStressTechnician: React.FC<{
   assessment: AssessmentData;
@@ -102,8 +117,16 @@ const WaterStressTechnician: React.FC<{
   const baselines = usedId
     ? (phenology?.water_stress_reference?.baselines ?? []).filter((b) => b.id === usedId)
     : [];
-  const wanted = assessment.waterStressReferenceSources ?? [];
-  const citations = (phenology?.water_stress_reference?.citations ?? []).filter((c) => wanted.includes(c.sourceId));
+  // Orion compacts a one-element array to its value: read it back as a list.
+  const rawSources: unknown = assessment.waterStressReferenceSources;
+  const wanted: string[] = Array.isArray(rawSources)
+    ? rawSources
+    : typeof rawSources === 'string' && rawSources ? [rawSources] : [];
+  // The balance method is FAO-56's Ks: cite it whenever the balance decided the level.
+  const cited = (id: string) => wanted.includes(id) || (method === 'balance' && id === 'fao56');
+  const citations = (phenology?.water_stress_reference?.citations ?? []).filter((c) => cited(c.sourceId));
+  // Zones have no Ks of their own: their balance level is the parcel's.
+  const zoneOfParcelBalance = method === 'balance' && Boolean((assessment as { zoneId?: string | null }).zoneId);
   return (
     <MetricSection>
       <span className="text-xs text-nkz-text-secondary font-medium uppercase tracking-wider block mb-1">
@@ -115,6 +138,9 @@ const WaterStressTechnician: React.FC<{
         </Badge>
         <span className="text-xs text-nkz-text-muted">{t(`waterStress.method.${method ?? 'none'}`)}</span>
       </div>
+      {zoneOfParcelBalance && (
+        <p className="text-xs text-nkz-text-muted mb-1">{t('waterStress.technician.parcelBalance')}</p>
+      )}
       <div className="grid grid-cols-2 gap-1 text-xs">
         <div><span className="text-nkz-text-muted">{valueLabel}</span><br /><strong className="text-nkz-text-primary">{num2(value)}</strong></div>
         {assessment.vpdKpa != null && (
@@ -581,9 +607,7 @@ const CropHealthDetailTabs: React.FC<CropHealthDetailTabsProps> = ({
               {t(actionLabels[assessment.recommendedAction] || assessment.recommendedAction)}
             </strong>
             <p className="text-xs text-nkz-text-muted mt-0.5">
-              {normalizeLevel(assessment.waterStressLevel) === 'high' && `${t('detail.hints.cwsiHigh')} `}
-              {assessment.mdsSeverity === 'CRITICAL' && `${t('detail.hints.mdsCritical')} `}
-              {assessment.waterBalanceDeficit != null && assessment.waterBalanceDeficit < -5 && `${t('detail.hints.deficit')} `}
+              {recommendationHints(assessment, t as TFunction)}
               {t('contextPanel.basedOn', {
                 source: assessment.phenologySource === 'bioorchestrator' ? t('contextPanel.specificParams') : t('contextPanel.genericParams'),
               })}.

@@ -507,6 +507,51 @@ def _refresh_rollup_level(
     rollup.recommended_action = _determine_action(new_sev)
 
 
+def _apply_parcel_balance_to_zones(
+    zone_results: list[CropHealthAssessment], rollup: CropHealthAssessment, phenology,
+) -> None:
+    """Zones carry no Ks of their own: a zone with no level method (no CWSI) takes the
+    parcel's balance level, resolved with the zone's own stage flags (method ``balance``).
+
+    Severity and action of the zone follow the new level as on the rollup. No parcel
+    Ks leaves the zones as they are (``no_data``).
+    """
+    ws = rollup.water_stress
+    if ws is None or ws.index is None:
+        return
+    ref = getattr(phenology, "water_stress_reference", None) if phenology else None
+    for z in zone_results:
+        ind = z.water_stress_indicator
+        if ind is not None and ind.method != "none":
+            continue
+        z.water_stress_indicator = resolve_indicator(
+            None, ws, z.water_stress_stage_flags, reference=ref,
+        )
+        new_sev = _determine_overall_severity(z)
+        if z.water_stress_indicator.level != "not_needed":
+            new_sev = max(new_sev, z.overall_severity, key=_SEV_RANK.__getitem__)
+        z.overall_severity = new_sev
+        z.recommended_action = _determine_action(new_sev)
+
+
+def _crop_requirements(rollup: CropHealthAssessment):
+    """Irrigation need from the soil water balance; none in a stage that needs no water."""
+    from app.schemas import CropRequirements
+
+    irrigation_mm = None
+    water_deficit_mm = None
+    swb = rollup.soil_water_balance
+    if swb:
+        water_deficit_mm = swb.deficit_mm
+        not_needed = (
+            rollup.water_stress_indicator is not None
+            and rollup.water_stress_indicator.level == "not_needed"
+        )
+        if swb.stress_level in ("high", "critical") and not not_needed:
+            irrigation_mm = water_deficit_mm
+    return CropRequirements(irrigation_mm=irrigation_mm, water_deficit_mm=water_deficit_mm)
+
+
 _SEV_RANK = {Severity.LOW: 0, Severity.MEDIUM: 1, Severity.HIGH: 2, Severity.CRITICAL: 3}
 
 
@@ -1117,7 +1162,6 @@ async def trigger(
             **{k: v for k, v in used_fidelity.items() if v in _KNOWN_FIDELITIES},
         }
         zone_results.append(a)
-        await _publish_assessment(a.to_zone_ngsi_ld(), tenant_id)
 
     if not zone_results:
         logger.warning("trigger: all zones failed for %s — no assessment", effective_parcel)
@@ -1132,6 +1176,9 @@ async def trigger(
         shade_observed_at,
     )
     _refresh_rollup_level(rollup, phenology, zone_results, parcel_gdd=gdd, stage_table=stage_table)
+    _apply_parcel_balance_to_zones(zone_results, rollup, phenology)
+    for a in zone_results:
+        await _publish_assessment(a.to_zone_ngsi_ld(), tenant_id)
     rollup_entity = rollup.to_ngsi_ld()
     if await _publish_assessment(rollup_entity, tenant_id):
         await _clear_stale_water_stress(rollup_entity, tenant_id)
@@ -1299,6 +1346,7 @@ async def _run_engines(
         zone_urn=zone_urn, season_start=season_start or assessment.season_start, now=now,
         cache=day_store,
     )
+    assessment.water_stress_stage_flags = _stage_flags
     assessment.water_stress_indicator = resolve_indicator(
         assessment.cwsi, assessment.water_stress, _stage_flags, reference=_ref,
     )
@@ -1738,6 +1786,13 @@ async def _emit_assessment_side_effects(
     """
     effective_parcel = assessment.parcel_id
     # ── 5. Publish to platform event bus ─────────────────────────────
+    # The single water-stress level travels with the events (additive keys).
+    indicator = getattr(assessment, "water_stress_indicator", None)
+    water_fields = {
+        "water_stress_level": indicator.level if indicator else "no_data",
+        "water_stress_method": indicator.method if indicator else "none",
+        "water_stress_phase_note": indicator.phase_note if indicator else None,
+    }
     try:
         event = {
             "event_type": "crop.assessment.completed",
@@ -1749,6 +1804,7 @@ async def _emit_assessment_side_effects(
             "overall_severity": assessment.overall_severity.value,
             "recommended_action": assessment.recommended_action.value,
             "phenology_source": assessment.phenology_source,
+            **water_fields,
             "timestamp": now.isoformat(),
         }
         await _publish_redis_event("crop:events", event)
@@ -1761,6 +1817,7 @@ async def _emit_assessment_side_effects(
                 "stage": stage_name,
                 "overall_severity": assessment.overall_severity.value,
                 "recommended_action": assessment.recommended_action.value,
+                **water_fields,
                 "timestamp": now.isoformat(),
             }
             await _publish_redis_event("crop:events", breach)
@@ -2586,8 +2643,6 @@ async def compute_assessment(
             logger.warning("compute_assessment: zone %s failed for %s — skipped: %s", z.zone_id, parcel_short, exc)
             continue
         zone_results.append(za)
-        if not whole:
-            await _publish_assessment(za.to_zone_ngsi_ld(), tenant_id)
 
     if not zone_results:
         logger.warning("compute_assessment: all zones failed for %s — no assessment", parcel_short)
@@ -2608,21 +2663,13 @@ async def compute_assessment(
         rollup, phenology, zone_results,
         parcel_gdd=crop_ctx["gdd"], stage_table=crop_ctx["thresholds"],
     )
+    if not whole:
+        _apply_parcel_balance_to_zones(zone_results, rollup, phenology)
+        for za in zone_results:
+            await _publish_assessment(za.to_zone_ngsi_ld(), tenant_id)
 
-    from app.schemas import CropRequirements
-
-    # Derive irrigation need from soil_water_balance
-    irrigation_mm = None
-    water_deficit_mm = None
-    if rollup.soil_water_balance:
-        water_deficit_mm = rollup.soil_water_balance.deficit_mm
-        if rollup.soil_water_balance.stress_level in ("high", "critical"):
-            irrigation_mm = water_deficit_mm
-
-    rollup.crop_requirements = CropRequirements(
-        irrigation_mm=irrigation_mm,
-        water_deficit_mm=water_deficit_mm,
-    )
+    # Irrigation need from the soil water balance (none in a stage that needs no water).
+    rollup.crop_requirements = _crop_requirements(rollup)
 
     # Surface the committed crop's soil-suitability verdict on the scheduled path
     # too (same source as trigger(); cached 1h, circuit-breaker → None is safe).

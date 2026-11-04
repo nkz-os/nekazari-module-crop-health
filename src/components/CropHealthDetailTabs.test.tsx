@@ -9,7 +9,7 @@ vi.mock('./YieldForecastSection', () => ({ default: () => null }));
 vi.mock('./CropHealthRisksPanel', () => ({ default: () => <i>risks-panel</i> }));
 vi.mock('./ZoneHealthPanel', () => ({ default: () => null }));
 
-import CropHealthDetailTabs, { formatBaselineC } from './CropHealthDetailTabs';
+import CropHealthDetailTabs, { formatBaselineC, recommendationHints } from './CropHealthDetailTabs';
 
 const render = (extra: Record<string, unknown>) =>
   renderToStaticMarkup(
@@ -154,6 +154,39 @@ describe('CropHealthDetailTabs technician water stress block', () => {
     const h = withBlock({ waterStressLevel: 'moderate', waterStressMethod: 'balance', waterStressIndex: 0.3 });
     expect(h).toContain('waterStress.method.balance');
     expect(h).toContain('0.70');
+  });
+  it('reads a single source id compacted by Orion as a list', () => {
+    const h = withBlock({ waterStressLevel: 'mild', waterStressMethod: 'cwsi_sensor', waterStressReferenceSources: 'src1' });
+    expect(h).toContain('Author (2019)');
+    expect(h).not.toContain('Other (2020)');
+    // a compacted id is matched whole, never as a substring
+    expect(withBlock({ waterStressLevel: 'mild', waterStressMethod: 'cwsi_sensor', waterStressReferenceSources: 'src12' })).not.toContain('Author (2019)');
+  });
+  it('cites FAO-56 for the balance method', () => {
+    const ph = { water_stress_reference: { ...phenology.water_stress_reference, citations: [
+      ...phenology.water_stress_reference.citations, { sourceId: 'fao56', text: 'Allen et al. (1998) FAO-56' },
+    ] } };
+    const r = (extra: Record<string, unknown>) => renderToStaticMarkup(
+      <CropHealthDetailTabs parcelId="p1" assessment={{ parcelId: 'p1', overallSeverity: 'LOW', ...extra } as never}
+        phenology={ph as never} trend={[]} correlation={[]} correlationStats={null} />,
+    );
+    expect(r({ waterStressLevel: 'mild', waterStressMethod: 'balance', waterStressReferenceSources: [] })).toContain('Allen et al. (1998) FAO-56');
+    expect(r({ waterStressLevel: 'mild', waterStressMethod: 'cwsi_sensor', waterStressReferenceSources: ['src1'] })).not.toContain('FAO-56');
+  });
+  it('says a zone level comes from the parcel balance', () => {
+    expect(withBlock({ zoneId: 'z1', waterStressLevel: 'mild', waterStressMethod: 'balance' })).toContain('waterStress.technician.parcelBalance');
+    expect(withBlock({ waterStressLevel: 'mild', waterStressMethod: 'balance' })).not.toContain('waterStress.technician.parcelBalance');
+    expect(withBlock({ zoneId: 'z1', waterStressLevel: 'mild', waterStressMethod: 'cwsi_sensor' })).not.toContain('waterStress.technician.parcelBalance');
+  });
+  it('gives the hint of the method behind a high level, and no deficit hint when water is not needed', () => {
+    const hints = (extra: Record<string, unknown>) =>
+      recommendationHints({ parcelId: 'p1', overallSeverity: 'LOW', ...extra } as never, ((k: string) => k) as never);
+    expect(hints({ waterStressLevel: 'high', waterStressMethod: 'cwsi_sensor' })).toContain('detail.hints.cwsiHigh');
+    const ks = hints({ waterStressLevel: 'high', waterStressMethod: 'balance' });
+    expect(ks).toContain('detail.hints.ksHigh');
+    expect(ks).not.toContain('detail.hints.cwsiHigh');
+    expect(hints({ waterStressLevel: 'not_needed', waterStressMethod: 'balance', waterBalanceDeficit: -20 })).not.toContain('detail.hints.deficit');
+    expect(hints({ waterStressLevel: 'mild', waterStressMethod: 'balance', waterBalanceDeficit: -20 })).toContain('detail.hints.deficit');
   });
   it('renders the phase basis only when present', () => {
     expect(withBlock({ waterStressLevel: 'mild', waterStressMethod: 'balance', waterStressPhaseBasis: 'gdd_ndvi' })).toContain('waterStress.phaseBasis.gdd_ndvi');

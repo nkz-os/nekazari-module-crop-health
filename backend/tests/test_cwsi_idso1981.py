@@ -4,6 +4,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 import pytest
+from pydantic import ValidationError
 
 from app.engines.water_stress import (
     cwsi_from_baseline,
@@ -76,9 +77,49 @@ def test_missing_latitude_gives_no_cwsi():
     assert daylight_window_solar_hours(float("nan"), _ts(6, 21), 3, 3) is None
 
 
-def test_explicit_hours_keep_priority():
-    b = _row(valid={"solarHourFrom": 11, "solarHourTo": 13, "hoursAfterSunrise": 3, "clearSky": False})
-    assert in_solar_window(b, 12.0) and not in_solar_window(b, 13.0)
+def test_hours_cannot_mix_with_explicit_solar_hours():
+    with pytest.raises(ValidationError):
+        _row(valid={"solarHourFrom": 11, "solarHourTo": 13, "hoursAfterSunrise": 3,
+                    "hoursBeforeSunset": 3, "clearSky": False})
+    with pytest.raises(ValidationError):
+        _row(valid={"solarHourFrom": 11, "hoursAfterSunrise": 3, "hoursBeforeSunset": 3,
+                    "clearSky": False})
+
+
+@pytest.mark.parametrize("only", ["hoursAfterSunrise", "hoursBeforeSunset"])
+def test_hours_must_come_in_pairs(only):
+    with pytest.raises(ValidationError):
+        _row(valid={only: 3, "clearSky": False})
+
+
+def test_collapsed_window_is_none():
+    # 12 h day at the equinox, 7 h + 7 h trimmed -> lo >= hi
+    assert daylight_window_solar_hours(0.0, _ts(3, 21), 7, 7) is None
+
+
+def test_60n_december_window_collapses_no_cwsi():
+    # ~5.5 h of daylight: 3 h after sunrise + 3 h before sunset leaves nothing.
+    assert daylight_window_solar_hours(60.0, _ts(12, 21), 3, 3) is None
+    b = _row(valid={"hoursAfterSunrise": 3, "hoursBeforeSunset": 3, "clearSky": False})
+    assert cwsi_from_baseline(30.0, 35.0, 20.0, b, 12.0, lat_deg=60.0, ts_unix=_ts(12, 21)) is None
+
+
+@pytest.mark.parametrize("month", [6, 12])
+def test_70n_polar_day_and_night_no_window_no_crash(month):
+    assert daylight_window_solar_hours(70.0, _ts(month, 21), 3, 3) is None
+    b = _row(valid={"hoursAfterSunrise": 3, "hoursBeforeSunset": 3, "clearSky": False})
+    assert not in_solar_window(b, 12.0, 70.0, _ts(month, 21))
+    assert cwsi_from_baseline(30.0, 35.0, 20.0, b, 12.0, lat_deg=70.0, ts_unix=_ts(month, 21)) is None
+
+
+def test_missing_latitude_logs_a_distinct_line_without_tenant(caplog):
+    import logging
+    b = _row(valid={"hoursAfterSunrise": 3, "hoursBeforeSunset": 3, "clearSky": False})
+    with caplog.at_level(logging.INFO):
+        assert not in_solar_window(b, 12.0, None, _ts(6, 21))
+    msgs = [r.getMessage() for r in caplog.records]
+    assert any("daylight window cannot be evaluated: latitude or time missing" in m for m in msgs)
+    assert not any("tenant" in m for m in msgs)
 
 
 def test_bioorch_payload_parses_and_selects():

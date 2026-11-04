@@ -13,11 +13,14 @@ References:
 
 from __future__ import annotations
 
+import logging
 import math
 import re
 from datetime import datetime, timezone
 
 from app.schemas import CWSIResult, CwsiBaseline, WaterStressReference
+
+logger = logging.getLogger(__name__)
 
 # Plausible window (degC) for canopy-minus-air temperature baselines (NWSB d1,
 # stress limit d2). Values outside it are not temperatures (e.g. stage day
@@ -331,7 +334,9 @@ def daylight_window_solar_hours(
     """Solar-hour window [12 - N/2 + after, 12 + N/2 - before], N = 24 * ws / pi.
 
     ws is the sunset hour angle (FAO-56 eq. 25) with the declination of eq. 24 for the
-    day of the year of ``ts_unix`` (UTC). None when the latitude is unusable.
+    day of the year of ``ts_unix`` (UTC). None when the latitude is unusable, in polar
+    day or night (|tan(lat) * tan(decl)| >= 1: no sunrise/sunset to count from) or when
+    the trimmed window collapses (lo >= hi): the Idso 1981 rule has no meaning there.
     """
     if (
         isinstance(lat_deg, bool) or not isinstance(lat_deg, (int, float))
@@ -340,12 +345,16 @@ def daylight_window_solar_hours(
         return None
     j = datetime.fromtimestamp(ts_unix, tz=timezone.utc).timetuple().tm_yday
     delta = 0.409 * math.sin(2 * math.pi * j / 365 - 1.39)  # eq. 24
-    ws = math.acos(max(-1.0, min(1.0, -math.tan(math.radians(lat_deg)) * math.tan(delta))))
+    x = -math.tan(math.radians(lat_deg)) * math.tan(delta)
+    if abs(x) >= 1.0:
+        return None  # polar day or night
+    ws = math.acos(x)
     half_day_h = 12 * ws / math.pi  # N / 2
-    return (
-        12 - half_day_h + float(hours_after_sunrise),
-        12 + half_day_h - float(hours_before_sunset),
-    )
+    lo = 12 - half_day_h + float(hours_after_sunrise)
+    hi = 12 + half_day_h - float(hours_before_sunset)
+    if lo >= hi:
+        return None
+    return (lo, hi)
 
 
 def in_solar_window(
@@ -362,6 +371,9 @@ def in_solar_window(
     after, before = b.valid.hours_after_sunrise, b.valid.hours_before_sunset
     if lo is None and hi is None and (after is not None or before is not None):
         if lat_deg is None or ts_unix is None:
+            logger.info(
+                "daylight window cannot be evaluated: latitude or time missing baseline=%s", b.id,
+            )
             return False
         win = daylight_window_solar_hours(lat_deg, ts_unix, after or 0.0, before or 0.0)
         if win is None:

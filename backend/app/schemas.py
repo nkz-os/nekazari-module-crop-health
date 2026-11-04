@@ -166,6 +166,17 @@ class ValidWindow(_RefModel):
     hours_before_sunset: _Num | None = Field(None, alias="hoursBeforeSunset", ge=0)
     clear_sky: StrictBool = Field(..., alias="clearSky")
 
+    @model_validator(mode="after")
+    def _daylight_hours_are_a_pair_and_exclusive(self) -> "ValidWindow":
+        after, before = self.hours_after_sunrise, self.hours_before_sunset
+        if (after is None) != (before is None):
+            raise ValueError("hoursAfterSunrise and hoursBeforeSunset must be given together")
+        if after is not None and (
+            self.solar_hour_from is not None or self.solar_hour_to is not None
+        ):
+            raise ValueError("hoursAfterSunrise/hoursBeforeSunset cannot combine with solarHourFrom/To")
+        return self
+
 
 class CwsiBaseline(_RefModel):
     """Non-water-stressed baseline: (Tc - Ta) = a0 + a1 * VPD."""

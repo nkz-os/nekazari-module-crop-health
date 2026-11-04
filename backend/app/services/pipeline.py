@@ -727,23 +727,25 @@ def _mean_in_range(readings: list, lo: float, hi: float) -> float | None:
     return sum(vals) / len(vals) if vals else None
 
 
-async def _sensor_air_ctx(redis_state, tenant_id: str, parcel_id: str, now_ts: float) -> dict:
-    """Air temperature / RH from fresh parcel sensors, in the shape resolve_meteo_context expects."""
+async def _air_rh_ctx(read, redis_state, tenant_id: str, parcel_id: str, now_ts: float) -> dict:
+    """Mean air temperature / RH of the readings ``read(metric)`` returns, plus the open-field pyranometer."""
     ctx: dict = {}
-    temp = _mean_in_range(
-        await _read_pooled(redis_state, tenant_id, parcel_id, MetricType.AIR_TEMPERATURE.value, now_ts),
-        *_AIR_TEMP_RANGE_C,
-    )
+    temp = _mean_in_range(await read(MetricType.AIR_TEMPERATURE.value), *_AIR_TEMP_RANGE_C)
     if temp is not None:
         ctx["air_temp_c"] = temp
-    rh = _mean_in_range(
-        await _read_pooled(redis_state, tenant_id, parcel_id, MetricType.RELATIVE_HUMIDITY.value, now_ts),
-        *_RH_RANGE_PCT,
-    )
+    rh = _mean_in_range(await read(MetricType.RELATIVE_HUMIDITY.value), *_RH_RANGE_PCT)
     if rh is not None:
         ctx["rh_pct"] = rh
     ctx.update(await _open_field_pyranometer(redis_state, tenant_id, parcel_id, now_ts))
     return ctx
+
+
+async def _sensor_air_ctx(redis_state, tenant_id: str, parcel_id: str, now_ts: float) -> dict:
+    """Air temperature / RH from fresh parcel sensors, in the shape resolve_meteo_context expects."""
+    async def read(metric: str) -> list:
+        return await _read_pooled(redis_state, tenant_id, parcel_id, metric, now_ts)
+
+    return await _air_rh_ctx(read, redis_state, tenant_id, parcel_id, now_ts)
 
 
 async def _cwsi_sensor_ctx(redis_state, tenant_id: str, parcel_id: str, now_ts: float) -> dict:
@@ -752,25 +754,10 @@ async def _cwsi_sensor_ctx(redis_state, tenant_id: str, parcel_id: str, now_ts: 
     Under-panel air and humidity are a different microclimate and never pair with an
     open-field leaf reading (spec §14 R3); they stay pooled only in ``_sensor_air_ctx``.
     """
-    ctx: dict = {}
-    temp = _mean_in_range(
-        await _read_parcel_readings(
-            redis_state, tenant_id, parcel_id, OPEN_FIELD, MetricType.AIR_TEMPERATURE.value, now_ts,
-        ),
-        *_AIR_TEMP_RANGE_C,
-    )
-    if temp is not None:
-        ctx["air_temp_c"] = temp
-    rh = _mean_in_range(
-        await _read_parcel_readings(
-            redis_state, tenant_id, parcel_id, OPEN_FIELD, MetricType.RELATIVE_HUMIDITY.value, now_ts,
-        ),
-        *_RH_RANGE_PCT,
-    )
-    if rh is not None:
-        ctx["rh_pct"] = rh
-    ctx.update(await _open_field_pyranometer(redis_state, tenant_id, parcel_id, now_ts))
-    return ctx
+    async def read(metric: str) -> list:
+        return await _read_parcel_readings(redis_state, tenant_id, parcel_id, OPEN_FIELD, metric, now_ts)
+
+    return await _air_rh_ctx(read, redis_state, tenant_id, parcel_id, now_ts)
 
 
 async def _open_field_pyranometer(redis_state, tenant_id: str, parcel_id: str, now_ts: float) -> dict:
@@ -1314,7 +1301,7 @@ async def _run_engines(
     if (
         metric_type == MetricType.LEAF_TEMPERATURE.value
         and weather
-        and weather.humidity_pct is not None  # no RH, no VPD, no CWSI
+        and weather.instantaneous.get("rh_pct")  # no instantaneous RH, no VPD, no CWSI
         and not from_under_panel
     ):
         readings = await redis_state.get_window(entity_id, "leafTemperature", hours=1)

@@ -81,7 +81,7 @@ async def test_unlinked_tenant_observation_never_gives_cwsi(monkeypatch, caplog)
         a = await _cwsi_run(monkeypatch, regional=regional)
     assert a.cwsi is None
     assert a.water_stress_indicator.method != "cwsi_sensor"
-    assert any("CWSI skipped: air not instantaneous" in r.getMessage() for r in caplog.records)
+    # The trigger gate (no instantaneous RH) stops it before the helper logs.
 
 
 @pytest.mark.asyncio
@@ -211,3 +211,43 @@ async def test_resolver_instant_candidates_sensor_first_linked_only():
     ctx = await resolve_meteo_context("p", "t", weather_map_fn=_wm, regional_fn=_unlinked)
     assert ctx.instantaneous == {}
     assert ctx.air_temp_c == 28.0 and ctx.rh_pct == 25.0
+
+
+# ── trigger gate reads the instantaneous RH, not the snapshot RH ────────────
+
+def _rewrite_snapshot(monkeypatch, **changes):
+    real = pipeline._snapshot_from_meteo
+
+    def wrapped(meteo):
+        snap = real(meteo)
+        if snap is None:
+            return snap
+        inst = dict(snap.instantaneous)
+        if changes.pop("drop_inst_rh", False):
+            inst.pop("rh_pct", None)
+        return snap.model_copy(update={**changes, "instantaneous": inst})
+
+    monkeypatch.setattr(pipeline, "_snapshot_from_meteo", wrapped)
+
+
+@pytest.mark.asyncio
+async def test_gate_uses_instantaneous_rh_when_snapshot_rh_missing(monkeypatch):
+    _rewrite_snapshot(monkeypatch, humidity_pct=None)
+    a = await _cwsi_run(monkeypatch, regional=dict(_LINKED))
+    assert a.cwsi is not None
+
+
+@pytest.mark.asyncio
+async def test_gate_blocks_when_only_snapshot_rh_exists(monkeypatch):
+    calls = []
+    real = pipeline._ir_cwsi_from_baseline
+
+    async def spy(*a, **k):
+        calls.append(1)
+        return await real(*a, **k)
+
+    monkeypatch.setattr(pipeline, "_ir_cwsi_from_baseline", spy)
+    _rewrite_snapshot(monkeypatch, drop_inst_rh=True)
+    a = await _cwsi_run(monkeypatch, regional=dict(_LINKED))
+    assert a.cwsi is None
+    assert calls == []

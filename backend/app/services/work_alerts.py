@@ -11,7 +11,7 @@ from datetime import date, datetime, timezone
 
 from nkz_platform_sdk.orion import OrionClient
 
-from app.api.assessments import _query_paged, build_parcel_rows
+from app.api.assessments import ORION_MAX_PAGES, ORION_PAGE_SIZE, build_parcel_rows
 from app.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -27,6 +27,11 @@ _TEXTS = {
         "es": ("Toca regar {parcel}", "Según el balance de agua, hoy conviene regar."),
         "eu": ("{parcel} ureztatzeko ordua da", "Ur-balantzearen arabera, gaur ureztatzea komeni da."),
         "en": ("Time to irrigate {parcel}", "Based on the water balance, irrigating today is advisable."),
+    },
+    "sow_plain": {
+        "es": ("Toca sembrar en {parcel}", "Las condiciones son buenas para sembrar."),
+        "eu": ("{parcel} lursailean ereiteko ordua da", "Baldintzak onak dira ereiteko."),
+        "en": ("Time to sow in {parcel}", "Conditions are good for sowing."),
     },
     "sow": {
         "es": ("Toca sembrar {crop} en {parcel}", "Las condiciones son buenas para sembrar."),
@@ -65,16 +70,36 @@ def _crop_name(row: dict, detail: dict, lang: str) -> str:
     return names.get(lang) or detail.get("crop") or planned.get("species") or ""
 
 
+def _parcel_label(row: dict) -> str:
+    """The parcel's name; the short id when it has none (the row falls back to the full id).
+
+    ASSUMPTION: the short form is the first 8 characters of the parcel id.
+    """
+    pid = str(row.get("parcelId") or "")
+    name = str(row.get("parcelName") or "")
+    return name if name and name != pid else pid[:8]
+
+
+def _human_date(detail: dict, when: str | None) -> str:
+    raw = str(detail.get("date") or (when if when and when != "today" else "") or "")[:10]
+    try:
+        return date.fromisoformat(raw).strftime("%d/%m/%Y")
+    except ValueError:
+        return raw
+
+
 def _plain(kind: str, row: dict, detail: dict, when: str | None) -> dict:
     key = kind
-    if kind == "treat" and not detail.get("disease"):
+    disease = str(detail.get("disease") or "")
+    # A bare code (snake_case) is not a name a farmer reads: use the nameless wording.
+    if kind == "treat" and (not disease or "_" in disease):
         key = "treat_plain"
-    harvest_date = str(detail.get("date") or (when if when and when != "today" else "") or "")[:10]
+    if kind == "sow" and not _crop_name(row, detail, "es"):
+        key = "sow_plain"
     out = {}
     for lang, (title, body) in _TEXTS[key].items():
-        fields = {"parcel": row.get("parcelName") or row.get("parcelId"),
-                  "crop": _crop_name(row, detail, lang),
-                  "disease": detail.get("disease") or "", "date": harvest_date}
+        fields = {"parcel": _parcel_label(row), "crop": _crop_name(row, detail, lang),
+                  "disease": disease, "date": _human_date(detail, when)}
         out[lang] = {"title": title.format(**fields), "body": body.format(**fields)}
     return out
 
@@ -101,6 +126,7 @@ def build_work_alert(tenant_id: str, row: dict, today: date) -> dict | None:
     due_now = when == "today" and kind in VIBRATING
     parcel = row["parcelId"]
     urn = PARCEL_URN + parcel
+    # ASSUMPTION: harvest opens the parcel (nothing to record yet) — owner ruling, confirm in review.
     action = ({"kind": "open_parcel", "params": {"parcelId": urn}} if kind == "harvest"
               else {"kind": "record_operation", "params": {"parcelId": urn, "kind": kind}})
     return {
@@ -125,29 +151,54 @@ def _v(value):
     return value.get("value") if isinstance(value, dict) and "value" in value else value
 
 
-async def _active_work_alerts(client: OrionClient) -> list[dict]:
-    """Active `work_*` Alerts of the tenant. Filtered here: it needs no Orion pattern support."""
-    rows = await _query_paged(client, type="Alert", options="keyValues")
+async def _active_work_alerts(client: OrionClient, tenant_id: str) -> list[dict]:
+    """Active `work_*` Alerts of the tenant.
+
+    Orion filters `status`; the id prefix is checked here because the SDK's
+    query_entities has no idPattern. Reaching the page cap raises: a truncated list
+    would make the job re-emit or skip alerts silently.
+    """
+    prefix = f"urn:ngsi-ld:Alert:{tenant_id}:{ALERT_PREFIX}"
+    rows: list[dict] = []
+    for page in range(ORION_MAX_PAGES):
+        batch = await client.query_entities(type="Alert", q='status=="active"', options="keyValues",
+                                            limit=ORION_PAGE_SIZE, offset=page * ORION_PAGE_SIZE)
+        rows.extend(batch)
+        if len(batch) < ORION_PAGE_SIZE:
+            break
+    else:
+        raise RuntimeError(f"work_alerts: more than {ORION_MAX_PAGES * ORION_PAGE_SIZE} active alerts")
     return [r for r in rows
-            if str(_v(r.get("alertType")) or "").startswith(ALERT_PREFIX)
-            and _v(r.get("status")) == "active"]
+            if str(r.get("id", "")).startswith(prefix) and _v(r.get("status")) == "active"]
+
+
+def _parcel_of(alert: dict) -> str:
+    ref = alert.get("refEntity")
+    ref = ref.get("object") if isinstance(ref, dict) else ref
+    return str(ref or "").replace(PARCEL_URN, "")
 
 
 async def emit_work_alerts(tenant_id: str) -> dict:
     """Converge the tenant's active work Alerts on its parcels' current next jobs.
 
     Raises when the parcels or the Alerts cannot be read: an outage must not look like
-    "no tasks" and resolve everything.
+    "no tasks" and resolve everything. A parcel whose inputs were unreliable (`_degraded`)
+    is unknown: its alerts are neither emitted nor resolved this run.
     """
     today = _today()
     rows = await build_parcel_rows(None, tenant_id, with_history=False, strict=True)
     desired: dict[str, dict] = {}
+    degraded: set[str] = set()
     for row in rows:
+        if row.get("_degraded"):
+            degraded.add(str(row.get("parcelId")))
+            continue
         try:
             alert = build_work_alert(tenant_id, row, today)
         except Exception as exc:  # noqa: BLE001 — one malformed row never stops the rest
             logger.warning("work_alerts: row skipped tenant=%s parcel=%s: %s",
                            tenant_id, row.get("parcelId"), exc)
+            degraded.add(str(row.get("parcelId")))
             continue
         if alert:
             desired[alert["id"]] = alert
@@ -155,10 +206,10 @@ async def emit_work_alerts(tenant_id: str) -> dict:
     settings = get_settings()
     client = OrionClient(tenant_id, base_url=settings.orion_ld_url, context_url=settings.orion_ld_context)
     try:
-        active = {a["id"]: a for a in await _active_work_alerts(client)}
+        active = {a["id"]: a for a in await _active_work_alerts(client, tenant_id)}
         new = [a for i, a in desired.items() if i not in active]
         unchanged = sum(1 for i in desired if i in active)
-        stale = [i for i in active if i not in desired]
+        stale = [i for i, a in active.items() if i not in desired and _parcel_of(a) not in degraded]
         if new:
             await client.upsert_entities_batch(new)
         resolved = 0
@@ -171,5 +222,5 @@ async def emit_work_alerts(tenant_id: str) -> dict:
     finally:
         await client.close()
     result = {"emitted": len(new), "resolved": resolved, "unchanged": unchanged}
-    logger.info("work_alerts: tenant=%s %s", tenant_id, result)
+    logger.info("work_alerts: tenant=%s degraded=%d %s", tenant_id, len(degraded), result)
     return result

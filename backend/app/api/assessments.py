@@ -82,7 +82,7 @@ async def _bounded_inputs(request: Request | None, state, tenant_id: str, parcel
         except asyncio.TimeoutError:
             logger.warning("worklist: inputs timed out tenant=%s parcel=%s after %.1fs",
                            tenant_id, parcel_short, timeout)
-            return {**_DEFAULT_INPUTS, "history": []}
+            return {**_DEFAULT_INPUTS, "history": [], "_degraded": True}
 
 
 def get_redis_state():
@@ -154,12 +154,13 @@ def _worklist_fields(*, assessment: dict | None, assessed_at: str | None, crop_n
     }
 
 
-async def _alerts_safe(tenant_id: str) -> list[dict]:
+async def _alerts_safe(tenant_id: str, *, strict: bool = False) -> list[dict] | None:
+    """Active disease alerts; [] on failure, or None when `strict` (the caller marks rows degraded)."""
     try:
-        return await _active_alert_rows(tenant_id)
+        return await _active_alert_rows(tenant_id, strict=strict)
     except Exception as exc:  # noqa: BLE001
         logger.warning("worklist: alerts failed tenant=%s: %s", tenant_id, exc)
-        return []
+        return None if strict else []
 
 
 def _reader_headers(request: Request) -> dict[str, str]:
@@ -695,6 +696,8 @@ async def build_parcel_rows(request: Request | None, tenant_id: str, *,
     `strict` re-raises Orion read failures instead of degrading to an empty list, for
     callers (the work-alert job) that must not mistake an outage for "no parcels".
     `with_history=False` skips the timeseries history, which needs a user `request`.
+    In strict mode a row whose inputs are unreliable (per-parcel timeout, malformed row,
+    unreadable disease alerts) carries `_degraded: True`: its job is unknown, not absent.
     """
     settings = get_settings()
     client = OrionClient(tenant_id, base_url=settings.orion_ld_url, context_url=settings.orion_ld_context)
@@ -793,14 +796,18 @@ async def build_parcel_rows(request: Request | None, tenant_id: str, *,
     now = datetime.now(timezone.utc)
     semaphore, deadline = _request_budget()
     alerts, inputs_list = await asyncio.gather(
-        _alerts_safe(tenant_id),
+        _alerts_safe(tenant_id, strict=strict),
         asyncio.gather(*(
             _bounded_inputs(request, state, tenant_id, p["parcelId"], semaphore, deadline,
                             with_history=with_history)
             for p in parcels
         )),
     )
+    alerts_failed = alerts is None
+    alerts = alerts or []
     for p, inputs in zip(parcels, inputs_list):
+        if strict and (alerts_failed or inputs.get("_degraded")):
+            p["_degraded"] = True
         try:
             p.update(_worklist_fields(
                 assessment=_flat(assessment_by_parcel.get(p["parcelId"])),
@@ -812,10 +819,12 @@ async def build_parcel_rows(request: Request | None, tenant_id: str, *,
             fresh = worklist.freshness(p.get("assessedAt"), now)
             p.update({"cropStatus": "none", "freshness": fresh, "stale": fresh == "stale",
                       "nextJob": None, "surprise": None, "plannedCrop": None, "lastAssessment": None})
+            if strict:
+                p["_degraded"] = True
     return parcels
 
 
-async def _active_alert_rows(tenant_id: str) -> list[dict]:
+async def _active_alert_rows(tenant_id: str, *, strict: bool = False) -> list[dict]:
     """Active disease Alert rows of the tenant (unfiltered by parcel), each with its Alert id."""
     settings = get_settings()
     client = OrionClient(tenant_id, base_url=settings.orion_ld_url, context_url=settings.orion_ld_context)
@@ -823,6 +832,8 @@ async def _active_alert_rows(tenant_id: str) -> list[dict]:
         entities = await _query_paged(client, type="Alert", options="keyValues")
     except Exception as e:
         logger.warning("active_disease_risks Orion query failed: %s", e)
+        if strict:
+            raise
         entities = []
     finally:
         await client.close()

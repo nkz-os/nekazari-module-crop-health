@@ -85,9 +85,26 @@ def test_harvest_is_silent_and_opens_parcel():
     assert _v(a, "urgency") == "silent" and _v(a, "severity") == "medium"
     assert _v(a, "action") == {"kind": "open_parcel", "params": {"parcelId": PURN}}
     assert _v(a, "plain")["es"] == {"title": "Cosecha prevista en Olive grove",
-                                    "body": "Prepara la cosecha hacia el 2026-11-20."}
+                                    "body": "Prepara la cosecha hacia el 20/11/2026."}
     h = build_work_alert(T, _row("harvest", "today", {"date": "2026-11-01"}), TODAY)
     assert _v(h, "urgency") == "silent"  # harvest never vibrates
+
+
+def test_sow_without_crop_name_and_disease_code_use_nameless_wording():
+    a = build_work_alert(T, _row("sow", "today", {}), TODAY)
+    assert _v(a, "plain")["es"]["title"] == "Toca sembrar en Olive grove"
+    assert all("  " not in x["title"] for x in _v(a, "plain").values())
+    b = build_work_alert(T, _row("treat", "today", {"disease": "xylella_fastidiosa"}), TODAY)
+    assert _v(b, "plain")["es"]["title"] == "Toca tratar Olive grove"
+
+
+def test_parcel_without_name_uses_short_id_never_the_full_one():
+    pid = "0a1b2c3d-1111-2222-3333-444455556666"
+    row = {"parcelId": pid, "parcelName": pid,
+           "nextJob": {"kind": "irrigate", "when": "today", "detail": {}}}
+    a = build_work_alert(T, row, TODAY)
+    assert _v(a, "plain")["es"]["title"] == "Toca regar 0a1b2c3d"
+    assert pid[8:] not in json.dumps(_v(a, "plain"))
 
 
 @pytest.mark.parametrize("kind", ["pending_assessment", "none_until", "other"])
@@ -215,3 +232,93 @@ async def test_internal_route_with_secret_runs_emit():
             r = await c.post("/api/crop-health/internal/work-alerts/run", json={"tenant_id": T},
                              headers={"X-Internal-Service-Secret": "s3"})
     assert r.status_code == 200 and r.json() == {"emitted": 2, "resolved": 1, "unchanged": 0}
+
+
+@pytest.mark.anyio
+async def test_resolved_alert_with_same_id_same_day_is_reupserted():
+    out, up, pt = await _emit([_row("irrigate", "today")], [_existing(status="resolved")])
+    assert out == {"emitted": 1, "resolved": 0, "unchanged": 0}
+    assert json.loads(up.calls[0].request.content)[0]["status"]["value"] == "active"
+
+
+@pytest.mark.anyio
+async def test_alert_read_filters_active_server_side_and_ignores_foreign_tenant_ids():
+    other = {**_existing(), "id": "urn:ngsi-ld:Alert:other:work_irrigate:p1:today-20261104"}
+    with respx.mock(assert_all_called=False) as mock, \
+            patch.object(work_alerts, "build_parcel_rows", return_value=[]), \
+            patch.object(work_alerts, "_today", return_value=TODAY):
+        get = mock.get(url__regex=r".*type=Alert.*").respond(json=[other])
+        pt = mock.patch(url__regex=r".*/attrs.*").respond(204)
+        out = await emit_work_alerts(T)
+    assert "status" in str(get.calls[0].request.url) and "active" in str(get.calls[0].request.url)
+    assert out["resolved"] == 0 and not pt.called
+
+
+@pytest.mark.anyio
+async def test_alert_read_cap_raises(monkeypatch):
+    monkeypatch.setattr(work_alerts, "ORION_PAGE_SIZE", 1)
+    monkeypatch.setattr(work_alerts, "ORION_MAX_PAGES", 2)
+    with respx.mock(assert_all_called=False) as mock, \
+            patch.object(work_alerts, "build_parcel_rows", return_value=[]):
+        mock.get(url__regex=r".*type=Alert.*").respond(json=[_existing()])
+        with pytest.raises(RuntimeError):
+            await emit_work_alerts(T)
+
+
+# ---- degraded rows are unknown, never "no task" -------------------------------
+
+@pytest.mark.anyio
+async def test_degraded_row_neither_emits_nor_resolves():
+    row = {"parcelId": "p1", "parcelName": "x", "nextJob": None, "_degraded": True}
+    out, up, pt = await _emit([row], [_existing()])
+    assert out == {"emitted": 0, "resolved": 0, "unchanged": 0}
+    assert not up.called and not pt.called
+
+
+@pytest.mark.anyio
+async def test_degraded_parcel_does_not_shield_other_parcels():
+    rows = [{"parcelId": "p1", "parcelName": "x", "nextJob": None, "_degraded": True},
+            {"parcelId": "p2", "parcelName": "y", "nextJob": None}]
+    out, up, pt = await _emit(rows, [_existing(), _existing(parcel="p2")])
+    assert out["resolved"] == 1 and "p2" in pt.calls[0].request.url.path
+
+
+def _orion_for_rows(mock, alerts_status=200):
+    mock.get(url__regex=r".*type=CropHealthAssessment.*").respond(json=[])
+    mock.get(url__regex=r".*type=AgriParcel.*").respond(json=[
+        {"id": "urn:ngsi-ld:AgriParcel:p1", "name": "x"}])
+    mock.get(url__regex=r".*type=Alert.*").respond(alerts_status, json=[])
+
+
+@pytest.mark.anyio
+async def test_parcel_timeout_marks_row_degraded_in_strict_mode(monkeypatch):
+    import asyncio
+    from app.api import assessments
+    from app.services import worklist_sources
+
+    async def hang(*a, **kw):
+        await asyncio.sleep(30)
+
+    monkeypatch.setattr(assessments, "WORKLIST_PARCEL_TIMEOUT_S", 0.05)
+    monkeypatch.setattr(worklist_sources, "gather_parcel_inputs", hang)
+    with respx.mock(assert_all_called=False) as mock:
+        _orion_for_rows(mock)
+        rows = await assessments.build_parcel_rows(None, T, with_history=False, strict=True)
+        plain = await assessments.build_parcel_rows(None, T, with_history=False)
+    assert rows[0]["_degraded"] is True
+    assert "_degraded" not in plain[0]  # the public route's rows are unchanged
+
+
+@pytest.mark.anyio
+async def test_alerts_read_failure_marks_every_row_degraded_in_strict_mode():
+    from app.api import assessments
+    from app.services import worklist_sources
+
+    async def ok(*a, **kw):
+        return {"timeline": None, "agro": None, "forecast": None, "history": []}
+
+    with respx.mock(assert_all_called=False) as mock, \
+            patch.object(worklist_sources, "gather_parcel_inputs", ok):
+        _orion_for_rows(mock, alerts_status=500)
+        strict_rows = await assessments.build_parcel_rows(None, T, with_history=False, strict=True)
+    assert strict_rows[0]["_degraded"] is True

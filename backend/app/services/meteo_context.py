@@ -24,6 +24,9 @@ class MeteoContext:
     solar_radiation_wm2: float | None = None
     air_temp_min_24h: float | None = None
     fidelity: dict[str, str] = field(default_factory=dict)
+    # Epoch time of the observation behind each variable, when its source gives one
+    # (``<var>_observed_ts`` or the source-wide ``observed_at_ts``).
+    observed_at_ts: dict[str, float] = field(default_factory=dict)
     dominant_fidelity: str = "unavailable"
 
 
@@ -53,18 +56,22 @@ async def resolve_meteo_context(
 
     ctx = MeteoContext()
     for var in _VARIABLES:
+        source: dict = {}
         if sensor.get(var) is not None:
-            value, fidelity = sensor[var], "iot_sensor"
+            source, fidelity = sensor, "iot_sensor"
         elif zone.get(var) is not None:
-            value, fidelity = zone[var], "zone_weather"
+            source, fidelity = zone, "zone_weather"
         elif wm.get(var) is not None:
-            value, fidelity = wm[var], "parcel_weather"
+            source, fidelity = wm, "parcel_weather"
         elif regional.get(var) is not None:
-            value, fidelity = regional[var], "regional_proxy"
+            source, fidelity = regional, "regional_proxy"
         else:
-            value, fidelity = None, "unavailable"
-        setattr(ctx, var, value)
+            fidelity = "unavailable"
+        setattr(ctx, var, source.get(var))
         ctx.fidelity[var] = fidelity
+        observed = source.get(f"{var}_observed_ts", source.get("observed_at_ts"))
+        if isinstance(observed, (int, float)) and not isinstance(observed, bool):
+            ctx.observed_at_ts[var] = float(observed)
 
     ctx.air_temp_min_24h = zone.get("air_temp_min_24h")
 

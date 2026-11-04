@@ -101,8 +101,10 @@ async def test_under_panel_leaf_temperature_does_not_set_cwsi(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_open_field_leaf_temperature_sets_cwsi(monkeypatch):
+    # Air of the same moment: our hourly observation 10 min before the reading.
     published, _ = _setup(
-        monkeypatch, soil=SOIL, wm={"air_temp_c": 35.0, "rh_pct": 20.0, "et0_mm": 5.0})
+        monkeypatch, soil=SOIL, wm={},
+        regional={"air_temp_c": 35.0, "rh_pct": 20.0, "et0_mm": 5.0, "observed_at_ts": NOW - 600})
 
     async def _params(*a, **k):
         ref = WaterStressReference(baselines=[CwsiBaseline.model_validate({

@@ -119,8 +119,13 @@ def _hot_ref():
     return WaterStressReference(baselines=[_b(valid={"solarHourFrom": 10, "solarHourTo": 16, "clearSky": True})])
 
 
+def _hourly(air):
+    """Air as our hourly WeatherObserved 10 min before NOW (instantaneous for the CWSI)."""
+    return {"wm": {}, "regional": {**air, "observed_at_ts": NOW - 600}}
+
+
 async def _trigger(monkeypatch, ref, *, lon=0.0, wm=None, ts_offsets=(60,)):
-    published, _ = _setup(monkeypatch, soil=SOIL, wm=wm or {"air_temp_c": 35.0, "rh_pct": 20.0, "et0_mm": 5.0})
+    published, _ = _setup(monkeypatch, soil=SOIL, **_hourly(wm or {"air_temp_c": 35.0, "rh_pct": 20.0, "et0_mm": 5.0}))
     _params_with(monkeypatch, ref)
     _coords(monkeypatch, lon)
     _owner(monkeypatch, OPEN_FIELD)
@@ -144,7 +149,7 @@ async def test_no_baseline_no_cwsi(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_no_longitude_no_cwsi(monkeypatch):
-    published, _ = _setup(monkeypatch, soil=SOIL, wm={"air_temp_c": 35.0, "rh_pct": 20.0, "et0_mm": 5.0})
+    published, _ = _setup(monkeypatch, soil=SOIL, **_hourly({"air_temp_c": 35.0, "rh_pct": 20.0, "et0_mm": 5.0}))
     _params_with(monkeypatch, _hot_ref())
 
     async def _none(*a, **k):
@@ -179,7 +184,7 @@ async def test_median_of_window_used(monkeypatch):
         return real(tc, *a, **k)
 
     monkeypatch.setattr(pipeline, "cwsi_from_baseline", spy)
-    published, _ = _setup(monkeypatch, soil=SOIL, wm={"air_temp_c": 35.0, "rh_pct": 20.0, "et0_mm": 5.0})
+    published, _ = _setup(monkeypatch, soil=SOIL, **_hourly({"air_temp_c": 35.0, "rh_pct": 20.0, "et0_mm": 5.0}))
     _params_with(monkeypatch, _hot_ref())
     _coords(monkeypatch)
     _owner(monkeypatch, OPEN_FIELD)
@@ -196,11 +201,11 @@ async def test_satellite_path_disabled_logs_reason(monkeypatch, caplog):
         called.append(1)
         return 30.0, "2026-07-15"
 
-    published, _ = _setup(monkeypatch, soil=SOIL, wm={"air_temp_c": 35.0, "rh_pct": 20.0, "et0_mm": 5.0})
+    published, _ = _setup(monkeypatch, soil=SOIL, **_hourly({"air_temp_c": 35.0, "rh_pct": 20.0, "et0_mm": 5.0}))
     _params_with(monkeypatch, _hot_ref())
     monkeypatch.setattr(pipeline, "_fetch_parcel_lst_with_date", _lst, raising=False)
     _owner(monkeypatch, OPEN_FIELD)
-    with caplog.at_level(logging.INFO):
+    with caplog.at_level(logging.DEBUG):
         await _run(MetricType.SOIL_MOISTURE, GateRedis())
     assert published["assessments"][-1].cwsi is None
     assert called == []
@@ -276,7 +281,7 @@ async def test_nan_reading_does_not_give_cwsi_one(monkeypatch):
         return real(tc, *a, **k)
 
     monkeypatch.setattr(pipeline, "cwsi_from_baseline", spy)
-    published, _ = _setup(monkeypatch, soil=SOIL, wm={"air_temp_c": 35.0, "rh_pct": 20.0, "et0_mm": 5.0})
+    published, _ = _setup(monkeypatch, soil=SOIL, **_hourly({"air_temp_c": 35.0, "rh_pct": 20.0, "et0_mm": 5.0}))
     _params_with(monkeypatch, _hot_ref())
     _coords(monkeypatch)
     _owner(monkeypatch, OPEN_FIELD)
@@ -288,7 +293,7 @@ async def test_nan_reading_does_not_give_cwsi_one(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_all_invalid_readings_no_cwsi(monkeypatch):
-    published, _ = _setup(monkeypatch, soil=SOIL, wm={"air_temp_c": 35.0, "rh_pct": 20.0, "et0_mm": 5.0})
+    published, _ = _setup(monkeypatch, soil=SOIL, **_hourly({"air_temp_c": 35.0, "rh_pct": 20.0, "et0_mm": 5.0}))
     _params_with(monkeypatch, _hot_ref())
     _coords(monkeypatch)
     _owner(monkeypatch, OPEN_FIELD)

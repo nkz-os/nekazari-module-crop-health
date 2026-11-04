@@ -598,7 +598,7 @@ async def test_satellite_lst_never_gives_cwsi(monkeypatch, caplog, d1, d2):
     # Phase 1: the satellite path is off; legacy d1/d2 (plausible or not) never make a CWSI.
     published, _ = _setup(monkeypatch)
     _with_lst_and_baselines(monkeypatch, d1, d2)
-    with caplog.at_level("INFO"):
+    with caplog.at_level("DEBUG"):
         await _trigger(FakeRedis(state=dict(STATE)))
     assert "cwsiValue" not in _entity(published)
     assert published["assessments"][-1].cwsi is None

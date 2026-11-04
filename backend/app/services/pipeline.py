@@ -36,11 +36,13 @@ from app.engines.under_panel_stress import (
 )
 from app.engines.phenology_progress import derive_stage_from_gdd
 from app.engines.senescence import end_of_season_reached
-from app.engines.water_stress_level import resolve_indicator, severity_name
+from app.engines.water_stress_level import CWSI_CUTS, resolve_indicator, severity_name
 from app.engines.water_stress import (
+    CLEAR_SKY_MIN_RS_RSO,
     cwsi_from_baseline,
     in_solar_window,
     select_baseline,
+    sky_clear,
     solar_hour,
 )
 from app.schemas import (
@@ -221,7 +223,7 @@ async def _ir_cwsi_unguarded(
     # ASSUMPTION: same plausible range as air temperature
     lo, hi = _AIR_TEMP_RANGE_C
     in_window = [
-        r.value for r in readings
+        r for r in readings
         if math.isfinite(r.value) and lo <= r.value <= hi
         and in_solar_window(base, solar_hour(r.ts, lon))
     ]
@@ -231,8 +233,19 @@ async def _ir_cwsi_unguarded(
             tenant_id, parcel_id, base.id,
         )
         return None
+    reading_ts = max(r.ts for r in in_window)
+    # Air and humidity of the same moment (spec §5.1): a parcel sensor, or our hourly
+    # WeatherObserved within an hour of the reading. A daily mean (weather-map, zone
+    # series) never pairs with a leaf reading.
+    if not (_instantaneous(weather, "air_temp_c", reading_ts)
+            and _instantaneous(weather, "rh_pct", reading_ts)):
+        logger.info(
+            "CWSI skipped: air not instantaneous tenant=%s parcel=%s air=%s rh=%s",
+            tenant_id, parcel_id, weather.fidelity.get("air_temp_c"), weather.fidelity.get("rh_pct"),
+        )
+        return None
     result = cwsi_from_baseline(
-        statistics.median(in_window),
+        statistics.median(r.value for r in in_window),
         weather.temp_air,
         weather.humidity_pct,
         base,
@@ -245,7 +258,47 @@ async def _ir_cwsi_unguarded(
             "CWSI skipped: outside baseline validity (solar hour, VPD range or minimum VPD, or UL<=NWSB)"
             " tenant=%s parcel=%s baseline=%s", tenant_id, parcel_id, base.id,
         )
+        return None
+    if base.valid.clear_sky:
+        rs = weather.radiation_wm2 if _instantaneous(weather, "solar_radiation_wm2", reading_ts) else None
+        clear = sky_clear(rs, coords[0], lon, reading_ts, _PARCEL_ELEVATION_M)
+        if clear is False:
+            logger.info(
+                "CWSI skipped: sky not clear (Rs=%.0f W/m2 below %.2f of clear-sky Rso) tenant=%s parcel=%s"
+                " baseline=%s", rs, CLEAR_SKY_MIN_RS_RSO, tenant_id, parcel_id, base.id,
+            )
+            return None
+        # ASSUMPTION: with the sky unknown only a raise is trusted: clouds lower Tc - Ta,
+        # so a value below the stress onset may be overcast and falls back to the balance.
+        if clear is None and result.cwsi < CWSI_CUTS["mild"]:
+            logger.info(
+                "CWSI skipped: sky unknown and CWSI %.2f below stress onset tenant=%s parcel=%s baseline=%s",
+                result.cwsi, tenant_id, parcel_id, base.id,
+            )
+            return None
     return result
+
+
+# A reading pairs with another variable only within this time (spec §5.1 "same moment").
+_INSTANT_MAX_SKEW_S = 3600.0
+# ASSUMPTION: parcel elevation unknown to crop-health; z = 0 m in FAO-56 eq. 37
+# (Rso is underestimated by 2e-5*z/0.75, about 2.7 % at 1000 m: a slightly easier pass).
+_PARCEL_ELEVATION_M = 0.0
+
+
+def _instantaneous(weather, var: str, reading_ts: float) -> bool:
+    """True when ``var`` of the snapshot is an instantaneous value usable with a reading at ``reading_ts``.
+
+    A fresh parcel sensor (``iot_sensor``) qualifies; our hourly WeatherObserved
+    (``regional_proxy``) only with an observation time within an hour of the reading.
+    Weather-map and zone values are daily and never qualify.
+    """
+    fidelity = (getattr(weather, "fidelity", None) or {}).get(var)
+    observed = (getattr(weather, "observed_at_ts", None) or {}).get(var)
+    within = observed is not None and math.isfinite(observed) and abs(reading_ts - observed) <= _INSTANT_MAX_SKEW_S
+    if fidelity == "iot_sensor":
+        return observed is None or within
+    return fidelity == "regional_proxy" and within
 
 
 def _resolve_depletion_fraction(crop_context) -> float:
@@ -628,6 +681,17 @@ async def _sensor_air_ctx(redis_state, tenant_id: str, parcel_id: str, now_ts: f
     )
     if rh is not None:
         ctx["rh_pct"] = rh
+    # The parcel's own open-field pyranometer (sky check of the CWSI), latest fresh reading.
+    pyr = [
+        r for r in await _read_parcel_readings(
+            redis_state, tenant_id, parcel_id, OPEN_FIELD, MetricType.SOLAR_RADIATION.value, now_ts,
+        )
+        if r.unit_code in (None, _GHI_UNIT_CODE) and math.isfinite(r.value) and r.value >= 0
+    ]
+    if pyr:
+        latest = max(pyr, key=lambda r: r.ts)
+        ctx["solar_radiation_wm2"] = latest.value
+        ctx["solar_radiation_wm2_observed_ts"] = latest.ts
     return ctx
 
 
@@ -1178,7 +1242,7 @@ async def _run_engines(
     # Satellite LST path: disabled in phase 1. Landsat LST has no per-pixel hourly
     # meteo or scene time, so a VPD-dependent baseline cannot be applied honestly.
     if assessment.cwsi is None:
-        logger.info(
+        logger.debug(
             "CWSI satellite skipped: phase 2 (per-pixel hourly meteo and Landsat scene time)"
             " tenant=%s parcel=%s", tenant_id, effective_parcel,
         )
@@ -1883,6 +1947,9 @@ def _snapshot_from_meteo(meteo) -> WeatherSnapshot | None:
         humidity_pct=meteo.rh_pct,
         precip_mm=0.0,
         eto_mm=meteo.et0_mm if meteo.et0_mm is not None else 0.0,
+        radiation_wm2=getattr(meteo, "solar_radiation_wm2", None),
+        fidelity=dict(getattr(meteo, "fidelity", {}) or {}),
+        observed_at_ts=dict(getattr(meteo, "observed_at_ts", {}) or {}),
     )
 
 

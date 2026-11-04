@@ -14,6 +14,7 @@ References:
 from __future__ import annotations
 
 import math
+import re
 from datetime import datetime, timezone
 
 from app.schemas import CWSIResult, CwsiBaseline, WaterStressReference
@@ -178,7 +179,10 @@ def cwsi_with_weather(
 
 
 def _norm(name: str | None) -> str | None:
-    return name.strip().casefold() if isinstance(name, str) else None
+    """Case-folded name with every run of '-', '_' and whitespace as one space."""
+    if not isinstance(name, str):
+        return None
+    return re.sub(r"[-_\s]+", " ", name).strip().casefold()
 
 
 def select_baseline(
@@ -187,12 +191,14 @@ def select_baseline(
     cultivar: str | None,
     solar_hour: float | None = None,
 ) -> CwsiBaseline | None:
-    """Pick the baseline: cultivar match, then stage match, then ``stages: null``.
+    """Pick the baseline: cultivar and stage match, cultivar for all stages, then stage
+    match, then ``stages: null``.
 
     Within a tier, the first row (file order) whose solar-hour window contains
     ``solar_hour`` wins; rows without a window match any hour. With
     ``solar_hour=None`` the window is not considered. A tier with no row valid at
-    that hour falls through to the next tier. Cultivar match ignores case/spaces.
+    that hour falls through to the next tier. Cultivar match ignores case and treats
+    runs of '-', '_' and spaces as one space.
     """
     if ref is None:
         return None
@@ -200,7 +206,8 @@ def select_baseline(
     candidates = [b for b in ref.baselines if b.cultivar is None or _norm(b.cultivar) == cv]
     tiers = (
         [b for b in candidates if cv is not None and _norm(b.cultivar) == cv
-         and (b.stages is None or (stage is not None and stage in b.stages))],
+         and b.stages is not None and stage is not None and stage in b.stages],
+        [b for b in candidates if cv is not None and _norm(b.cultivar) == cv and b.stages is None],
         [b for b in candidates if b.cultivar is None and b.stages is not None
          and stage is not None and stage in b.stages],
         [b for b in candidates if b.cultivar is None and b.stages is None],
@@ -241,6 +248,74 @@ def solar_hour(ts_unix: float, longitude_deg: float) -> float:
     utc = datetime.fromtimestamp(ts_unix, tz=timezone.utc)
     utc_h = utc.hour + utc.minute / 60.0 + utc.second / 3600.0
     return (utc_h + longitude_deg / 15.0) % 24.0
+
+
+# ── Clear sky (FAO-56, Allen et al. 1998, chapter 3) ────────────────────────
+
+# Solar constant, MJ m-2 min-1 (FAO-56 eq. 21/28).
+GSC_MJ_M2_MIN = 0.0820
+_MJ_PER_HOUR_TO_WM2 = 1e6 / 3600.0
+# ASSUMPTION: a reading is "clear sky" when Rs/Rso >= 0.75 (owner to confirm); the
+# baselines were measured on cloudless days but their papers give no ratio.
+CLEAR_SKY_MIN_RS_RSO = 0.75
+
+
+def extraterrestrial_radiation_wm2(
+    lat_deg: float, lon_deg: float, ts_unix: float, period_h: float = 1.0,
+) -> float:
+    """Mean extraterrestrial radiation (W/m2) over the period centred on ``ts_unix``.
+
+    FAO-56 eq. 28: Ra = 12*60/pi * Gsc * dr * [(w2 - w1) sin(phi) sin(delta)
+    + cos(phi) cos(delta) (sin(w2) - sin(w1))], in MJ m-2 per period, with dr (eq. 23),
+    delta (eq. 24), w (eq. 31; clock time in UTC, so Lz = 0 and Lm = longitude west),
+    Sc (eq. 32), b (eq. 33), w1/w2 = w -/+ pi*t1/24 (eq. 29, 30). The sun is below the
+    horizon when w < -ws or w > ws (ws, eq. 25): Ra = 0.
+    ASSUMPTION: w1 and w2 are clamped to [-ws, ws] near sunrise/sunset (FAO-56 only
+    sets Ra = 0 outside); it never applies inside a midday CWSI window.
+    """
+    utc = datetime.fromtimestamp(ts_unix, tz=timezone.utc)
+    j = utc.timetuple().tm_yday
+    t = utc.hour + utc.minute / 60.0 + utc.second / 3600.0
+    phi = math.radians(lat_deg)
+    dr = 1 + 0.033 * math.cos(2 * math.pi * j / 365)  # eq. 23
+    delta = 0.409 * math.sin(2 * math.pi * j / 365 - 1.39)  # eq. 24
+    b = 2 * math.pi * (j - 81) / 364  # eq. 33
+    sc = 0.1645 * math.sin(2 * b) - 0.1255 * math.cos(b) - 0.025 * math.sin(b)  # eq. 32
+    lm_west = -lon_deg
+    omega = math.pi / 12 * ((t + 0.06667 * (0.0 - lm_west) + sc) - 12)  # eq. 31
+    omega = (omega + math.pi) % (2 * math.pi) - math.pi
+    ws = math.acos(max(-1.0, min(1.0, -math.tan(phi) * math.tan(delta))))  # eq. 25
+    if omega < -ws or omega > ws:
+        return 0.0
+    w1 = max(-ws, omega - math.pi * period_h / 24)  # eq. 29
+    w2 = min(ws, omega + math.pi * period_h / 24)  # eq. 30
+    ra_mj = (12 * 60 / math.pi) * GSC_MJ_M2_MIN * dr * (
+        (w2 - w1) * math.sin(phi) * math.sin(delta)
+        + math.cos(phi) * math.cos(delta) * (math.sin(w2) - math.sin(w1))
+    )  # eq. 28
+    return max(0.0, ra_mj) * _MJ_PER_HOUR_TO_WM2 / period_h
+
+
+def clear_sky_radiation_wm2(ra_wm2: float, elevation_m: float = 0.0) -> float:
+    """Rso = (0.75 + 2e-5 * z) * Ra (FAO-56 eq. 37), same units as ``ra_wm2``."""
+    return (0.75 + 2e-5 * elevation_m) * ra_wm2
+
+
+def sky_clear(
+    rs_wm2: float | None, lat_deg: float, lon_deg: float, ts_unix: float, elevation_m: float = 0.0,
+) -> bool | None:
+    """True/False from Rs/Rso >= CLEAR_SKY_MIN_RS_RSO; None when it cannot be told.
+
+    ASSUMPTION: an instantaneous Rs reading stands for the mean of the hour centred on it.
+    """
+    if rs_wm2 is None or isinstance(rs_wm2, bool) or not math.isfinite(rs_wm2) or rs_wm2 < 0:
+        return None
+    rso = clear_sky_radiation_wm2(
+        extraterrestrial_radiation_wm2(lat_deg, lon_deg, ts_unix), elevation_m,
+    )
+    if rso <= 0:
+        return None
+    return rs_wm2 / rso >= CLEAR_SKY_MIN_RS_RSO
 
 
 def in_solar_window(b: CwsiBaseline, hour: float) -> bool:

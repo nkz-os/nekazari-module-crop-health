@@ -87,6 +87,10 @@ class WeatherSnapshot(BaseModel):
     precip_mm: float = Field(0.0, description="Precipitation mm")
     eto_mm: float = Field(0.0, description="Reference evapotranspiration mm")
     radiation_wm2: float | None = Field(None, description="Solar radiation W/m²")
+    # Per meteo variable (air_temp_c, rh_pct, solar_radiation_wm2, ...): where the value
+    # came from (resolve_meteo_context vocab) and, when known, its observation epoch time.
+    fidelity: dict[str, str] = Field(default_factory=dict)
+    observed_at_ts: dict[str, float] = Field(default_factory=dict)
 
 
 # ── Phenology Parameters (from BioOrchestrator or defaults) ──────────────────

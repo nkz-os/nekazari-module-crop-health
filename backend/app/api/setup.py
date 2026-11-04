@@ -17,6 +17,7 @@ from nkz_platform_sdk.subscriptions import SubscriptionRegistrar
 
 from app.config import get_settings
 from app.services.pipeline import compute_assessment
+from app.services.work_alerts import emit_work_alerts
 from app.services.yield_forecast import compute_and_store
 
 logger = logging.getLogger(__name__)
@@ -236,3 +237,20 @@ async def run_yield_forecasts(request: Request, body: YieldForecastRunRequest):
         elif outcome == "store_error":
             errors.append({"parcel_id": parcel_id, "error": "store_error"})
     return {"processed": len(ids), "written": written, "errors": errors, "next_cursor": next_cursor}
+
+
+class WorkAlertsRunRequest(BaseModel):
+    tenant_id: str
+
+
+@router.post("/work-alerts/run")
+async def run_work_alerts(request: Request, body: WorkAlertsRunRequest):
+    secret = request.headers.get("X-Internal-Service-Secret", "")
+    if not INTERNAL_SECRET or not hmac.compare_digest(secret.encode(), INTERNAL_SECRET.encode()):
+        logger.warning("Unauthorized internal work-alerts call from %s", request.client)
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    try:
+        return await emit_work_alerts(body.tenant_id)
+    except Exception as exc:  # noqa: BLE001 — surface as 502 so the CronJob logs and counts it
+        logger.exception("work-alerts tenant=%s failed", body.tenant_id)
+        raise HTTPException(status_code=502, detail=type(exc).__name__) from exc

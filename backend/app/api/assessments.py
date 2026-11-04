@@ -65,8 +65,9 @@ def _request_budget() -> tuple[asyncio.Semaphore, float]:
             asyncio.get_running_loop().time() + WORKLIST_REQUEST_DEADLINE_S)
 
 
-async def _bounded_inputs(request: Request, state, tenant_id: str, parcel_short: str,
-                          semaphore: asyncio.Semaphore, deadline: float) -> dict:
+async def _bounded_inputs(request: Request | None, state, tenant_id: str, parcel_short: str,
+                          semaphore: asyncio.Semaphore, deadline: float, *,
+                          with_history: bool = True) -> dict:
     """Inputs of one parcel under the request's concurrency bound and deadline; defaults on timeout."""
     from app.services.worklist_sources import gather_parcel_inputs  # lazy: avoids an import cycle
 
@@ -75,13 +76,13 @@ async def _bounded_inputs(request: Request, state, tenant_id: str, parcel_short:
         timeout = min(WORKLIST_PARCEL_TIMEOUT_S, max(0.0, deadline - loop.time()))
         try:
             return await asyncio.wait_for(
-                gather_parcel_inputs(request, state, tenant_id, parcel_short, with_history=True),
+                gather_parcel_inputs(request, state, tenant_id, parcel_short, with_history=with_history),
                 timeout=timeout,
             )
         except asyncio.TimeoutError:
             logger.warning("worklist: inputs timed out tenant=%s parcel=%s after %.1fs",
                            tenant_id, parcel_short, timeout)
-            return {**_DEFAULT_INPUTS, "history": []}
+            return {**_DEFAULT_INPUTS, "history": [], "_degraded": True}
 
 
 def get_redis_state():
@@ -153,12 +154,13 @@ def _worklist_fields(*, assessment: dict | None, assessed_at: str | None, crop_n
     }
 
 
-async def _alerts_safe(tenant_id: str) -> list[dict]:
+async def _alerts_safe(tenant_id: str, *, strict: bool = False) -> list[dict] | None:
+    """Active disease alerts; [] on failure, or None when `strict` (the caller marks rows degraded)."""
     try:
-        return await _active_alert_rows(tenant_id)
+        return await _active_alert_rows(tenant_id, strict=strict)
     except Exception as exc:  # noqa: BLE001
         logger.warning("worklist: alerts failed tenant=%s: %s", tenant_id, exc)
-        return []
+        return None if strict else []
 
 
 def _reader_headers(request: Request) -> dict[str, str]:
@@ -677,6 +679,27 @@ async def list_parcels(request: Request):
     Parcels without assessments appear with hasData=false.
     """
     tenant_id = getattr(request.state, "tenant_id", "")
+    parcels = await build_parcel_rows(request, tenant_id)
+    parcels.sort(key=worklist.rank)
+    summary = {
+        "surprises": sum(1 for p in parcels if p["surprise"]),
+        "jobsToday": sum(1 for p in parcels if (p["nextJob"] or {}).get("when") == "today"),
+        "noData": sum(1 for p in parcels
+                      if p.get("cropStatus") == "active" and not p.get("hasData")),
+    }
+    return {"parcels": parcels, "summary": summary}
+
+
+async def build_parcel_rows(request: Request | None, tenant_id: str, *,
+                            with_history: bool = True, strict: bool = False) -> list[dict]:
+    """The work-list rows of a tenant's parcels (unsorted), as `GET /parcels` serves them.
+
+    `strict` re-raises Orion read failures instead of degrading to an empty list, for
+    callers (the work-alert job) that must not mistake an outage for "no parcels".
+    `with_history=False` skips the timeseries history, which needs a user `request`.
+    In strict mode a row whose inputs are unreliable (per-parcel timeout, malformed row,
+    unreadable disease alerts) carries `_degraded: True`: its job is unknown, not absent.
+    """
     settings = get_settings()
     client = OrionClient(tenant_id, base_url=settings.orion_ld_url, context_url=settings.orion_ld_context)
 
@@ -686,6 +709,8 @@ async def list_parcels(request: Request):
             assessments_raw = await _query_paged(client, type="CropHealthAssessment", options="keyValues")
         except Exception as e:
             logger.warning("list_parcels CropHealthAssessment query failed: %s", e)
+            if strict:
+                raise
             assessments_raw = []
 
         # Query 2: AgriParcel entities
@@ -693,10 +718,14 @@ async def list_parcels(request: Request):
             parcels_raw = await _query_paged(client, type="AgriParcel", options="keyValues")
         except Exception as e:
             logger.warning("list_parcels AgriParcel query failed: %s", e)
+            if strict:
+                raise
             parcels_raw = []
     except Exception as e:
         logger.error("Failed to query Orion-LD for parcels: %s", e)
-        return {"parcels": [], "summary": {"surprises": 0, "jobsToday": 0, "noData": 0}}
+        if strict:
+            raise
+        return []
     finally:
         await client.close()
 
@@ -768,13 +797,18 @@ async def list_parcels(request: Request):
     now = datetime.now(timezone.utc)
     semaphore, deadline = _request_budget()
     alerts, inputs_list = await asyncio.gather(
-        _alerts_safe(tenant_id),
+        _alerts_safe(tenant_id, strict=strict),
         asyncio.gather(*(
-            _bounded_inputs(request, state, tenant_id, p["parcelId"], semaphore, deadline)
+            _bounded_inputs(request, state, tenant_id, p["parcelId"], semaphore, deadline,
+                            with_history=with_history)
             for p in parcels
         )),
     )
+    alerts_failed = alerts is None
+    alerts = alerts or []
     for p, inputs in zip(parcels, inputs_list):
+        if strict and (alerts_failed or inputs.get("_degraded")):
+            p["_degraded"] = True
         try:
             p.update(_worklist_fields(
                 assessment=_flat(assessment_by_parcel.get(p["parcelId"])),
@@ -786,18 +820,12 @@ async def list_parcels(request: Request):
             fresh = worklist.freshness(p.get("assessedAt"), now)
             p.update({"cropStatus": "none", "freshness": fresh, "stale": fresh == "stale",
                       "nextJob": None, "surprise": None, "plannedCrop": None, "lastAssessment": None})
-
-    parcels.sort(key=worklist.rank)
-    summary = {
-        "surprises": sum(1 for p in parcels if p["surprise"]),
-        "jobsToday": sum(1 for p in parcels if (p["nextJob"] or {}).get("when") == "today"),
-        "noData": sum(1 for p in parcels
-                      if p.get("cropStatus") == "active" and not p.get("hasData")),
-    }
-    return {"parcels": parcels, "summary": summary}
+            if strict:
+                p["_degraded"] = True
+    return parcels
 
 
-async def _active_alert_rows(tenant_id: str) -> list[dict]:
+async def _active_alert_rows(tenant_id: str, *, strict: bool = False) -> list[dict]:
     """Active disease Alert rows of the tenant (unfiltered by parcel), each with its Alert id."""
     settings = get_settings()
     client = OrionClient(tenant_id, base_url=settings.orion_ld_url, context_url=settings.orion_ld_context)
@@ -805,6 +833,8 @@ async def _active_alert_rows(tenant_id: str) -> list[dict]:
         entities = await _query_paged(client, type="Alert", options="keyValues")
     except Exception as e:
         logger.warning("active_disease_risks Orion query failed: %s", e)
+        if strict:
+            raise
         entities = []
     finally:
         await client.close()

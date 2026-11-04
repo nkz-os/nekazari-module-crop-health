@@ -13,7 +13,7 @@ vi.mock('../api/cropHealthApi', () => ({
 import { CropStatusSnapshotView, NoAssessmentView } from './CropStatusSnapshot';
 
 const assessment = {
-  overallSeverity: 'HIGH', recommendedAction: 'IRRIGATE_IMMEDIATE', cwsiValue: 0.5,
+  overallSeverity: 'HIGH', recommendedAction: 'IRRIGATE_IMMEDIATE', cwsiValue: 0.5, waterStressLevel: 'moderate',
   assessedAt: '2026-10-25T08:00:00Z',
 } as never;
 const job = { kind: 'irrigate', when: 'today', detail: {} } as never;
@@ -34,7 +34,7 @@ describe('CropStatusSnapshotView', () => {
   it('leads with the job, before the chips', () => {
     const h = render();
     expect(h).toContain('worklist.job.irrigate');
-    expect(h.indexOf('worklist.job.irrigate')).toBeLessThan(h.indexOf('summary.cwsi.moderate'));
+    expect(h.indexOf('worklist.job.irrigate')).toBeLessThan(h.indexOf('waterStress.level.moderate'));
   });
   it('shows the surprise as the justification when there is one', () => {
     const h = render({ surprise: { code: 'water_drop', detail: {} } });
@@ -49,6 +49,34 @@ describe('CropStatusSnapshotView', () => {
     const h = render({ freshness: 'stale' });
     expect(h).toContain('worklist.job.irrigate');
     expect(h).toContain('text-xs mt-0.5 text-nkz-danger');
+  });
+});
+
+describe('water stress indicator', () => {
+  const lvl = (extra: Record<string, unknown>) => render({ assessment: { ...(assessment as object), waterStressLevel: undefined, ...extra } });
+  it('shows the phrase of the resolved level', () => {
+    expect(lvl({ waterStressLevel: 'moderate' })).toContain('waterStress.level.moderate');
+  });
+  it('never renders the none phrase for no_data or an assessment without a level', () => {
+    expect(lvl({ waterStressLevel: 'no_data', cwsiValue: 0.05 })).not.toContain('waterStress.level.none');
+    const old = lvl({});
+    expect(old).not.toContain('waterStress.level.none');
+    expect(old).toContain('waterStress.level.no_data');
+  });
+  it('shows the rdi note only with the note flag', () => {
+    expect(lvl({ waterStressLevel: 'mild', waterStressPhaseNote: 'rdi' })).toContain('waterStress.note.rdi');
+    expect(lvl({ waterStressLevel: 'mild' })).not.toContain('waterStress.note.rdi');
+  });
+  it('shows no number for the level', () => {
+    expect(lvl({ waterStressLevel: 'high', cwsiValue: 0.77 })).not.toContain('0.77');
+  });
+  it('shows the deficit chip neutral, never red, in a stage that needs no water', () => {
+    const chip = (h: string) => (h.match(/<span class="([^"]*)">💧 20\.0mm deficit<\/span>/) ?? [])[1] ?? '';
+    const neutral = chip(lvl({ waterStressLevel: 'not_needed', waterBalanceDeficit: -20 }));
+    expect(neutral).toContain('text-nkz-text-secondary');
+    expect(neutral).not.toContain('danger');
+    expect(neutral).not.toContain('warning');
+    expect(chip(lvl({ waterStressLevel: 'high', waterBalanceDeficit: -20 }))).toContain('text-nkz-danger-strong');
   });
 });
 

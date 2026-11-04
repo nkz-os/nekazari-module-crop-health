@@ -15,6 +15,13 @@ const en = {
         diseaseRiskNone: 'No active disease risks for this parcel',
         severity: { LOW: 'Healthy', MEDIUM: 'Monitor', HIGH: 'Stressed', CRITICAL: 'Critical' },
         action: { noAction: 'No action needed', monitor: 'Monitor closely', irrigateScheduled: 'Schedule irrigation', irrigateImmediate: 'IRRIGATE NOW' },
+        waterStress: {
+            level: { none: 'No stress', mild: 'Mild stress', moderate: 'Moderate stress', high: 'High stress', no_data: 'No data', not_needed: 'Stage with no water need' },
+            note: { rdi: 'In this stage a moderate stress can be favourable if you use deficit irrigation.' },
+            method: { cwsi_sensor: 'Canopy temperature sensor (CWSI)', balance: 'Water balance (Ks)', none: 'No method available' },
+            phaseBasis: { gdd: 'Stage from growing degree-days', gdd_ndvi: 'Stage from growing degree-days and NDVI' },
+            technician: { title: 'Water stress detail', baseline: 'Reference baseline', upper: 'Upper limit', parcelBalance: 'Balance of the whole parcel: zones have no balance of their own.', sources: 'Sources' },
+        },
         contextPanel: {
             loading: 'Loading crop health...',
             noData: 'No crop health data for this parcel',
@@ -357,6 +364,7 @@ const en = {
             sarNoFlood: 'No flood',
             hints: {
                 cwsiHigh: 'Elevated CWSI.',
+                ksHigh: 'Low soil water (Ks).',
                 mdsCritical: 'Critical trunk shrinkage.',
                 deficit: 'Significant water deficit.',
             },
@@ -416,6 +424,13 @@ const es = {
         diseaseRiskNone: 'Sin riesgos de enfermedad activos para esta parcela',
         severity: { LOW: 'Saludable', MEDIUM: 'Vigilar', HIGH: 'Estresado', CRITICAL: 'Crítico' },
         action: { noAction: 'Sin acción necesaria', monitor: 'Monitorizar', irrigateScheduled: 'Programar riego', irrigateImmediate: 'REGAR AHORA' },
+        waterStress: {
+            level: { none: 'Sin estrés', mild: 'Estrés leve', moderate: 'Estrés moderado', high: 'Estrés alto', no_data: 'Sin dato', not_needed: 'Fase sin necesidad de agua' },
+            note: { rdi: 'En esta fase un estrés moderado puede ser favorable si haces riego deficitario.' },
+            method: { cwsi_sensor: 'Sensor de temperatura de copa (CWSI)', balance: 'Balance hídrico (Ks)', none: 'Sin método disponible' },
+            phaseBasis: { gdd: 'Fase por grados-día', gdd_ndvi: 'Fase por grados-día y NDVI' },
+            technician: { title: 'Detalle del estrés hídrico', baseline: 'Línea base de referencia', upper: 'Límite superior', parcelBalance: 'Balance de toda la parcela: las zonas no tienen balance propio.', sources: 'Fuentes' },
+        },
         contextPanel: {
             loading: 'Cargando salud del cultivo...',
             noData: 'Sin datos de salud para esta parcela',
@@ -726,6 +741,7 @@ const es = {
             sarNoFlood: 'Sin inundación',
             hints: {
                 cwsiHigh: 'CWSI elevado.',
+                ksHigh: 'Poca agua en el suelo (Ks).',
                 mdsCritical: 'Contracción crítica del tronco.',
                 deficit: 'Déficit hídrico significativo.',
             },
@@ -785,6 +801,13 @@ const ca = {
         diseaseRiskNone: 'Sense riscos de malaltia actius per a aquesta parcel·la',
         severity: { LOW: 'Saludable', MEDIUM: 'Vigilar', HIGH: 'Estressat', CRITICAL: 'Crític' },
         action: { noAction: 'Sense acció', monitor: 'Monitoritzar', irrigateScheduled: 'Programar reg', irrigateImmediate: 'REGAR ARA' },
+        waterStress: {
+            level: { none: 'Sense estrès', mild: 'Estrès lleu', moderate: 'Estrès moderat', high: 'Estrès alt', no_data: 'Sense dada', not_needed: 'Fase sense necessitat d\'aigua' },
+            note: { rdi: 'En aquesta fase un estrès moderat pot ser favorable si fas reg deficitari.' },
+            method: { cwsi_sensor: 'Sensor de temperatura de la capçada (CWSI)', balance: 'Balanç hídric (Ks)', none: 'Sense mètode disponible' },
+            phaseBasis: { gdd: 'Fase per graus-dia', gdd_ndvi: 'Fase per graus-dia i NDVI' },
+            technician: { title: 'Detall de l\'estrès hídric', baseline: 'Línia base de referència', upper: 'Límit superior', parcelBalance: 'Balanç de tota la parcel·la: les zones no tenen balanç propi.', sources: 'Fonts' },
+        },
         contextPanel: {
             loading: 'Carregant salut del cultiu...',
             noData: 'Sense dades de salut per a aquesta parcel·la',
@@ -1074,7 +1097,7 @@ const ca = {
         },
         detail: {
             soilProperties: 'Propietats del Sòl',
-            waterStress: 'Water stress',
+            waterStress: 'Estrès hídric',
             waterStressOpenField: 'Water stress (open field)',
             waterStressParcel: 'Estrès hídric (parcel·la)',
             waterStressUnderPanel: 'Water stress under panel',
@@ -1094,6 +1117,7 @@ const ca = {
             sarNoFlood: 'Sense inundació',
             hints: {
                 cwsiHigh: 'CWSI elevat.',
+                ksHigh: 'Poca aigua al sòl (Ks).',
                 mdsCritical: 'Contracció crítica del tronc.',
                 deficit: 'Dèficit hídric significatiu.',
                 sarFlooded: 'Inundació detectada per SAR.',
@@ -1122,6 +1146,13 @@ const eu = {
         diseaseRiskNone: 'Ez dago gaixotasun arrisku aktiborik partzela honetarako',
         severity: { LOW: 'Osasuntsu', MEDIUM: 'Zaindu', HIGH: 'Estresatua', CRITICAL: 'Kritikoa' },
         action: { noAction: 'Ez da ekintzarik behar', monitor: 'Monitorizatu', irrigateScheduled: 'Ureztatzea programatu', irrigateImmediate: 'UREZTATU ORAIN' },
+        waterStress: {
+            level: { none: 'Estresik ez', mild: 'Estres arina', moderate: 'Estres ertaina', high: 'Estres handia', no_data: 'Daturik ez', not_needed: 'Urik behar ez duen fasea' },
+            note: { rdi: 'Fase honetan, estres ertaina onuragarria izan daiteke ureztatze defizitarioa egiten baduzu.' },
+            method: { cwsi_sensor: 'Zuhaitz-hostoen tenperatura sentsorea (CWSI)', balance: 'Ur-balantzea (Ks)', none: 'Metodorik ez dago' },
+            phaseBasis: { gdd: 'Fasea gradu-egunen arabera', gdd_ndvi: 'Fasea gradu-egunen eta NDVIren arabera' },
+            technician: { title: 'Ur-estresaren xehetasuna', baseline: 'Erreferentziazko oinarri-lerroa', upper: 'Goiko muga', parcelBalance: 'Partzela osoaren balantzea: zonek ez dute balantze propiorik.', sources: 'Iturriak' },
+        },
         contextPanel: {
             loading: 'Laborantzaren osasuna kargatzen...',
             noData: 'Ez dago osasun daturik partzela honetarako',
@@ -1411,7 +1442,7 @@ const eu = {
         },
         detail: {
             soilProperties: 'Lurzoruaren Propietateak',
-            waterStress: 'Water stress',
+            waterStress: 'Ur-estresa',
             waterStressOpenField: 'Water stress (open field)',
             waterStressParcel: 'Ur-estresa (lursaila)',
             waterStressUnderPanel: 'Water stress under panel',
@@ -1431,6 +1462,7 @@ const eu = {
             sarNoFlood: 'Ez urez beteta',
             hints: {
                 cwsiHigh: 'CWSI altua.',
+                ksHigh: 'Lurzoruan ur eskasa (Ks).',
                 mdsCritical: 'Enbor kontrakzio kritikoa.',
                 deficit: 'Ur deficit handia.',
                 sarFlooded: 'SAR bidez uholdea detektatua.',
@@ -1459,6 +1491,13 @@ const fr = {
         diseaseRiskNone: 'Aucun risque de maladie actif pour cette parcelle',
         severity: { LOW: 'Sain', MEDIUM: 'Surveiller', HIGH: 'Stressé', CRITICAL: 'Critique' },
         action: { noAction: 'Aucune action', monitor: 'Surveiller', irrigateScheduled: 'Programmer l\'irrigation', irrigateImmediate: 'IRRIGUER MAINTENANT' },
+        waterStress: {
+            level: { none: 'Pas de stress', mild: 'Stress léger', moderate: 'Stress modéré', high: 'Stress élevé', no_data: 'Pas de donnée', not_needed: 'Stade sans besoin en eau' },
+            note: { rdi: 'À ce stade, un stress modéré peut être favorable si vous pratiquez l\'irrigation déficitaire.' },
+            method: { cwsi_sensor: 'Capteur de température du feuillage (CWSI)', balance: 'Bilan hydrique (Ks)', none: 'Aucune méthode disponible' },
+            phaseBasis: { gdd: 'Stade selon les degrés-jours', gdd_ndvi: 'Stade selon les degrés-jours et le NDVI' },
+            technician: { title: 'Détail du stress hydrique', baseline: 'Ligne de base de référence', upper: 'Limite supérieure', parcelBalance: 'Bilan de toute la parcelle : les zones n\'ont pas de bilan propre.', sources: 'Sources' },
+        },
         contextPanel: {
             loading: 'Chargement de la santé des cultures...',
             noData: 'Pas de données de santé pour cette parcelle',
@@ -1748,7 +1787,7 @@ const fr = {
         },
         detail: {
             soilProperties: 'Propriétés du Sol',
-            waterStress: 'Water stress',
+            waterStress: 'Stress hydrique',
             waterStressOpenField: 'Water stress (open field)',
             waterStressParcel: 'Stress hydrique (parcelle)',
             waterStressUnderPanel: 'Water stress under panel',
@@ -1768,6 +1807,7 @@ const fr = {
             sarNoFlood: 'Pas d\'inondation',
             hints: {
                 cwsiHigh: 'CWSI élevé.',
+                ksHigh: 'Peu d\'eau dans le sol (Ks).',
                 mdsCritical: 'Rétrécissement critique du tronc.',
                 deficit: 'Déficit hydrique significatif.',
                 sarFlooded: 'Inondation détectée par SAR.',
@@ -1796,6 +1836,13 @@ const pt = {
         diseaseRiskNone: 'Sem riscos de doença ativos para esta parcela',
         severity: { LOW: 'Saudável', MEDIUM: 'Monitorizar', HIGH: 'Estressado', CRITICAL: 'Crítico' },
         action: { noAction: 'Nenhuma ação', monitor: 'Monitorizar', irrigateScheduled: 'Programar irrigação', irrigateImmediate: 'IRRIGAR AGORA' },
+        waterStress: {
+            level: { none: 'Sem stress', mild: 'Stress ligeiro', moderate: 'Stress moderado', high: 'Stress elevado', no_data: 'Sem dados', not_needed: 'Fase sem necessidade de água' },
+            note: { rdi: 'Nesta fase, um stress moderado pode ser favorável se fizer rega deficitária.' },
+            method: { cwsi_sensor: 'Sensor de temperatura do coberto (CWSI)', balance: 'Balanço hídrico (Ks)', none: 'Nenhum método disponível' },
+            phaseBasis: { gdd: 'Fase por graus-dia', gdd_ndvi: 'Fase por graus-dia e NDVI' },
+            technician: { title: 'Detalhe do stress hídrico', baseline: 'Linha de base de referência', upper: 'Limite superior', parcelBalance: 'Balanço de toda a parcela: as zonas não têm balanço próprio.', sources: 'Fontes' },
+        },
         contextPanel: {
             loading: 'Carregando saúde da cultura...',
             noData: 'Sem dados de saúde para esta parcela',
@@ -2085,7 +2132,7 @@ const pt = {
         },
         detail: {
             soilProperties: 'Propriedades do Solo',
-            waterStress: 'Water stress',
+            waterStress: 'Stress hídrico',
             waterStressOpenField: 'Water stress (open field)',
             waterStressParcel: 'Stresse hídrico (parcela)',
             waterStressUnderPanel: 'Water stress under panel',
@@ -2105,6 +2152,7 @@ const pt = {
             sarNoFlood: 'Sem inundação',
             hints: {
                 cwsiHigh: 'CWSI elevado.',
+                ksHigh: 'Pouca água no solo (Ks).',
                 mdsCritical: 'Encolhimento crítico do tronco.',
                 deficit: 'Déficit hídrico significativo.',
                 sarFlooded: 'Inundação detetada por SAR.',

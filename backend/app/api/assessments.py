@@ -458,7 +458,7 @@ async def _history_points(
         settings = get_settings()
         start = from_ or (datetime.now(timezone.utc).date() - timedelta(days=days))
         params = {
-            "attrs": "cwsiValue,mdsValue,waterBalanceDeficit,compositeStressIndex,overallSeverity",
+            "attrs": "cwsiValue,mdsValue,waterBalanceDeficit,compositeStressIndex,overallSeverity,waterStressLevel",
             "limit": 500,
             "from": f"{start.isoformat()}T00:00:00Z",
         }
@@ -479,6 +479,7 @@ async def _history_points(
                 "balance": p.get("waterBalanceDeficit"),
                 "composite": p.get("compositeStressIndex"),
                 "severity": p.get("overallSeverity"),
+                "waterStressLevel": p.get("waterStressLevel"),
             }
             for p in result.get("data", [])
         ]

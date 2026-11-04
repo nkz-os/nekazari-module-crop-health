@@ -5,7 +5,15 @@ import { SlotShell } from '@nekazari/viewer-kit';
 import { cropHealthFetch, navigateToCropHealthParcel } from '../api/cropHealthApi';
 import { CROP_HEALTH_ACCENT } from '../constants';
 import { SeverityBadge } from './shared/SeverityBadge';
+import { levelIntent, levelKey, type LevelIntent } from '../utils/waterStress';
 import type { AssessmentData } from '../types/assessment';
+
+const LEVEL_TEXT_CLASS: Record<LevelIntent, string> = {
+  positive: 'text-nkz-success',
+  warning: 'text-nkz-warning',
+  negative: 'text-nkz-danger',
+  neutral: 'text-nkz-text-muted',
+};
 
 type ActionKey = 'NO_ACTION' | 'MONITOR' | 'IRRIGATE_SCHEDULED' | 'IRRIGATE_IMMEDIATE';
 
@@ -88,12 +96,10 @@ const CropHealthWidget: React.FC = () => {
               </div>
 
               <div className="grid grid-cols-2 gap-2">
-                {a.cwsiValue !== undefined && (
-                  <div>
-                    <span className="text-xs text-nkz-text-secondary font-medium uppercase tracking-wider">{t('metrics.cwsi')}</span>
-                    <MiniProgress value={a.cwsiValue * 100} intent={a.cwsiValue > 0.6 ? 'negative' : a.cwsiValue > 0.3 ? 'warning' : 'positive'} />
-                  </div>
-                )}
+                <div>
+                  <span className="text-xs text-nkz-text-secondary font-medium uppercase tracking-wider">{t('detail.waterStress')}</span>
+                  <p className={`text-xs font-medium ${LEVEL_TEXT_CLASS[levelIntent(a.waterStressLevel)]}`}>{t(levelKey(a.waterStressLevel))}</p>
+                </div>
                 {a.compositeStressIndex !== undefined && (
                   <div>
                     <span className="text-xs text-nkz-text-secondary font-medium uppercase tracking-wider">{t('metrics.stress')}</span>

@@ -18,6 +18,7 @@ from __future__ import annotations
 import dataclasses
 import logging
 import math
+import statistics
 from datetime import date, datetime, timedelta, timezone
 
 import httpx
@@ -34,9 +35,20 @@ from app.engines.under_panel_stress import (
     valid_theta_readings,
 )
 from app.engines.phenology_progress import derive_stage_from_gdd
-from app.engines.water_stress import cwsi_with_weather
+from app.engines.senescence import end_of_season_reached
+from app.engines.water_stress_level import CWSI_CUTS, resolve_indicator, severity_name
+from app.engines.water_stress import (
+    CLEAR_SKY_MIN_RS_RSO,
+    cwsi_from_baseline,
+    in_solar_window,
+    select_baseline,
+    sky_clear,
+    solar_hour,
+)
 from app.schemas import (
     CropHealthAssessment,
+    CWSIResult,
+    InstantValue,
     MetricType,
     RecommendedAction,
     Severity,
@@ -101,18 +113,208 @@ _DEPLETION_FRACTION_P: dict[str, float] = {
     "CITSI": 0.50,  # citrus
 }
 
-def _safe_cwsi(*, ctx: tuple, **kwargs):
-    """cwsi_with_weather that never raises: unusable inputs give None, not a fake value."""
+# The day's sensor CWSI (spec §9b): every valid in-window result is kept per parcel
+# (and zone) for the local solar day, and the day's value is their median, so a later
+# webhook without a leaf reading keeps the day's level. Nothing carries to the next day.
+_CWSI_DAY_TTL_S = 36 * 3600
+# ASSUMPTION: at most 288 stored results per day (one every 5 min) bound the Redis value.
+_CWSI_DAY_MAX_RESULTS = 288
+
+
+def _cwsi_day_key(tenant_id: str, parcel_id: str, zone_id: str | None, day: date) -> str:
+    return f"cwsi_day:{tenant_id}:{parcel_id}:{zone_id or 'parcel'}:{day.isoformat()}"
+
+
+async def _local_solar_day(tenant_id: str, parcel_id: str, now: datetime) -> date:
+    """Local solar date at ``now`` (UTC + longitude / 15 h, coordinates cached in-process)."""
+    coords = await context_client._resolve_parcel_coords(parcel_id, tenant_id)
+    if coords:
+        return (now.astimezone(timezone.utc) + timedelta(hours=float(coords[1]) / 15.0)).date()
+    # ASSUMPTION: without the parcel longitude the UTC date stands in for the solar date
+    # (they differ only within |lon|/15 h of midnight, far from the noon CWSI window).
+    return now.astimezone(timezone.utc).date()
+
+
+def _median_cwsi(results: list[CWSIResult]) -> CWSIResult:
+    """The day's CWSI: median value; the other fields are those of the upper-median result."""
+    ordered = sorted(results, key=lambda r: r.cwsi)
+    rep = ordered[len(ordered) // 2]
+    return rep.model_copy(update={"cwsi": round(statistics.median(r.cwsi for r in ordered), 4)})
+
+
+async def _day_cwsi(
+    day_store, tenant_id: str, parcel_id: str, zone_id: str | None, now: datetime,
+    current: CWSIResult | None,
+) -> CWSIResult | None:
+    """Store ``current`` (when given) and return the median of the day's stored results.
+
+    Any store failure degrades to ``current`` with a warning: the call never raises.
+    """
+    if day_store is None or not callable(getattr(day_store, "get_json", None)):
+        return current
     try:
-        return cwsi_with_weather(**kwargs)
-    except ValueError as exc:
-        tenant_id, parcel_id, species, stage = ctx
+        day = await _local_solar_day(tenant_id, parcel_id, now)
+        key = _cwsi_day_key(tenant_id, parcel_id, zone_id, day)
+        stored = await day_store.get_json(key)
+        entries = list((stored or {}).get("results") or [])
+        if current is not None:
+            entries.append({"ts": now.timestamp(), "result": current.model_dump()})
+            entries = entries[-_CWSI_DAY_MAX_RESULTS:]
+            await day_store.set_json(key, {"results": entries}, _CWSI_DAY_TTL_S)
+    except Exception as exc:  # noqa: BLE001 -- fail-safe: the current result still counts
         logger.warning(
-            "CWSI skipped: %s tenant=%s parcel=%s species=%s stage=%s temp_source=%s d1=%r d2=%r",
-            exc, tenant_id, parcel_id, species, stage,
-            kwargs.get("temp_source"), kwargs.get("d1"), kwargs.get("d2"),
+            "CWSI day store unavailable tenant=%s parcel=%s zone=%s: %s", tenant_id, parcel_id, zone_id, exc,
+        )
+        return current
+    parsed: list[CWSIResult] = []
+    for entry in entries:
+        try:
+            parsed.append(CWSIResult.model_validate(entry["result"]))
+        except Exception as exc:  # noqa: BLE001 -- one bad entry must not drop the day
+            logger.warning("CWSI day store: malformed entry skipped key=%s: %s", key, exc)
+    if not parsed:
+        return current
+    return _median_cwsi(parsed)
+
+
+async def _ir_cwsi_from_baseline(
+    readings, *, weather, phenology, stage, cultivar, tenant_id, parcel_id, now,
+):
+    """CWSI from IR readings and the published baseline; None (with a logged reason) when
+    any input is missing or outside the baseline's validity. Never raises."""
+    species = getattr(phenology, "species", None)
+    try:
+        return await _ir_cwsi_unguarded(
+            readings, weather=weather, phenology=phenology, stage=stage, cultivar=cultivar,
+            tenant_id=tenant_id, parcel_id=parcel_id, now=now,
+        )
+    except (ValueError, TypeError, AttributeError, ArithmeticError) as exc:
+        logger.warning(
+            "CWSI skipped: unusable inputs (%s) parcel=%s species=%s", exc, parcel_id, species,
         )
         return None
+
+
+async def _ir_cwsi_unguarded(
+    readings, *, weather, phenology, stage, cultivar, tenant_id, parcel_id, now,
+):
+    ref = getattr(phenology, "water_stress_reference", None)
+    species = getattr(phenology, "species", None)
+    if ref is None:
+        logger.info(
+            "CWSI skipped: no published baseline tenant=%s parcel=%s species=%s stage=%s",
+            tenant_id, parcel_id, species, stage,
+        )
+        return None
+    coords = await context_client._resolve_parcel_coords(parcel_id, tenant_id)
+    if not coords:
+        logger.info(
+            "CWSI skipped: parcel longitude unavailable tenant=%s parcel=%s", tenant_id, parcel_id,
+        )
+        return None
+    lon = coords[1]  # (lat, lon)
+    now_h = solar_hour(now.timestamp(), lon)
+    lat = coords[0]
+    base = select_baseline(ref, stage, cultivar, now_h, lat, now.timestamp())
+    if base is None:
+        logger.info(
+            "CWSI skipped: no published baseline valid now (outside window or latitude unusable) tenant=%s parcel=%s species=%s stage=%s",
+            tenant_id, parcel_id, species, stage,
+        )
+        return None
+    # ASSUMPTION: same plausible range as air temperature
+    lo, hi = _AIR_TEMP_RANGE_C
+    in_window = [
+        r for r in readings
+        if math.isfinite(r.value) and lo <= r.value <= hi
+        and in_solar_window(base, solar_hour(r.ts, lon), lat, r.ts)
+    ]
+    if not in_window:
+        logger.info(
+            "CWSI skipped: no valid IR reading inside the baseline solar window tenant=%s parcel=%s baseline=%s",
+            tenant_id, parcel_id, base.id,
+        )
+        return None
+    reading_ts = max(r.ts for r in in_window)
+    # Air and humidity of the same moment (spec §5.1, §14), chosen per variable: the
+    # parcel's own open-field sensor, else an hourly WeatherObserved linked to the parcel
+    # within an hour of the reading. A daily mean (weather-map, zone series), an
+    # under-panel sensor or another parcel's station never pairs with a leaf reading.
+    air = _instant_value(weather, "air_temp_c", reading_ts)
+    rh = _instant_value(weather, "rh_pct", reading_ts)
+    if air is None or rh is None:
+        logger.info(
+            "CWSI skipped: air not instantaneous tenant=%s parcel=%s air=%s rh=%s candidates=%s",
+            tenant_id, parcel_id, air.source if air else None, rh.source if rh else None,
+            {v: [c.source for c in cs] for v, cs in (weather.instantaneous or {}).items()},
+        )
+        return None
+    result = cwsi_from_baseline(
+        statistics.median(r.value for r in in_window),
+        air.value,
+        rh.value,
+        base,
+        now_h,
+        lat_deg=lat,
+        ts_unix=now.timestamp(),
+        data_fidelity="onsite_calibrated",
+        temp_source="leaf_temperature",
+    )
+    if result is None:
+        logger.info(
+            "CWSI skipped: outside baseline validity (solar hour, VPD range or minimum VPD, or UL<=NWSB)"
+            " tenant=%s parcel=%s baseline=%s", tenant_id, parcel_id, base.id,
+        )
+        return None
+    if base.valid.clear_sky:
+        rs_value = _instant_value(weather, "solar_radiation_wm2", reading_ts)
+        rs = rs_value.value if rs_value else None
+        clear = sky_clear(rs, coords[0], lon, reading_ts, _PARCEL_ELEVATION_M)
+        if clear is False:
+            logger.info(
+                "CWSI skipped: sky not clear (Rs=%.0f W/m2 below %.2f of clear-sky Rso) tenant=%s parcel=%s"
+                " baseline=%s", rs, CLEAR_SKY_MIN_RS_RSO, tenant_id, parcel_id, base.id,
+            )
+            return None
+        # ASSUMPTION: with the sky unknown only a raise is trusted: clouds lower Tc - Ta,
+        # so a value below the stress onset may be overcast and falls back to the balance.
+        if clear is None and result.cwsi < CWSI_CUTS["mild"]:
+            logger.info(
+                "CWSI skipped: sky unknown and CWSI %.2f below stress onset tenant=%s parcel=%s baseline=%s",
+                result.cwsi, tenant_id, parcel_id, base.id,
+            )
+            return None
+    return result
+
+
+# A reading pairs with another variable only within this time (spec §5.1 "same moment").
+_INSTANT_MAX_SKEW_S = 3600.0
+# ASSUMPTION: parcel elevation unknown to crop-health; z = 0 m in FAO-56 eq. 37
+# (Rso is underestimated by 2e-5*z/0.75, about 2.7 % at 1000 m: a slightly easier pass).
+_PARCEL_ELEVATION_M = 0.0
+
+
+def _instant_value(weather, var: str, reading_ts: float) -> InstantValue | None:
+    """The first candidate of ``var`` usable with a leaf reading at ``reading_ts``, or None.
+
+    Candidates come from ``weather.instantaneous`` (best first), never from the
+    precedence-resolved snapshot: a fresh open-field parcel sensor (``iot_sensor``)
+    qualifies; a WeatherObserved linked to the parcel (``regional_proxy``) only with an
+    observation time within an hour of the reading.
+    """
+    for cand in (getattr(weather, "instantaneous", None) or {}).get(var, []):
+        if not math.isfinite(cand.value):
+            continue
+        observed = cand.observed_ts
+        within = (
+            observed is not None and math.isfinite(observed)
+            and abs(reading_ts - observed) <= _INSTANT_MAX_SKEW_S
+        )
+        if cand.source == "iot_sensor" and (observed is None or within):
+            return cand
+        if cand.source == "regional_proxy" and within:
+            return cand
+    return None
 
 
 def _resolve_depletion_fraction(crop_context) -> float:
@@ -142,20 +344,22 @@ def _determine_overall_severity(assessment: CropHealthAssessment) -> Severity:
     """
     severities: list[Severity] = []
 
-    if assessment.cwsi:
-        if assessment.cwsi.cwsi >= 0.7:
-            severities.append(Severity.CRITICAL)
-        elif assessment.cwsi.cwsi >= 0.5:
-            severities.append(Severity.HIGH)
-        elif assessment.cwsi.cwsi >= 0.3:
-            severities.append(Severity.MEDIUM)
-        else:
-            severities.append(Severity.LOW)
+    indicator = assessment.water_stress_indicator
+    if indicator is None:
+        indicator = resolve_indicator(assessment.cwsi, assessment.water_stress, None)
+    level_sev = severity_name(indicator.level)
+    if level_sev is not None:
+        severities.append(Severity(level_sev))
 
     if assessment.mds:
         severities.append(assessment.mds.severity)
 
-    if assessment.water_balance and assessment.water_balance.deficit:
+    # A stage that needs no water raises no water alarm of any kind.
+    if (
+        indicator.level != "not_needed"
+        and assessment.water_balance
+        and assessment.water_balance.deficit
+    ):
         if assessment.water_balance.balance_mm < -15:
             severities.append(Severity.CRITICAL)
         elif assessment.water_balance.balance_mm < -5:
@@ -169,6 +373,202 @@ def _determine_overall_severity(assessment: CropHealthAssessment) -> Severity:
     # Worst-case ordering
     order = {Severity.LOW: 0, Severity.MEDIUM: 1, Severity.HIGH: 2, Severity.CRITICAL: 3}
     return max(severities, key=lambda s: order[s])
+
+
+POST_MATURITY_STAGE = "post_maturity"
+# ASSUMPTION: with no known season start the NDVI window looks back 240 days.
+_NDVI_SEASON_FALLBACK_DAYS = 240
+# Orion page for one season of per-parcel/zone EOProducts (one per sensing date).
+_NDVI_SERIES_LIMIT = 500
+
+
+def _stage_at_or_after(stage_table, stage: str | None, gate: str) -> bool:
+    """True when ``stage`` is ``gate`` or later in the stage table order (by GDD)."""
+    stages = stage_table.stages if isinstance(stage_table, StageTable) else (stage_table or {})
+    if stage is None or stage not in stages or gate not in stages:
+        return False
+    ordered = [name for name, _ in sorted(stages.items(), key=lambda kv: kv[1][0])]
+    return ordered.index(stage) >= ordered.index(gate)
+
+
+def _season_window_start(season_start: str | None, now: datetime) -> date:
+    if season_start:
+        try:
+            return date.fromisoformat(str(season_start)[:10])
+        except ValueError:
+            logger.warning("post-maturity: bad season_start %r — using %d days back",
+                           season_start, _NDVI_SEASON_FALLBACK_DAYS)
+    return now.date() - timedelta(days=_NDVI_SEASON_FALLBACK_DAYS)
+
+
+# The season series changes at most once per new scene: one Orion read per parcel/zone per day.
+_NDVI_SERIES_TTL_S = 26 * 3600
+
+
+async def _season_ndvi_series(
+    cache, tenant_id: str, parcel_id: str, zone_urn: str | None, since: date, now: datetime,
+) -> list[tuple[date, float]]:
+    """``_fetch_ndvi_series`` cached in Redis per parcel/zone, day and window start.
+
+    An empty series is not cached (it cannot be told from a failed read); any cache
+    failure falls back to the Orion read.
+    """
+    usable = cache is not None and callable(getattr(cache, "get_json", None))
+    key = (
+        f"ndvi_series:{tenant_id}:{parcel_id}:{zone_urn or 'parcel'}:"
+        f"{now.astimezone(timezone.utc).date().isoformat()}:{since.isoformat()}"
+    )
+    if usable:
+        try:
+            stored = await cache.get_json(key)
+            if stored and isinstance(stored.get("series"), list):
+                return [(date.fromisoformat(d), float(v)) for d, v in stored["series"]]
+        except Exception as exc:  # noqa: BLE001 -- the cache is an optimisation only
+            logger.warning("NDVI series cache unreadable key=%s: %s", key, exc)
+    series = await _fetch_ndvi_series(tenant_id, parcel_id, zone_urn, since)
+    if usable and series:
+        try:
+            await cache.set_json(
+                key, {"series": [[d.isoformat(), v] for d, v in series]}, _NDVI_SERIES_TTL_S,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("NDVI series cache not written key=%s: %s", key, exc)
+    return series
+
+
+async def _resolve_stage_flags(
+    ref, gdd_stage: str | None, stage_table, *, tenant_id: str, parcel_id: str,
+    zone_urn: str | None, season_start: str | None, now: datetime, cache=None,
+):
+    """Stage flags for the level and where they came from (``"gdd"`` | ``"gdd_ndvi"`` | None).
+
+    Post-maturity flags apply only when the reference carries them and a senescence
+    rule, the GDD-derived stage is at or after the rule's gate stage, AND the NDVI
+    season series confirms the end of season. GDD alone never declares it; no series
+    or too few points keeps the normal stage flags (the alert stays).
+    """
+    if ref is None or gdd_stage is None:
+        return None, None
+    rule = ref.senescence
+    post = ref.stages.get(POST_MATURITY_STAGE)
+    if rule is not None and post is not None and _stage_at_or_after(stage_table, gdd_stage, rule.gate_stage):
+        series = await _season_ndvi_series(
+            cache, tenant_id, parcel_id, zone_urn, _season_window_start(season_start, now), now,
+        )
+        if end_of_season_reached(series, float(rule.end_fraction)) is True:
+            return post, "gdd_ndvi"
+    flags = ref.stages.get(gdd_stage)
+    return flags, ("gdd" if flags is not None else None)
+
+
+def _refresh_rollup_level(
+    rollup: CropHealthAssessment,
+    phenology,
+    zone_results: list[CropHealthAssessment] | None = None,
+    *,
+    parcel_gdd: float | None = None,
+    stage_table=None,
+) -> None:
+    """Re-resolve the water-stress level once the parcel-level Ks exists.
+
+    Zones are assessed without the parcel's water stress, so the rollup's inherited
+    indicator can be no_data. A sensor-CWSI level is already final; any other is
+    resolved again from the rollup's Ks, and severity/action are updated before any
+    event is emitted. A not_needed stage recomputes severity from scratch (no water alarm);
+    otherwise the worse of the zone-derived severity and the new level wins.
+
+    Post-maturity applies at parcel level only when EVERY zone that has a phase basis
+    reports ``gdd_ndvi`` AND the parcel's own GDD stage passes the rule's gate; one
+    confirming zone must not switch off the parcel's water alarm. Otherwise the
+    parcel's GDD-stage flags apply (basis ``gdd``).
+    """
+    ref = getattr(phenology, "water_stress_reference", None) if phenology else None
+    parcel_stage = (
+        derive_stage_from_gdd(parcel_gdd, stage_table)
+        if (parcel_gdd is not None and stage_table) else None
+    )
+    # Unanimity over ALL assessed zones: a zone with no phase basis blocks it too.
+    bases = [z.water_stress_phase_basis for z in (zone_results or [rollup])]
+    rule = ref.senescence if ref is not None else None
+    post_flags = ref.stages.get(POST_MATURITY_STAGE) if ref is not None else None
+    unanimous = bool(
+        bases and all(b == "gdd_ndvi" for b in bases)
+        and rule is not None and post_flags is not None
+        and parcel_stage is not None
+        and _stage_at_or_after(stage_table, parcel_stage, rule.gate_stage)
+    )
+    old = rollup.water_stress_indicator
+    if old is not None and old.method == "cwsi_sensor":
+        # Final, unless it was inherited from a zone's post-maturity that the parcel does not share.
+        if not (rollup.water_stress_phase_basis == "gdd_ndvi" and not unanimous):
+            return
+    if unanimous:
+        flags = post_flags
+        rollup.water_stress_phase_basis = "gdd_ndvi"
+    else:
+        stage = parcel_stage
+        if stage is None:
+            stage = rollup.phenology_stage if rollup.gdd_accumulated is not None else None
+        flags = ref.stages.get(stage) if (ref is not None and stage is not None) else None
+        rollup.water_stress_phase_basis = "gdd" if flags is not None else None
+        if parcel_stage is not None:
+            rollup.phenology_stage = parcel_stage  # published stage agrees with the flags used
+    rollup.water_stress_indicator = resolve_indicator(
+        rollup.cwsi, rollup.water_stress, flags, reference=ref,
+    )
+    new_sev = _determine_overall_severity(rollup)
+    if rollup.water_stress_indicator.level != "not_needed":
+        new_sev = max(new_sev, rollup.overall_severity, key=_SEV_RANK.__getitem__)
+    rollup.overall_severity = new_sev
+    rollup.recommended_action = _determine_action(new_sev)
+
+
+def _apply_parcel_balance_to_zones(
+    zone_results: list[CropHealthAssessment], rollup: CropHealthAssessment, phenology,
+) -> None:
+    """Zones carry no Ks of their own: a zone with no level method (no CWSI) takes the
+    parcel's balance level, resolved with the zone's own stage flags (method ``balance``).
+
+    Severity and action of the zone follow the new level as on the rollup. No parcel
+    Ks leaves the zones as they are (``no_data``).
+    """
+    ws = rollup.water_stress
+    if ws is None or ws.index is None:
+        return
+    ref = getattr(phenology, "water_stress_reference", None) if phenology else None
+    for z in zone_results:
+        ind = z.water_stress_indicator
+        if ind is not None and ind.method != "none":
+            continue
+        z.water_stress_indicator = resolve_indicator(
+            None, ws, z.water_stress_stage_flags, reference=ref,
+        )
+        new_sev = _determine_overall_severity(z)
+        if z.water_stress_indicator.level != "not_needed":
+            new_sev = max(new_sev, z.overall_severity, key=_SEV_RANK.__getitem__)
+        z.overall_severity = new_sev
+        z.recommended_action = _determine_action(new_sev)
+
+
+def _crop_requirements(rollup: CropHealthAssessment):
+    """Irrigation need from the soil water balance; none in a stage that needs no water."""
+    from app.schemas import CropRequirements
+
+    irrigation_mm = None
+    water_deficit_mm = None
+    swb = rollup.soil_water_balance
+    if swb:
+        water_deficit_mm = swb.deficit_mm
+        not_needed = (
+            rollup.water_stress_indicator is not None
+            and rollup.water_stress_indicator.level == "not_needed"
+        )
+        if swb.stress_level in ("high", "critical") and not not_needed:
+            irrigation_mm = water_deficit_mm
+    return CropRequirements(irrigation_mm=irrigation_mm, water_deficit_mm=water_deficit_mm)
+
+
+_SEV_RANK = {Severity.LOW: 0, Severity.MEDIUM: 1, Severity.HIGH: 2, Severity.CRITICAL: 3}
 
 
 def _determine_action(severity: Severity) -> RecommendedAction:
@@ -215,6 +615,9 @@ _WATER_STRESS_OPTIONAL_ATTRS = (
     "waterStressIndex", "waterStressObservedAt", "shadeFraction", "shadeObservedAt",
     "underPanelWaterStressIndex", "underPanelWaterStressFidelity",
     "underPanelWaterStressObservedAt",
+    "waterStressLevel", "waterStressMethod", "waterStressPhaseNote",
+    "waterStressReferenceSources", "waterStressPhaseBasis", "cwsiBaselineId",
+    "cwsiValue", "vpdKpa", "cwsiDataFidelity", "cwsiTempSource",
 )
 _AIR_TEMP_RANGE_C = (-50.0, 60.0)
 _RH_RANGE_PCT = (0.0, 100.0)
@@ -324,21 +727,52 @@ def _mean_in_range(readings: list, lo: float, hi: float) -> float | None:
     return sum(vals) / len(vals) if vals else None
 
 
-async def _sensor_air_ctx(redis_state, tenant_id: str, parcel_id: str, now_ts: float) -> dict:
-    """Air temperature / RH from fresh parcel sensors, in the shape resolve_meteo_context expects."""
+async def _air_rh_ctx(read, redis_state, tenant_id: str, parcel_id: str, now_ts: float) -> dict:
+    """Mean air temperature / RH of the readings ``read(metric)`` returns, plus the open-field pyranometer."""
     ctx: dict = {}
-    temp = _mean_in_range(
-        await _read_pooled(redis_state, tenant_id, parcel_id, MetricType.AIR_TEMPERATURE.value, now_ts),
-        *_AIR_TEMP_RANGE_C,
-    )
+    temp = _mean_in_range(await read(MetricType.AIR_TEMPERATURE.value), *_AIR_TEMP_RANGE_C)
     if temp is not None:
         ctx["air_temp_c"] = temp
-    rh = _mean_in_range(
-        await _read_pooled(redis_state, tenant_id, parcel_id, MetricType.RELATIVE_HUMIDITY.value, now_ts),
-        *_RH_RANGE_PCT,
-    )
+    rh = _mean_in_range(await read(MetricType.RELATIVE_HUMIDITY.value), *_RH_RANGE_PCT)
     if rh is not None:
         ctx["rh_pct"] = rh
+    ctx.update(await _open_field_pyranometer(redis_state, tenant_id, parcel_id, now_ts))
+    return ctx
+
+
+async def _sensor_air_ctx(redis_state, tenant_id: str, parcel_id: str, now_ts: float) -> dict:
+    """Air temperature / RH from fresh parcel sensors, in the shape resolve_meteo_context expects."""
+    async def read(metric: str) -> list:
+        return await _read_pooled(redis_state, tenant_id, parcel_id, metric, now_ts)
+
+    return await _air_rh_ctx(read, redis_state, tenant_id, parcel_id, now_ts)
+
+
+async def _cwsi_sensor_ctx(redis_state, tenant_id: str, parcel_id: str, now_ts: float) -> dict:
+    """Instantaneous air / RH / Rs for the open-field CWSI from the parcel's OPEN-FIELD sensors only.
+
+    Under-panel air and humidity are a different microclimate and never pair with an
+    open-field leaf reading (spec §14 R3); they stay pooled only in ``_sensor_air_ctx``.
+    """
+    async def read(metric: str) -> list:
+        return await _read_parcel_readings(redis_state, tenant_id, parcel_id, OPEN_FIELD, metric, now_ts)
+
+    return await _air_rh_ctx(read, redis_state, tenant_id, parcel_id, now_ts)
+
+
+async def _open_field_pyranometer(redis_state, tenant_id: str, parcel_id: str, now_ts: float) -> dict:
+    """The parcel's own open-field pyranometer (sky check of the CWSI), latest fresh reading."""
+    ctx: dict = {}
+    pyr = [
+        r for r in await _read_parcel_readings(
+            redis_state, tenant_id, parcel_id, OPEN_FIELD, MetricType.SOLAR_RADIATION.value, now_ts,
+        )
+        if r.unit_code in (None, _GHI_UNIT_CODE) and math.isfinite(r.value) and r.value >= 0
+    ]
+    if pyr:
+        latest = max(pyr, key=lambda r: r.ts)
+        ctx["solar_radiation_wm2"] = latest.value
+        ctx["solar_radiation_wm2_observed_ts"] = latest.ts
     return ctx
 
 
@@ -583,6 +1017,7 @@ async def trigger(
 
     # GDD with resolved season start (field-op reality > AgriCrop plan > default)
     gdd = None
+    season_start = None
     try:
         from app.services.context_client import resolve_season_start
 
@@ -609,6 +1044,7 @@ async def trigger(
     meteo = await resolve_meteo_context(
         effective_parcel, tenant_id,
         sensor_ctx=await _sensor_air_ctx(redis_state, tenant_id, effective_parcel, now_ts),
+        instant_sensor_ctx=await _cwsi_sensor_ctx(redis_state, tenant_id, effective_parcel, now_ts),
         weather_map_fn=_weather_map_meteo,
         regional_fn=_regional_meteo,
     )
@@ -690,12 +1126,14 @@ async def trigger(
             parcel_balance=parcel_balance,
             now=now,
             stage_table=stage_table,
+            season_start=season_start,
             publish=True,
             daily_shade=daily_shade,
             shade_observed_at=shade_observed_at,
             et0_fidelity=model_fidelity,
             parcel_stress=True,
             sensor_context=sensor_context,
+            day_store=redis_state,
         )
 
     # Zonal: the device's window-engines run for its zone; others sensorless.
@@ -735,12 +1173,14 @@ async def trigger(
                 parcel_balance=parcel_balance,
                 now=now,
                 stage_table=stage_table,
+                season_start=season_start,
                 publish=False,
                 daily_shade=daily_shade,
                 shade_observed_at=shade_observed_at,
                 et0_fidelity=et0_fidelity,
                 sensor_context=sensor_context if is_sensor else None,
                 fidelity_out=used_fidelity,
+                day_store=redis_state,
             )
         except Exception as exc:
             logger.warning("trigger: zone %s failed for %s — skipped: %s", z.zone_id, effective_parcel, exc)
@@ -759,7 +1199,6 @@ async def trigger(
             **{k: v for k, v in used_fidelity.items() if v in _KNOWN_FIDELITIES},
         }
         zone_results.append(a)
-        await _publish_assessment(a.to_zone_ngsi_ld(), tenant_id)
 
     if not zone_results:
         logger.warning("trigger: all zones failed for %s — no assessment", effective_parcel)
@@ -773,6 +1212,10 @@ async def trigger(
         rollup.soil_water_balance, model_fidelity, now_ts, daily_shade, root_depth_mm,
         shade_observed_at,
     )
+    _refresh_rollup_level(rollup, phenology, zone_results, parcel_gdd=gdd, stage_table=stage_table)
+    _apply_parcel_balance_to_zones(zone_results, rollup, phenology)
+    for a in zone_results:
+        await _publish_assessment(a.to_zone_ngsi_ld(), tenant_id)
     rollup_entity = rollup.to_ngsi_ld()
     if await _publish_assessment(rollup_entity, tenant_id):
         await _clear_stale_water_stress(rollup_entity, tenant_id)
@@ -811,6 +1254,8 @@ async def _run_engines(
     zone_urn: str | None = None,
     fidelity_out: dict | None = None,
     wetness_class: str | None = None,
+    season_start: str | None = None,
+    day_store=None,
 ) -> CropHealthAssessment:
     """Shared engine-fusion core.
 
@@ -832,6 +1277,9 @@ async def _run_engines(
 
     ``parcel_balance`` is the parcel's daily soil water balance (stepped once per
     closed day by the scheduled run); this function never steps it.
+
+    ``day_store`` (Redis) keeps the day's sensor CWSI per parcel/zone and the day's
+    NDVI season series; None disables both (no CWSI from earlier calls).
     """
     from_under_panel = sensor_context == UNDER_PANEL
 
@@ -840,43 +1288,48 @@ async def _run_engines(
     # stage is derived from GDD — deterministic regardless of which path
     # (sensor webhook vs scheduled compute) writes the daily-keyed entity.
     stage_table = stage_table or {}
+    # Only a GDD-derived stage may select a CWSI baseline; without GDD it stays None.
+    gdd_stage: str | None = None
     if gdd is not None and stage_table:
-        assessment.phenology_stage = derive_stage_from_gdd(gdd, stage_table)
+        gdd_stage = derive_stage_from_gdd(gdd, stage_table)
+        assessment.phenology_stage = gdd_stage
 
     # ── 2. Execute engines ───────────────────────────────────────────────
 
-    # CWSI (triggered by leaf temperature sensor)
-    if metric_type == MetricType.LEAF_TEMPERATURE.value and weather and not from_under_panel:
+    # CWSI from a published VPD-dependent baseline (IR leaf-temperature sensor).
+    # No water_stress_reference / baseline / RH / longitude -> no CWSI (Ks is the fallback).
+    if (
+        metric_type == MetricType.LEAF_TEMPERATURE.value
+        and weather
+        and weather.instantaneous.get("rh_pct")  # no instantaneous RH, no VPD, no CWSI
+        and not from_under_panel
+    ):
         readings = await redis_state.get_window(entity_id, "leafTemperature", hours=1)
         if readings:
-            latest_tc = readings[-1].value
-            assessment.cwsi = _safe_cwsi(
-                temp_canopy=latest_tc,
-                temp_air=weather.temp_air,
-                humidity_pct=weather.humidity_pct,
-                d1=phenology.d1,
-                d2=phenology.d2,
-                data_fidelity="onsite_calibrated",
-                temp_source="leaf_temperature",
-                ctx=(tenant_id, effective_parcel, getattr(phenology, "species", None), getattr(phenology, "stage", None)),
+            assessment.cwsi = await _ir_cwsi_from_baseline(
+                readings,
+                weather=weather,
+                phenology=phenology,
+                stage=gdd_stage,
+                cultivar=variety_name,
+                tenant_id=tenant_id,
+                parcel_id=effective_parcel,
+                now=now,
             )
 
-    # CWSI from satellite LST (sensorless / degraded path when no IR sensor)
-    if assessment.cwsi is None and weather and phenology.d1 is not None and phenology.d2 is not None:
-        lst_data = await _fetch_parcel_lst_with_date(effective_parcel, tenant_id)
-        if lst_data:
-            lst_val, lst_date = lst_data
-            assessment.cwsi = _safe_cwsi(
-                temp_canopy=lst_val,
-                temp_air=weather.temp_air,
-                humidity_pct=weather.humidity_pct,
-                d1=phenology.d1,
-                d2=phenology.d2,
-                data_fidelity="modeled_opendata",
-                temp_source="satellite_lst",
-                lst_sensing_date=lst_date if lst_date else None,
-                ctx=(tenant_id, effective_parcel, getattr(phenology, "species", None), getattr(phenology, "stage", None)),
-            )
+    # The day's CWSI: this call's result joins the day's; a call without one reads the
+    # day's median, so the level does not flip to the balance on the next webhook.
+    assessment.cwsi = await _day_cwsi(
+        day_store, tenant_id, effective_parcel, assessment.zone_id, now, assessment.cwsi,
+    )
+
+    # Satellite LST path: disabled in phase 1. Landsat LST has no per-pixel hourly
+    # meteo or scene time, so a VPD-dependent baseline cannot be applied honestly.
+    if assessment.cwsi is None:
+        logger.debug(
+            "CWSI satellite skipped: phase 2 (per-pixel hourly meteo and Landsat scene time)"
+            " tenant=%s parcel=%s", tenant_id, effective_parcel,
+        )
 
     # MDS (triggered by trunk diameter dendrómetro)
     if metric_type == MetricType.TRUNK_DIAMETER.value and not from_under_panel:
@@ -921,6 +1374,19 @@ async def _run_engines(
             redis_state, tenant_id, effective_parcel, soil, depletion_p, swb,
             et0_fidelity, _now_ts(), daily_shade, root_depth_mm, shade_observed_at,
         )
+
+    # The single water-stress level: sensor CWSI, else the Ks index, else no_data;
+    # the GDD stage's published flags may turn it into not_needed or add an RDI note.
+    _ref = getattr(phenology, "water_stress_reference", None) if phenology else None
+    _stage_flags, assessment.water_stress_phase_basis = await _resolve_stage_flags(
+        _ref, gdd_stage, stage_table, tenant_id=tenant_id, parcel_id=effective_parcel,
+        zone_urn=zone_urn, season_start=season_start or assessment.season_start, now=now,
+        cache=day_store,
+    )
+    assessment.water_stress_stage_flags = _stage_flags
+    assessment.water_stress_indicator = resolve_indicator(
+        assessment.cwsi, assessment.water_stress, _stage_flags, reference=_ref,
+    )
 
     # Thermal stress (triggered by leaf temperature or opportunistically with weather)
     if weather:
@@ -1171,6 +1637,11 @@ async def _run_engines(
             thermal_severity=thermal_sev, vigor_index=vigor_idx,
             stage=stage_name,
             ky_override=ky_by_stage,
+            fidelity=assessment.cwsi.data_fidelity if assessment.cwsi else assessment.data_fidelity,
+            water_not_needed=(
+                assessment.water_stress_indicator is not None
+                and assessment.water_stress_indicator.level == "not_needed"
+            ),
         )
     except Exception as exc:
         logger.warning("pipeline: composite stress evaluation failed for parcel %s — skipped: %s", effective_parcel, exc)
@@ -1352,6 +1823,13 @@ async def _emit_assessment_side_effects(
     """
     effective_parcel = assessment.parcel_id
     # ── 5. Publish to platform event bus ─────────────────────────────
+    # The single water-stress level travels with the events (additive keys).
+    indicator = getattr(assessment, "water_stress_indicator", None)
+    water_fields = {
+        "water_stress_level": indicator.level if indicator else "no_data",
+        "water_stress_method": indicator.method if indicator else "none",
+        "water_stress_phase_note": indicator.phase_note if indicator else None,
+    }
     try:
         event = {
             "event_type": "crop.assessment.completed",
@@ -1363,6 +1841,7 @@ async def _emit_assessment_side_effects(
             "overall_severity": assessment.overall_severity.value,
             "recommended_action": assessment.recommended_action.value,
             "phenology_source": assessment.phenology_source,
+            **water_fields,
             "timestamp": now.isoformat(),
         }
         await _publish_redis_event("crop:events", event)
@@ -1375,6 +1854,7 @@ async def _emit_assessment_side_effects(
                 "stage": stage_name,
                 "overall_severity": assessment.overall_severity.value,
                 "recommended_action": assessment.recommended_action.value,
+                **water_fields,
                 "timestamp": now.isoformat(),
             }
             await _publish_redis_event("crop:events", breach)
@@ -1558,9 +2038,13 @@ def _snapshot_from_meteo(meteo) -> WeatherSnapshot | None:
         return None
     return WeatherSnapshot(
         temp_air=meteo.air_temp_c,
-        humidity_pct=meteo.rh_pct if meteo.rh_pct is not None else 50.0,
+        humidity_pct=meteo.rh_pct,
         precip_mm=0.0,
         eto_mm=meteo.et0_mm if meteo.et0_mm is not None else 0.0,
+        radiation_wm2=getattr(meteo, "solar_radiation_wm2", None),
+        fidelity=dict(getattr(meteo, "fidelity", {}) or {}),
+        observed_at_ts=dict(getattr(meteo, "observed_at_ts", {}) or {}),
+        instantaneous=dict(getattr(meteo, "instantaneous", {}) or {}),
     )
 
 
@@ -1614,7 +2098,9 @@ async def _fetch_zone_daily(
 async def _regional_meteo(parcel_id: str, tenant_id: str) -> dict:
     """Regional fallback meteo from Orion WeatherObserved (fail-safe {}).
 
-    Queries the latest WeatherObserved for this parcel via Orion-LD.
+    Queries the latest WeatherObserved for this parcel via Orion-LD. Without one
+    linked to the parcel it falls back to the tenant's latest; ``parcel_linked`` says
+    which (the CWSI accepts only a linked observation; other users keep the fallback).
     Falls back to {} when no data exists or Orion is unreachable.
     """
     try:
@@ -1640,6 +2126,7 @@ async def _regional_meteo(parcel_id: str, tenant_id: str) -> dict:
                 headers=headers,
             )
             entities = resp.json() if resp.status_code == 200 else []
+            linked = bool(entities)
             # Fallback: latest WeatherObserved in the tenant
             if not entities:
                 resp = await cl.get(
@@ -1659,7 +2146,7 @@ async def _regional_meteo(parcel_id: str, tenant_id: str) -> dict:
             return {}
 
         wo = entities[0]
-        out: dict = {}
+        out: dict = {"parcel_linked": linked}
         # The platform context maps temperature/airTemperature (and
         # humidity/relativeHumidity) to one IRI; compaction picks either alias.
         temp = wo.get("temperature")
@@ -1886,6 +2373,7 @@ async def _assess_zone(
     input_fidelity: dict[str, str] | None = None,
     zone_soil: dict | None = None,
     zone_twi: dict | None = None,
+    day_store=None,
 ) -> CropHealthAssessment:
     """Compute one zone's assessment, reusing the existing engine core.
 
@@ -1966,6 +2454,7 @@ async def _assess_zone(
         et0_fidelity=meteo.fidelity.get("et0_mm", "unavailable"),
         zone_urn=None if whole else zone.urn,
         fidelity_out=used_fidelity,
+        day_store=day_store,
     )
     if not whole:
         # What the engines actually used overrides the optimistic defaults.
@@ -2189,13 +2678,12 @@ async def compute_assessment(
                 input_fidelity=zi.fidelity if zi else None,
                 zone_soil=zi.soil if zi else None,
                 zone_twi=zi.twi if zi else None,
+                day_store=redis_state,
             )
         except Exception as exc:  # best-effort per zone — one bad zone must not sink the rest
             logger.warning("compute_assessment: zone %s failed for %s — skipped: %s", z.zone_id, parcel_short, exc)
             continue
         zone_results.append(za)
-        if not whole:
-            await _publish_assessment(za.to_zone_ngsi_ld(), tenant_id)
 
     if not zone_results:
         logger.warning("compute_assessment: all zones failed for %s — no assessment", parcel_short)
@@ -2212,21 +2700,17 @@ async def compute_assessment(
         "parcel_weather" if rollup.soil_water_balance else "unavailable",
         now_ts, daily_shade, root_depth_mm, shade_observed_at,
     )
-
-    from app.schemas import CropRequirements
-
-    # Derive irrigation need from soil_water_balance
-    irrigation_mm = None
-    water_deficit_mm = None
-    if rollup.soil_water_balance:
-        water_deficit_mm = rollup.soil_water_balance.deficit_mm
-        if rollup.soil_water_balance.stress_level in ("high", "critical"):
-            irrigation_mm = water_deficit_mm
-
-    rollup.crop_requirements = CropRequirements(
-        irrigation_mm=irrigation_mm,
-        water_deficit_mm=water_deficit_mm,
+    _refresh_rollup_level(
+        rollup, phenology, zone_results,
+        parcel_gdd=crop_ctx["gdd"], stage_table=crop_ctx["thresholds"],
     )
+    if not whole:
+        _apply_parcel_balance_to_zones(zone_results, rollup, phenology)
+        for za in zone_results:
+            await _publish_assessment(za.to_zone_ngsi_ld(), tenant_id)
+
+    # Irrigation need from the soil water balance (none in a stage that needs no water).
+    rollup.crop_requirements = _crop_requirements(rollup)
 
     # Surface the committed crop's soil-suitability verdict on the scheduled path
     # too (same source as trigger(); cached 1h, circuit-breaker → None is safe).
@@ -3055,6 +3539,55 @@ async def _fetch_parcel_ndvi(
     except Exception as exc:
         logger.warning("_fetch_parcel_ndvi: failed for parcel %s — returning None: %s", parcel_id, exc)
     return None, "unavailable"
+
+
+def _sensing_day(entity: dict) -> date | None:
+    raw = entity.get("sensingDate")
+    if isinstance(raw, dict):
+        raw = raw.get("value")
+    if not raw:
+        return None
+    try:
+        text = str(raw)
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).date() if "T" in text \
+            else datetime.strptime(text[:10], "%Y-%m-%d").date()
+    except ValueError:
+        return None
+
+
+async def _fetch_ndvi_series(
+    tenant_id: str, parcel_id: str, zone_urn: str | None, since: date,
+) -> list[tuple[date, float]]:
+    """Season NDVI series ``[(sensing date, mean)]``, oldest first; ``[]`` on any failure.
+
+    With ``zone_urn`` only that zone's own products are read (no parcel fallback: a
+    parcel series must not confirm a zone's end of season). The ``sensingDate`` term is
+    a quoted string, as Orion needs for string dates.
+    """
+    since_s = since.isoformat()
+    if zone_urn:
+        q = f'hasAgriParcelZone=="{zone_urn}";sensingDate>="{since_s}"'
+    else:
+        urn = f"urn:ngsi-ld:AgriParcel:{parcel_id}"
+        q = f'(hasAgriParcel=="{urn}"|refAgriParcel=="{urn}");sensingDate>="{since_s}"'
+    try:
+        entities = await _query_eoproducts(tenant_id, q, _NDVI_SERIES_LIMIT)
+    except Exception as exc:
+        logger.warning("_fetch_ndvi_series: failed for parcel %s zone %s: %s", parcel_id, zone_urn, exc)
+        return []
+    out: list[tuple[date, float]] = []  # duplicates per date are resolved by the engine (max NDVI)
+    for e in entities:
+        day = _sensing_day(e)
+        if day is None or e.get("ndvi") is None:
+            continue
+        try:
+            v = _extract_eoproduct_scalar(e, "ndvi")
+        except (TypeError, ValueError):
+            continue
+        if v is not None:
+            out.append((day, v))
+    out.sort(key=lambda p: p[0])
+    return out
 
 
 async def _fetch_parcel_smi(

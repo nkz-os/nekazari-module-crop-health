@@ -67,3 +67,26 @@ describe('map legend strings', () => {
     });
   }
 });
+
+describe('water stress strings parity', () => {
+  const en = (resources.en as any)['crop-health'];
+  for (const [lang, res] of Object.entries(resources)) {
+    it(`${lang} has the waterStress keys of en`, () => {
+      const ns = (res as any)['crop-health'];
+      expect(keys(ns.waterStress).sort()).toEqual(keys(en.waterStress).sort());
+      expect(ns.waterStress.level.not_needed).toEqual(expect.any(String));
+      expect(ns.waterStress.note.rdi).toEqual(expect.any(String));
+    });
+  }
+});
+
+describe('water stress strings', () => {
+  for (const [lang, res] of Object.entries(resources)) {
+    it(`${lang} translates the water stress detail strings`, () => {
+      const ns = (res as any)['crop-health'];
+      expect(typeof ns.detail.hints.ksHigh).toBe('string');
+      expect(typeof ns.waterStress.technician.parcelBalance).toBe('string');
+      if (lang !== 'en') expect(ns.detail.waterStress).not.toBe('Water stress');
+    });
+  }
+});

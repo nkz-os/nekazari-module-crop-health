@@ -8,11 +8,19 @@ All NGSI-LD entities follow the Smart Data Models conventions.
 from __future__ import annotations
 
 import enum
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import (
+    BaseModel, ConfigDict, Field, StrictBool, StrictFloat, StrictInt, StrictStr,
+    ValidationError, field_validator, model_validator,
+)
+
+from app.engines.water_stress_level import WaterStressIndicator
+
+logger = logging.getLogger(__name__)
 
 
 # ── Enums ─────────────────────────────────────────────────────────────────────
@@ -72,13 +80,34 @@ class TimeseriesPoint(BaseModel):
 # ── Weather Data ──────────────────────────────────────────────────────────────
 
 
+class InstantValue(BaseModel):
+    """A candidate instantaneous value of one meteo variable, to pair with a leaf reading.
+
+    ``source`` is ``iot_sensor`` (the parcel's own open-field sensor) or
+    ``regional_proxy`` (an hourly WeatherObserved linked to the parcel);
+    ``observed_ts`` is its observation epoch time when the source gives one.
+    """
+    model_config = ConfigDict(frozen=True)
+
+    value: float
+    source: Literal["iot_sensor", "regional_proxy"]
+    observed_ts: float | None = None
+
+
 class WeatherSnapshot(BaseModel):
     """Subset of weather_observations relevant for crop health."""
     temp_air: float = Field(..., description="Air temperature °C")
-    humidity_pct: float = Field(..., description="Relative humidity %")
+    humidity_pct: float | None = Field(None, description="Relative humidity %; None when unavailable")
     precip_mm: float = Field(0.0, description="Precipitation mm")
     eto_mm: float = Field(0.0, description="Reference evapotranspiration mm")
     radiation_wm2: float | None = Field(None, description="Solar radiation W/m²")
+    # Per meteo variable (air_temp_c, rh_pct, solar_radiation_wm2, ...): where the value
+    # came from (resolve_meteo_context vocab) and, when known, its observation epoch time.
+    fidelity: dict[str, str] = Field(default_factory=dict)
+    observed_at_ts: dict[str, float] = Field(default_factory=dict)
+    # Per variable, the sources that may pair with a leaf reading (CWSI), best first.
+    # Kept apart from the precedence-resolved values above, which other engines use.
+    instantaneous: dict[str, list[InstantValue]] = Field(default_factory=dict)
 
 
 # ── Phenology Parameters (from BioOrchestrator or defaults) ──────────────────
@@ -101,6 +130,128 @@ class PhenologyAlternative(BaseModel):
     source_short: str | None = None
     source_doi: str | None = None
     conditions: str | None = None
+
+
+class _RefModel(BaseModel):
+    """Base for bioorch water-stress reference objects (camelCase on the wire)."""
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+
+
+_Num = StrictFloat | StrictInt
+
+
+class UpperLimit(_RefModel):
+    """Upper limit (fully stressed canopy) of the CWSI baseline."""
+    form: Literal["constant", "linear_vpd", "idso1981"]
+    value_c: _Num | None = Field(None, alias="valueC")
+    a0_c: _Num | None = Field(None, alias="a0C")
+    a1_c_per_kpa: _Num | None = Field(None, alias="a1CPerKpa")
+
+    @model_validator(mode="after")
+    def _form_needs_its_numbers(self) -> "UpperLimit":
+        if self.form == "constant" and self.value_c is None:
+            raise ValueError("constant upper limit needs valueC")
+        if self.form == "linear_vpd" and (self.a0_c is None or self.a1_c_per_kpa is None):
+            raise ValueError("linear_vpd upper limit needs a0C and a1CPerKpa")
+        return self
+
+
+class ValidWindow(_RefModel):
+    """Conditions under which the baseline was measured and may be applied."""
+    solar_hour_from: _Num | None = Field(None, alias="solarHourFrom")
+    solar_hour_to: _Num | None = Field(None, alias="solarHourTo")
+    vpd_kpa_min: _Num | None = Field(None, alias="vpdKpaMin")
+    vpd_kpa_max: _Num | None = Field(None, alias="vpdKpaMax")
+    hours_after_sunrise: _Num | None = Field(None, alias="hoursAfterSunrise", ge=0)
+    hours_before_sunset: _Num | None = Field(None, alias="hoursBeforeSunset", ge=0)
+    clear_sky: StrictBool = Field(..., alias="clearSky")
+
+    @model_validator(mode="after")
+    def _daylight_hours_are_a_pair_and_exclusive(self) -> "ValidWindow":
+        after, before = self.hours_after_sunrise, self.hours_before_sunset
+        if (after is None) != (before is None):
+            raise ValueError("hoursAfterSunrise and hoursBeforeSunset must be given together")
+        if after is not None and (
+            self.solar_hour_from is not None or self.solar_hour_to is not None
+        ):
+            raise ValueError("hoursAfterSunrise/hoursBeforeSunset cannot combine with solarHourFrom/To")
+        return self
+
+
+class CwsiBaseline(_RefModel):
+    """Non-water-stressed baseline: (Tc - Ta) = a0 + a1 * VPD."""
+    id: StrictStr
+    cultivar: StrictStr | None = None
+    stages: list[StrictStr] | None = None  # None = all stages
+    condition: StrictStr | None = None
+    a0_c: _Num = Field(..., alias="a0C")
+    a1_c_per_kpa: _Num = Field(..., alias="a1CPerKpa")
+    upper: UpperLimit
+    valid: ValidWindow
+    site: StrictStr | None = None
+    evidence: StrictStr | None = None
+    source_id: StrictStr | None = Field(None, alias="sourceId")
+    ref: StrictStr | None = None
+    assumption: StrictStr | None = None
+
+
+class StageWaterFlags(_RefModel):
+    """Water sensitivity of one GDD stage. water_sensitive is true | false | "unknown"."""
+    water_sensitive: StrictBool | Literal["unknown"] = Field(..., alias="waterSensitive")
+    rdi_tolerant: StrictBool | None = Field(None, alias="rdiTolerant")
+    source_ids: list[StrictStr] = Field(default_factory=list, alias="sourceIds")
+    ref: StrictStr | None = None
+
+
+class SenescenceRule(_RefModel):
+    """How the end of the season is read from the NDVI series (post-maturity)."""
+    method: Literal["timesat_amplitude"]
+    end_fraction: _Num = Field(..., alias="endFraction", gt=0, lt=1)
+    gate_stage: StrictStr = Field(..., alias="gateStage")
+    source_id: StrictStr = Field(..., alias="sourceId")
+    ref: StrictStr | None = None
+
+
+class Citation(_RefModel):
+    """Citation text of one source id used by the reference."""
+    source_id: StrictStr = Field(..., alias="sourceId")
+    text: StrictStr
+    url: StrictStr | None = None
+
+
+class WaterStressReference(_RefModel):
+    """Water-stress reference of a species as served by bioorch.
+
+    ``stages`` may carry the key ``post_maturity`` (flags used once the senescence
+    rule confirms the end of the season). ``senescence`` and ``citations`` are
+    optional extras: a malformed one degrades to None / [] with one warning and
+    never drops the rest of the reference.
+    """
+    baselines: list[CwsiBaseline] = Field(default_factory=list)
+    stages: dict[str, StageWaterFlags] = Field(default_factory=dict)
+    source_ids: list[StrictStr] = Field(default_factory=list, alias="sourceIds")
+    senescence: SenescenceRule | None = None
+    citations: list[Citation] = Field(default_factory=list)
+
+    @field_validator("senescence", mode="wrap")
+    @classmethod
+    def _lenient_senescence(cls, value: Any, handler: Any) -> SenescenceRule | None:
+        try:
+            return handler(value)
+        except ValidationError as exc:
+            logger.warning("water_stress_reference.senescence ignored (malformed): %s",
+                           str(exc).splitlines()[0] if str(exc) else "invalid")
+            return None
+
+    @field_validator("citations", mode="wrap")
+    @classmethod
+    def _lenient_citations(cls, value: Any, handler: Any) -> list[Citation]:
+        try:
+            return handler(value)
+        except ValidationError as exc:
+            logger.warning("water_stress_reference.citations ignored (malformed): %s",
+                           str(exc).splitlines()[0] if str(exc) else "invalid")
+            return []
 
 
 class PhenologyParams(BaseModel):
@@ -140,6 +291,8 @@ class PhenologyParams(BaseModel):
     stage_gdd_min: float | None = None
     stage_gdd_max: float | None = None
     stage_base_temp: float | None = None
+    # None when bioorch serves none or a malformed one (Ks fallback, never raises)
+    water_stress_reference: WaterStressReference | None = None
 
 
 # ── Engine Results ────────────────────────────────────────────────────────────
@@ -156,6 +309,11 @@ class CWSIResult(BaseModel):
     data_fidelity: str = "regional_proxy"  # iot_canopy | satellite_lst | regional_proxy
     temp_source: str = "none"  # leaf_temperature | satellite_lst | weather_proxy
     lst_sensing_date: str | None = None  # YYYY-MM-DD of Landsat scene
+    # Published baseline used (None for the legacy d1/d2 path)
+    method_ref: str | None = None
+    baseline_id: str | None = None
+    nwsb_c: float | None = None
+    upper_c: float | None = None
 
 
 class MDSResult(BaseModel):
@@ -427,6 +585,14 @@ class CropHealthAssessment(BaseModel):
     soil_water_balance: SoilWaterBalanceResult | None = None
     waterlogging_risk: WaterloggingRiskResult | None = None
     soil_properties: SoilProperties | None = None
+    # The single water-stress level (water_stress_level.resolve_indicator).
+    water_stress_indicator: WaterStressIndicator | None = None
+    # Where the stage flags behind the level came from: "gdd" (GDD-derived stage) or
+    # "gdd_ndvi" (post-maturity: GDD gate plus NDVI end of season); None = no stage flags.
+    water_stress_phase_basis: Literal["gdd", "gdd_ndvi"] | None = None
+    # Stage flags behind the level (internal; never serialised): zones re-resolve their
+    # level with them once the parcel balance exists.
+    water_stress_stage_flags: StageWaterFlags | None = None
     # ── Zone (management-zone) context ──
     # When set, the assessment represents a single AgriParcelZone of the parcel
     # and is serialised via ``to_zone_ngsi_ld`` under the SEPARATE
@@ -644,6 +810,17 @@ class CropHealthAssessment(BaseModel):
             detail = {"ph": ss.ph, "texture": ss.texture, "drainage": ss.drainage}
             if any(v is not None for v in detail.values()):
                 entity["soilSuitabilityDetail"] = {"type": "Property", "value": detail}
+        if self.water_stress_indicator is not None:
+            wi = self.water_stress_indicator
+            entity["waterStressLevel"] = {"type": "Property", "value": wi.level}
+            entity["waterStressMethod"] = {"type": "Property", "value": wi.method}
+            if wi.phase_note is not None:
+                entity["waterStressPhaseNote"] = {"type": "Property", "value": wi.phase_note}
+            entity["waterStressReferenceSources"] = {"type": "Property", "value": list(wi.source_ids)}
+        if self.water_stress_phase_basis is not None:
+            entity["waterStressPhaseBasis"] = {"type": "Property", "value": self.water_stress_phase_basis}
+        if self.cwsi is not None and self.cwsi.baseline_id is not None:
+            entity["cwsiBaselineId"] = {"type": "Property", "value": self.cwsi.baseline_id}
         if self.water_stress is not None:
             ws = self.water_stress
             entity["waterStressFidelity"] = {"type": "Property", "value": ws.fidelity}
@@ -697,7 +874,8 @@ class CropHealthAssessment(BaseModel):
         envelope, then overrides id/type and adds the zone relationship.
         """
         entity = self.to_ngsi_ld()
-        for attr in ("waterStressIndex", "waterStressFidelity", "waterStressObservedAt", "shadeFraction", "shadeObservedAt",
+        # The RDI note is a parcel-level attribute; zone entities are never stale-cleared.
+        for attr in ("waterStressPhaseNote", "waterStressIndex", "waterStressFidelity", "waterStressObservedAt", "shadeFraction", "shadeObservedAt",
                      "underPanelWaterStressIndex", "underPanelWaterStressFidelity",
                      "underPanelWaterStressObservedAt"):
             entity.pop(attr, None)

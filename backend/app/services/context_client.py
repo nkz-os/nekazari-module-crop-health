@@ -28,6 +28,7 @@ from app.engines.water_stress import cwsi_baselines_plausible
 from app.schemas import (
     PhenologyAlternative,
     PhenologyParams,
+    WaterStressReference,
     PhenologyProvenance,
     StageTable,
 )
@@ -128,9 +129,23 @@ async def get_phenology_stages(species: str) -> StageTable:
     return _DEFAULT_STAGE_TABLE
 
 
+def _parse_water_stress_reference(raw: Any, species: str) -> WaterStressReference | None:
+    """Parse bioorch's reference; absent or malformed gives None (one warning, never raises)."""
+    if raw is None:
+        return None
+    try:
+        return WaterStressReference.model_validate(raw)
+    except Exception as exc:  # noqa: BLE001 — a bad reference must not break the params
+        logger.warning(
+            "water_stress_reference from bioorchestrator ignored (malformed): species=%s error=%s",
+            species, str(exc).splitlines()[0] if str(exc) else type(exc).__name__,
+        )
+        return None
+
+
 async def get_phenology_params(
     species: str = "generic",
-    stage: str = "vegetative",
+    stage: str | None = None,
     cultivar: str | None = None,
     management: str | None = None,
     gdd: float | None = None,
@@ -144,7 +159,7 @@ async def get_phenology_params(
 
     Args:
         species: Crop species name or AGROVOC URI.
-        stage: Phenological stage identifier.
+        stage: Phenological stage identifier; None lets bioorch pick it from gdd.
         cultivar: Optional cultivar for context-aware matching.
         management: Optional irrigation strategy for context-aware matching.
 
@@ -200,6 +215,9 @@ async def get_phenology_params(
                         data.get("species", species), data.get("stage", stage),
                         raw_d1, raw_d2, d1_val, d2_val,
                     )
+                water_ref = _parse_water_stress_reference(
+                    data.get("water_stress_reference"), data.get("species", species)
+                )
                 params = PhenologyParams(
                     d1=d1_val,
                     d2=d2_val,
@@ -207,7 +225,7 @@ async def get_phenology_params(
                     kc=data.get("kc", _DEFAULT_PARAMS.kc),
                     mds_ref=data.get("mds_ref", _DEFAULT_PARAMS.mds_ref),
                     species=data.get("species", species),
-                    stage=data.get("stage", stage),
+                    stage=data.get("stage") or stage or _DEFAULT_PARAMS.stage,
                     is_default=data.get("is_default", False),
                     scientific_name=data.get("scientific_name"),
                     stage_description=data.get("stage_description"),
@@ -226,6 +244,7 @@ async def get_phenology_params(
                     stage_gdd_min=data.get("stage_gdd_min"),
                     stage_gdd_max=data.get("stage_gdd_max"),
                     stage_base_temp=data.get("stage_base_temp"),
+                    water_stress_reference=water_ref,
                     provenance=PhenologyProvenance(
                         doi=prov.get("doi"),
                         short=prov.get("short"),

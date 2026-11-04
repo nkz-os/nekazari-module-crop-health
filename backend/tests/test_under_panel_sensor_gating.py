@@ -6,7 +6,7 @@ import types
 
 import pytest
 
-from app.schemas import MetricType, SoilProperties
+from app.schemas import CwsiBaseline, MetricType, SoilProperties, WaterStressReference
 from app.services import pipeline
 from app.services.parcel_link import OPEN_FIELD, UNDER_PANEL
 from app.services.redis_state import ParcelReading
@@ -101,8 +101,26 @@ async def test_under_panel_leaf_temperature_does_not_set_cwsi(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_open_field_leaf_temperature_sets_cwsi(monkeypatch):
-    published, _ = _setup(monkeypatch, soil=SOIL)
-    _with_cwsi_params(monkeypatch)
+    # Air of the same moment: our hourly observation 10 min before the reading.
+    published, _ = _setup(
+        monkeypatch, soil=SOIL, wm={},
+        regional={"air_temp_c": 35.0, "rh_pct": 20.0, "et0_mm": 5.0, "observed_at_ts": NOW - 600,
+                  "parcel_linked": True})
+
+    async def _params(*a, **k):
+        ref = WaterStressReference(baselines=[CwsiBaseline.model_validate({
+            "id": "b", "a0C": 3.38, "a1CPerKpa": -3.25,
+            "upper": {"form": "constant", "valueC": 1.0},
+            "valid": {"solarHourFrom": 10, "solarHourTo": 16, "clearSky": True}})])
+        return types.SimpleNamespace(
+            stage="vegetative", kc=0.8, mds_ref=100.0, ky=0.45, d1=-2.0, d2=2.0,
+            species="OLVEU", water_stress_reference=ref)
+
+    async def _coords(*a, **k):
+        return (40.0, 0.0)
+
+    monkeypatch.setattr(pipeline, "get_phenology_params", _params, raising=False)
+    monkeypatch.setattr(pipeline.context_client, "_resolve_parcel_coords", _coords, raising=False)
     _owner(monkeypatch, OPEN_FIELD)
     redis = GateRedis(window={"leafTemperature": [ParcelReading(DEVICE, NOW - 60, 30.0, "CEL")]})
     await _run(MetricType.LEAF_TEMPERATURE, redis)

@@ -3,6 +3,7 @@ import { useTranslation } from '@nekazari/sdk';
 import { authHeaders, CROP_CONTEXT_URL } from '../api/cropHealthApi';
 import { SeverityBadge } from './shared/SeverityBadge';
 import { freshnessTone, jobText } from '../utils/worklist';
+import { levelIntent, levelKey, normalizeLevel } from '../utils/waterStress';
 import type { AssessmentData, Freshness, NextJob, Surprise } from '../types/assessment';
 
 interface CropContext {
@@ -41,14 +42,6 @@ const AGE_TONE_CLASS = {
   warning: 'text-nkz-warning',
   danger: 'text-nkz-danger',
 } as const;
-
-function cwsiPhrase(cwsi: number): string {
-  if (cwsi < 0.2) return 'summary.cwsi.none';
-  if (cwsi < 0.4) return 'summary.cwsi.mild';
-  if (cwsi < 0.6) return 'summary.cwsi.moderate';
-  if (cwsi < 0.8) return 'summary.cwsi.high';
-  return 'summary.cwsi.severe';
-}
 
 function gddProgress(
   gdd: number | undefined,
@@ -176,18 +169,26 @@ export const CropStatusSnapshotView: React.FC<ViewProps> = ({
   const stageMax = cropCtx?.phenology?.stage_gdd_max;
   const gddPct = gddProgress(gddVal, stageMin, stageMax);
 
-  const cwsi = assessment.cwsiValue;
   const balance = assessment.waterBalanceDeficit;
   const vigor = assessment.vigorIndex;
 
   const fidelity = assessment.dataFidelity || 'regional_proxy';
   const chips: { icon: string; text: string; intent?: 'positive' | 'warning' | 'negative' }[] = [];
 
-  if (cwsi != null && cwsi >= 0.2) {
-    chips.push({ icon: '⚠️', text: t(cwsiPhrase(cwsi)), intent: cwsi > 0.6 ? 'negative' : 'warning' });
-  }
+  const waterIntent = levelIntent(assessment.waterStressLevel);
+  chips.push({
+    icon: waterIntent === 'positive' ? '✅' : waterIntent === 'neutral' ? '💧' : '⚠️',
+    text: t(levelKey(assessment.waterStressLevel)),
+    intent: waterIntent === 'neutral' ? undefined : waterIntent,
+  });
   if (balance != null && balance < 0) {
-    chips.push({ icon: '💧', text: `${Math.abs(balance).toFixed(1)}mm deficit`, intent: balance < -15 ? 'negative' : 'warning' });
+    // A stage that needs no water raises no alarm: the deficit stays as information only.
+    const waterNotNeeded = normalizeLevel(assessment.waterStressLevel) === 'not_needed';
+    chips.push({
+      icon: '💧',
+      text: `${Math.abs(balance).toFixed(1)}mm deficit`,
+      intent: waterNotNeeded ? undefined : balance < -15 ? 'negative' : 'warning',
+    });
   }
   if (assessment.mdsSeverity && assessment.mdsSeverity !== 'LOW' && assessment.mdsValue != null) {
     chips.push({ icon: '📏', text: `${assessment.mdsValue.toFixed(0)}µm ${assessment.mdsSeverity}`, intent: assessment.mdsSeverity === 'CRITICAL' ? 'negative' : 'warning' });
@@ -250,6 +251,9 @@ export const CropStatusSnapshotView: React.FC<ViewProps> = ({
         <div className="flex flex-wrap gap-1.5 mb-2">
           {chips.map((c, i) => <MetricChip key={i} {...c} />)}
         </div>
+      )}
+      {assessment.waterStressPhaseNote === 'rdi' && assessment.waterStressLevel && assessment.waterStressLevel !== 'no_data' && (
+        <p className="text-xs text-nkz-text-muted mb-2">{t('waterStress.note.rdi')}</p>
       )}
 
       {/* Soil reservoir */}

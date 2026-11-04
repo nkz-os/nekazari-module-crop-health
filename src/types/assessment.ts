@@ -1,7 +1,46 @@
+/** One served CWSI baseline of `phenology-params.water_stress_reference` (bioorch). */
+export interface WaterStressBaseline {
+  id: string;
+  cultivar?: string;
+  condition?: string;
+  a0C: number;
+  a1CPerKpa: number;
+  upper: { form: string; valueC?: number; a0C?: number; a1CPerKpa?: number };
+  valid?: Record<string, unknown>;
+  site?: string;
+  sourceId: string;
+  ref?: string;
+  assumption?: string;
+}
+
+/** Citation text of one source id of the reference (bioorch `water_stress_reference.citations`). */
+export interface WaterStressCitation {
+  sourceId: string;
+  text: string;
+  url?: string | null;
+}
+
+export interface WaterStressReference {
+  baselines: WaterStressBaseline[];
+  stages?: Record<string, unknown>;
+  sourceIds?: string[];
+  citations?: WaterStressCitation[];
+}
+
+/** Structured attribution of a source (bioorch `get_attributions`). */
+export interface SourceAttribution {
+  source_id: string;
+  text: string;
+  url?: string;
+  attribution_url?: string;
+}
+
 export interface PhenologyParams {
   kc?: number;
   d1?: number;
   d2?: number;
+  water_stress_reference?: WaterStressReference | null;
+  attributions?: SourceAttribution[];
   mds_ref?: number;
   match_level?: string;
   stage?: string;
@@ -29,6 +68,8 @@ export interface HistoryPoint {
   balance?: number | null;
   composite?: number | null;
   severity?: string | null;
+  /** Water-stress level resolved by the backend that day; absent on older assessments. */
+  waterStressLevel?: string | null;
 }
 
 export interface CorrelationPoint {
@@ -127,6 +168,16 @@ export interface AssessmentData {
     source: string;
     hasData: boolean;
   };
+  /** Resolved by the backend; absent on assessments written before the single level existed. */
+  waterStressLevel?: 'none' | 'mild' | 'moderate' | 'high' | 'no_data' | 'not_needed' | null;
+  waterStressMethod?: 'cwsi_sensor' | 'balance' | 'none' | null;
+  waterStressPhaseNote?: 'rdi' | null;
+  waterStressReferenceSources?: string[] | null;
+  /** How the phase flags were determined: GDD stage, or GDD stage plus NDVI end of season. */
+  waterStressPhaseBasis?: 'gdd' | 'gdd_ndvi' | null;
+  /** Id of the CWSI baseline used (one of `water_stress_reference.baselines`). */
+  cwsiBaselineId?: string | null;
+  vpdKpa?: number | null;
   waterStressIndex?: number | null;
   waterStressFidelity?: 'iot_sensor' | 'parcel_weather' | 'regional_proxy' | 'unavailable' | null;
   waterStressObservedAt?: string | null;

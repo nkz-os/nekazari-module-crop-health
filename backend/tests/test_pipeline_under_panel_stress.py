@@ -385,6 +385,8 @@ def test_olive_eppo_depletion_fraction():
 
 
 ENTITY_ID = "urn:ngsi-ld:CropHealthAssessment:p-1-20260715"
+# A day without a CWSI deletes the CWSI attributes an earlier write may have left.
+CWSI_ATTRS = ("cwsiValue", "vpdKpa", "cwsiDataFidelity", "cwsiTempSource")
 
 
 @pytest.mark.asyncio
@@ -392,7 +394,10 @@ async def test_unavailable_after_iot_clears_stale_attributes(monkeypatch):
     published, _ = _setup(monkeypatch)
     await _trigger(FakeRedis(
         readings={"soilMoisture": [soil_reading(15.0)]}, shade={TODAY: 0.5}, shade_ts={TODAY: NOW - 60}))
-    assert published["deletes"] == []  # everything present, nothing stale
+    # everything present, nothing stale except the optional RDI note, phase basis,
+    # baseline id and the CWSI attributes (no stage flag and no CWSI here)
+    assert [d[1] for d in published["deletes"]] == [
+        "waterStressPhaseNote", "waterStressPhaseBasis", "cwsiBaselineId", *CWSI_ATTRS]
     # later same-day trigger: nothing computable
     published2, _ = _setup(monkeypatch, wm={}, regional={})
     await _trigger(FakeRedis())
@@ -402,7 +407,8 @@ async def test_unavailable_after_iot_clears_stale_attributes(monkeypatch):
     assert attrs == {
         "waterStressIndex", "waterStressObservedAt", "shadeFraction", "shadeObservedAt",
         "underPanelWaterStressIndex", "underPanelWaterStressFidelity",
-        "underPanelWaterStressObservedAt",
+        "underPanelWaterStressObservedAt", "waterStressPhaseNote",
+        "waterStressPhaseBasis", "cwsiBaselineId", *CWSI_ATTRS,
     }
 
 
@@ -413,7 +419,8 @@ async def test_only_omitted_attrs_are_deleted(monkeypatch):
     assert [d[1] for d in published["deletes"]] == [
         "shadeFraction", "shadeObservedAt",
         "underPanelWaterStressIndex", "underPanelWaterStressFidelity",
-        "underPanelWaterStressObservedAt",
+        "underPanelWaterStressObservedAt", "waterStressPhaseNote",
+        "waterStressPhaseBasis", "cwsiBaselineId", *CWSI_ATTRS,
     ]
 
 
@@ -423,7 +430,7 @@ async def test_delete_404_is_success(monkeypatch):
     published["delete_behaviour"]["status"] = 404
     out = await _trigger(FakeRedis())
     assert out is not None
-    assert len(published["deletes"]) == 7  # does not stop after the first 404
+    assert len(published["deletes"]) == 14  # does not stop after the first 404
 
 
 @pytest.mark.asyncio
@@ -446,7 +453,7 @@ async def test_zonal_rollup_clears_stale_attributes(monkeypatch):
     await _trigger(FakeRedis())
     parcel = [e for e in published["entities"] if e["type"] == "CropHealthAssessment"][0]
     assert {d[0] for d in published["deletes"]} == {parcel["id"]}
-    assert len(published["deletes"]) == 7
+    assert len(published["deletes"]) == 14
 
 
 @pytest.mark.asyncio
@@ -586,21 +593,13 @@ def _with_lst_and_baselines(monkeypatch, d1, d2):
 
 
 @pytest.mark.asyncio
-async def test_cwsi_none_not_zero_when_baselines_are_day_counts(monkeypatch, caplog):
+@pytest.mark.parametrize("d1,d2", [(105.0, 180.0), (2.0, 8.0)])
+async def test_satellite_lst_never_gives_cwsi(monkeypatch, caplog, d1, d2):
+    # Phase 1: the satellite path is off; legacy d1/d2 (plausible or not) never make a CWSI.
     published, _ = _setup(monkeypatch)
-    _with_lst_and_baselines(monkeypatch, 105.0, 180.0)
-    with caplog.at_level("WARNING"):
+    _with_lst_and_baselines(monkeypatch, d1, d2)
+    with caplog.at_level("DEBUG"):
         await _trigger(FakeRedis(state=dict(STATE)))
     assert "cwsiValue" not in _entity(published)
     assert published["assessments"][-1].cwsi is None
-    assert any("CWSI skipped" in r.message and "tenant-a" in r.message for r in caplog.records)
-
-
-@pytest.mark.asyncio
-async def test_cwsi_computed_with_plausible_baselines(monkeypatch):
-    published, _ = _setup(monkeypatch)
-    _with_lst_and_baselines(monkeypatch, 2.0, 8.0)
-    await _trigger(FakeRedis(state=dict(STATE)))
-    result = published["assessments"][-1].cwsi
-    assert result is not None
-    assert result.cwsi == round((30.0 - 24.0 - 2.0) / 6.0, 4)
+    assert any("CWSI satellite skipped: phase 2" in r.getMessage() for r in caplog.records)

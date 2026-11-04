@@ -8,6 +8,7 @@ import YieldForecastSection from './YieldForecastSection';
 import ZoneHealthPanel from './ZoneHealthPanel';
 import CropHealthRisksPanel from './CropHealthRisksPanel';
 import { formatRelativeTime } from '../utils/relativeTime';
+import { levelIntent, levelKey, normalizeLevel } from '../utils/waterStress';
 import type { TFunction } from 'i18next';
 import type {
   AssessmentData,
@@ -15,6 +16,7 @@ import type {
   CorrelationStats,
   DiseaseRisk,
   PhenologyParams,
+  WaterStressBaseline,
   TrendPoint,
   ZoneAssessmentData,
   ZonesResponse,
@@ -70,6 +72,112 @@ function waterStressValue(
   }
   return `${index.toFixed(2)} · ${t(`detail.fidelity.${fidelity}`)} · ${formatRelativeTime(observedAt, t)}`;
 }
+
+const num2 = (v: number | null | undefined): string => (typeof v === 'number' && Number.isFinite(v) ? v.toFixed(2) : '—');
+
+function upperText(b: WaterStressBaseline): string {
+  const u = b.upper;
+  if (u.valueC != null) return `${num2(u.valueC)} °C`;
+  if (u.a0C != null && u.a1CPerKpa != null) return `${num2(u.a0C)} + ${num2(u.a1CPerKpa)}·VPD`;
+  return '—';
+}
+
+/**
+ * Hints under the recommendation. A high level names the method that decided it (CWSI
+ * or the balance's Ks); a stage that needs no water gets no deficit hint.
+ */
+export function recommendationHints(assessment: AssessmentData, t: TFunction): string {
+  const level = normalizeLevel(assessment.waterStressLevel);
+  const out: string[] = [];
+  if (level === 'high') out.push(t(assessment.waterStressMethod === 'cwsi_sensor' ? 'detail.hints.cwsiHigh' : 'detail.hints.ksHigh'));
+  if (assessment.mdsSeverity === 'CRITICAL') out.push(t('detail.hints.mdsCritical'));
+  if (level !== 'not_needed' && assessment.waterBalanceDeficit != null && assessment.waterBalanceDeficit < -5) {
+    out.push(t('detail.hints.deficit'));
+  }
+  return out.map((h) => `${h} `).join('');
+}
+
+/** Technician detail of the water-stress level: method, value, VPD, baselines served and their sources. */
+const WaterStressTechnician: React.FC<{
+  assessment: AssessmentData;
+  phenology: PhenologyParams | null;
+  t: TFunction;
+}> = ({ assessment, phenology, t }) => {
+  const method = assessment.waterStressMethod;
+  const value =
+    method === 'cwsi_sensor'
+      ? assessment.cwsiValue
+      : method === 'balance' && assessment.waterStressIndex != null
+        ? 1 - assessment.waterStressIndex
+        : null;
+  const valueLabel = method === 'balance' ? 'Ks' : 'CWSI';
+  // Only the baseline the assessment used, and only the citations of the sources it named:
+  // an unknown id or an empty list shows nothing rather than everything the species has.
+  const usedId = assessment.cwsiBaselineId;
+  const baselines = usedId
+    ? (phenology?.water_stress_reference?.baselines ?? []).filter((b) => b.id === usedId)
+    : [];
+  // Orion compacts a one-element array to its value: read it back as a list.
+  const rawSources: unknown = assessment.waterStressReferenceSources;
+  const wanted: string[] = Array.isArray(rawSources)
+    ? rawSources
+    : typeof rawSources === 'string' && rawSources ? [rawSources] : [];
+  // The balance method is FAO-56's Ks: cite it whenever the balance decided the level.
+  const cited = (id: string) => wanted.includes(id) || (method === 'balance' && id === 'fao56');
+  const citations = (phenology?.water_stress_reference?.citations ?? []).filter((c) => cited(c.sourceId));
+  // Zones have no Ks of their own: their balance level is the parcel's.
+  const zoneOfParcelBalance = method === 'balance' && Boolean((assessment as { zoneId?: string | null }).zoneId);
+  return (
+    <MetricSection>
+      <span className="text-xs text-nkz-text-secondary font-medium uppercase tracking-wider block mb-1">
+        {t('waterStress.technician.title')}
+      </span>
+      <div className="flex items-center gap-2 mb-1">
+        <Badge intent={levelIntent(assessment.waterStressLevel) === 'neutral' ? 'default' : levelIntent(assessment.waterStressLevel)}>
+          {t(levelKey(assessment.waterStressLevel))}
+        </Badge>
+        <span className="text-xs text-nkz-text-muted">{t(`waterStress.method.${method ?? 'none'}`)}</span>
+      </div>
+      {zoneOfParcelBalance && (
+        <p className="text-xs text-nkz-text-muted mb-1">{t('waterStress.technician.parcelBalance')}</p>
+      )}
+      <div className="grid grid-cols-2 gap-1 text-xs">
+        <div><span className="text-nkz-text-muted">{valueLabel}</span><br /><strong className="text-nkz-text-primary">{num2(value)}</strong></div>
+        {assessment.vpdKpa != null && (
+          <div><span className="text-nkz-text-muted">VPD</span><br /><strong className="text-nkz-text-primary">{num2(assessment.vpdKpa)} kPa</strong></div>
+        )}
+      </div>
+      {assessment.waterStressPhaseBasis && (
+        <p className="text-xs text-nkz-text-muted mt-1">{t(`waterStress.phaseBasis.${assessment.waterStressPhaseBasis}`)}</p>
+      )}
+      {baselines.length > 0 && (
+        <div className="mt-2">
+          <span className="text-xs text-nkz-text-muted block">{t('waterStress.technician.baseline')}</span>
+          {baselines.map((b) => (
+            <div key={b.id} className="mt-0.5">
+              <div className="grid grid-cols-3 gap-1 text-center text-xs">
+              <div><span className="text-nkz-text-muted">a0</span><br /><strong className="text-nkz-text-primary">{num2(b.a0C)} °C</strong></div>
+              <div><span className="text-nkz-text-muted">a1</span><br /><strong className="text-nkz-text-primary">{num2(b.a1CPerKpa)} °C/kPa</strong></div>
+              <div><span className="text-nkz-text-muted">{t('waterStress.technician.upper')}</span><br /><strong className="text-nkz-text-primary">{upperText(b)}</strong></div>
+              </div>
+              {b.assumption && <p className="text-xs text-nkz-text-muted">{b.assumption}</p>}
+            </div>
+          ))}
+        </div>
+      )}
+      {citations.length > 0 && (
+        <div className="mt-2">
+          <span className="text-xs text-nkz-text-muted block">{t('waterStress.technician.sources')}</span>
+          {citations.map((c) => (
+            <p key={c.sourceId} className="text-xs text-nkz-text-muted">
+              📚 {c.url ? <a className="text-nkz-accent-strong underline" href={c.url} target="_blank" rel="noopener noreferrer">{c.text}</a> : c.text}
+            </p>
+          ))}
+        </div>
+      )}
+    </MetricSection>
+  );
+};
 
 const CropHealthDetailTabs: React.FC<CropHealthDetailTabsProps> = ({
   parcelId,
@@ -139,7 +247,9 @@ const CropHealthDetailTabs: React.FC<CropHealthDetailTabsProps> = ({
             </span>
             {trendCW.length >= 2 && <Sparkline data={trendCW} color="var(--nkz-color-danger)" />}
           </div>
-          <ProgressBar value={assessment.cwsiValue * 100} intent={assessment.cwsiValue > 0.6 ? 'negative' : assessment.cwsiValue > 0.3 ? 'warning' : 'positive'} />
+          <ProgressBar value={assessment.cwsiValue * 100} intent={levelIntent(assessment.waterStressLevel) === 'neutral' ? 'default' : levelIntent(assessment.waterStressLevel)} />
+          <p className="text-xs text-nkz-text-primary mt-1">{t(levelKey(assessment.waterStressLevel))}</p>
+          {assessment.waterStressPhaseNote === 'rdi' && <p className="text-xs text-nkz-text-muted">{t('waterStress.note.rdi')}</p>}
           {trendDir != null && (
             <p className="text-xs mt-1" style={{ color: Number(trendDir) > 0 ? 'var(--nkz-color-danger)' : 'var(--nkz-color-success)' }}>
               {Number(trendDir) > 0 ? '↑' : '↓'} {Math.abs(Number(trendDir)).toFixed(2)} 7d
@@ -149,6 +259,8 @@ const CropHealthDetailTabs: React.FC<CropHealthDetailTabsProps> = ({
           )}
         </MetricSection>
       )}
+
+      <WaterStressTechnician assessment={assessment} phenology={phenology} t={t as TFunction} />
 
       {/* MDS Section */}
       {assessment.mdsValue != null && (
@@ -385,10 +497,8 @@ const CropHealthDetailTabs: React.FC<CropHealthDetailTabsProps> = ({
           <span className="text-xs text-nkz-text-secondary font-medium uppercase tracking-wider block mb-1">
             {t('contextPanel.phenologyParamsLabel')}
           </span>
-          <div className="grid grid-cols-4 gap-1 text-center text-xs">
+          <div className="grid grid-cols-2 gap-1 text-center text-xs">
             <div><span className="text-nkz-text-muted">Kc</span><br /><strong className="text-nkz-text-primary">{phenology.kc?.toFixed(2)}</strong></div>
-            <div><span className="text-nkz-text-muted">D1</span><br /><strong className="text-nkz-text-primary">{formatBaselineC(phenology.d1)}</strong></div>
-            <div><span className="text-nkz-text-muted">D2</span><br /><strong className="text-nkz-text-primary">{formatBaselineC(phenology.d2)}</strong></div>
             <div><span className="text-nkz-text-muted">MDS ref</span><br /><strong className="text-nkz-text-primary">{phenology.mds_ref?.toFixed(0)}µm</strong></div>
           </div>
           {phenology.provenance && (
@@ -497,9 +607,7 @@ const CropHealthDetailTabs: React.FC<CropHealthDetailTabsProps> = ({
               {t(actionLabels[assessment.recommendedAction] || assessment.recommendedAction)}
             </strong>
             <p className="text-xs text-nkz-text-muted mt-0.5">
-              {assessment.cwsiValue != null && assessment.cwsiValue > 0.6 && `${t('detail.hints.cwsiHigh')} `}
-              {assessment.mdsSeverity === 'CRITICAL' && `${t('detail.hints.mdsCritical')} `}
-              {assessment.waterBalanceDeficit != null && assessment.waterBalanceDeficit < -5 && `${t('detail.hints.deficit')} `}
+              {recommendationHints(assessment, t as TFunction)}
               {t('contextPanel.basedOn', {
                 source: assessment.phenologySource === 'bioorchestrator' ? t('contextPanel.specificParams') : t('contextPanel.genericParams'),
               })}.
@@ -521,7 +629,7 @@ const CropHealthDetailTabs: React.FC<CropHealthDetailTabsProps> = ({
               <div key={i} className="flex items-center gap-2 text-xs">
                 <span className="text-nkz-text-muted w-20">{p.date?.slice(0, 10)}</span>
                 <span style={{ color: (p.ndvi || 0) > 0.5 ? 'var(--nkz-color-success)' : 'var(--nkz-color-warning)' }}>NDVI {(p.ndvi || 0).toFixed(2)}</span>
-                <span style={{ color: (p.cwsi || 0) > 0.5 ? 'var(--nkz-color-danger)' : 'var(--nkz-color-success)' }}>CWSI {(p.cwsi || 0).toFixed(2)}</span>
+                <span className="text-nkz-text-secondary">CWSI {(p.cwsi || 0).toFixed(2)}</span>
               </div>
             ))}
           </div>

@@ -1462,7 +1462,7 @@ const eu = {
             sarNoFlood: 'Ez urez beteta',
             hints: {
                 cwsiHigh: 'CWSI altua.',
-                ksHigh: 'Ur gutxi lurzoruan (Ks).',
+                ksHigh: 'Lurzoruan ur eskasa (Ks).',
                 mdsCritical: 'Enbor kontrakzio kritikoa.',
                 deficit: 'Ur deficit handia.',
                 sarFlooded: 'SAR bidez uholdea detektatua.',

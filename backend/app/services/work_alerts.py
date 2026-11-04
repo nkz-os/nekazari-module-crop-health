@@ -18,7 +18,10 @@ logger = logging.getLogger(__name__)
 
 PARCEL_URN = "urn:ngsi-ld:AgriParcel:"
 KINDS = ("irrigate", "sow", "treat", "harvest")
-VIBRATING = ("irrigate", "sow", "treat")
+DUE_KINDS = ("irrigate", "sow", "treat")  # severity "high" when due today
+# Only these vibrate on the day: work_treat derives from risk's active high disease
+# Alert, which already vibrates that morning, so treat stays silent.
+VIBRATING = ("irrigate", "sow")
 ALERT_PREFIX = "work_"
 
 # ASSUMPTION: eu/en wording is ours (es is the owner-approved text) — confirm before shipping.
@@ -123,7 +126,8 @@ def build_work_alert(tenant_id: str, row: dict, today: date) -> dict | None:
         suffix = f"{today:%Y%m%d}"
     else:
         return None
-    due_now = when == "today" and kind in VIBRATING
+    due_now = when == "today" and kind in DUE_KINDS
+    vibrates = when == "today" and kind in VIBRATING
     parcel = row["parcelId"]
     urn = PARCEL_URN + parcel
     # ASSUMPTION: harvest opens the parcel (nothing to record yet) — owner ruling, confirm in review.
@@ -142,7 +146,7 @@ def build_work_alert(tenant_id: str, row: dict, today: date) -> dict | None:
                        "value": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")},
         "evaluationData": _prop({"kind": kind, "when": when, "detail": detail}),
         "plain": _prop(_plain(kind, row, detail, when)),
-        "urgency": _prop("vibrate" if due_now else "silent"),
+        "urgency": _prop("vibrate" if vibrates else "silent"),
         "action": _prop(action),
     }
 

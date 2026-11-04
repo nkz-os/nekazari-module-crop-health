@@ -74,7 +74,7 @@ def test_treat_with_and_without_disease():
     a = build_work_alert(T, _row("treat", "today", {"disease": "mildew"}), TODAY)
     assert _v(a, "plain")["es"] == {"title": "Toca tratar Olive grove: mildew",
                                     "body": "Riesgo alto; conviene tratar hoy."}
-    assert _v(a, "urgency") == "vibrate"
+    assert _v(a, "urgency") == "silent"  # risk's disease Alert already vibrates
     b = build_work_alert(T, _row("treat", "today", {"disease": None}), TODAY)
     assert _v(b, "plain")["es"]["title"] == "Toca tratar Olive grove"
 

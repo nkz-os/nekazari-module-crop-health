@@ -880,8 +880,9 @@ async def get_penetrometer_data(
 ) -> dict | None:
     """Check if real penetrometer measurements exist for a parcel.
 
-    Queries Orion-LD for SoilSamplingPoint entities linked to this parcel
-    that have penetrationResistance data. If found, the compaction risk
+    Queries Orion-LD for soil samples linked to this parcel that have
+    penetrationResistance data: legacy SoilSamplingPoint (MPa, cm, in horizons)
+    and AgriSoilSample (SDM units: Pa and m, one depth per entity at the root). If found, the compaction risk
     engine can use this as ground truth instead of modeled susceptibility.
 
     Returns None if no penetrometer data exists. ``point_count`` counts
@@ -901,7 +902,7 @@ async def get_penetrometer_data(
     client = OrionClient(tenant_id, base_url=settings.orion_ld_url, context_url=settings.orion_ld_context)
     try:
         entities = await client.query_entities(
-            type="SoilSamplingPoint",
+            type="SoilSamplingPoint,AgriSoilSample",
             q=f'hasAgriParcel==\"urn:ngsi-ld:AgriParcel:{parcel_id}\"|refAgriParcel==\"urn:ngsi-ld:AgriParcel:{parcel_id}\"',
             limit=50,
             options="keyValues",
@@ -915,6 +916,18 @@ async def get_penetrometer_data(
         mpa_values = []
         depths = set()
         for e in entities:
+            if str(e.get("type", "")).rsplit("/", 1)[-1] == "AgriSoilSample":
+                # SDM units: Pa -> MPa, m -> cm (one sampled depth per entity).
+                try:
+                    pr = float(_val(e.get("penetrationResistance"))) / 1e6
+                    df = round(float(_val(e.get("depthFrom"))) * 100)
+                    dt = round(float(_val(e.get("depthTo"))) * 100)
+                except (TypeError, ValueError):
+                    continue
+                if pr > 0:
+                    mpa_values.append(pr)
+                    depths.add(f"{df}-{dt}")
+                continue
             # Readings live in horizons.value[]; the entity root only serves legacy
             # entities written before horizons existed. A reading without a depth
             # range is discarded (unknown beats an unplaceable figure).

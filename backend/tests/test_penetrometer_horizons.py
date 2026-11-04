@@ -76,3 +76,50 @@ async def test_horizon_reading_without_depth_is_discarded(monkeypatch):
 async def test_none_when_no_readings(monkeypatch):
     out = await _run([{"horizons": [{"depthFrom": 0, "depthTo": 30, "ph": 7.2}]}], monkeypatch)
     assert out is None
+
+
+# New soil analyses are AgriSoilSample (SDM units: Pa, depths in m, values at the root).
+
+async def _run_capture(entities, monkeypatch):
+    seen = {}
+
+    class _Orion:
+        def __init__(self, *a, **k):
+            pass
+
+        async def query_entities(self, **kw):
+            seen.update(kw)
+            return entities
+
+        async def close(self):
+            pass
+
+    monkeypatch.setattr(context_client, "OrionClient", _Orion)
+    return await context_client.get_penetrometer_data("parcel1", "tenant-a"), seen
+
+
+@pytest.mark.asyncio
+async def test_queries_both_soil_sample_types(monkeypatch):
+    _, seen = await _run_capture([], monkeypatch)
+    assert set(seen["type"].split(",")) == {"SoilSamplingPoint", "AgriSoilSample"}
+
+
+@pytest.mark.asyncio
+async def test_agri_soil_sample_pa_and_metres_become_mpa_and_cm(monkeypatch):
+    out, _ = await _run_capture([
+        {"id": "urn:ngsi-ld:AgriSoilSample:tenant-a:a", "type": "AgriSoilSample",
+         "penetrationResistance": 2500000, "depthFrom": 0, "depthTo": 0.3},
+        {"id": "urn:ngsi-ld:AgriSoilSample:tenant-a:b", "type": "AgriSoilSample",
+         "penetrationResistance": {"type": "Property", "value": 3500000},
+         "depthFrom": {"type": "Property", "value": 0.3}, "depthTo": {"type": "Property", "value": 0.6}},
+    ], monkeypatch)
+    assert out["point_count"] == 2
+    assert out["mean_mpa"] == pytest.approx(3.0) and out["max_mpa"] == pytest.approx(3.5)
+    assert out["depth_range"] == "0-30, 30-60"
+
+
+@pytest.mark.asyncio
+async def test_agri_soil_sample_lab_only_is_not_a_reading(monkeypatch):
+    out, _ = await _run_capture([{"type": "AgriSoilSample", "depthFrom": 0, "depthTo": 0.3, "sand": 0.4}],
+                                monkeypatch)
+    assert out is None

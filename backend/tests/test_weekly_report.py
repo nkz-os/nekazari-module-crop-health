@@ -82,7 +82,7 @@ async def test_degraded_sets_complete_false():
 
 
 @pytest.mark.anyio
-async def test_horizon_and_order():
+async def test_order_and_no_horizon_filter():
     rows = [_row(jobs=[
         {"kind": "harvest", "when": "2027-07-01", "detail": {"date": "2027-07-01"}},
         {"kind": "sow", "when": None, "detail": {"crop": "Trigo"}},
@@ -90,8 +90,95 @@ async def test_horizon_and_order():
         {"kind": "irrigate", "when": "today", "detail": {}},
     ])]
     out = await _build(rows)
-    assert [(t["kind"], t["when"]["type"]) for t in out["tasks"]] == \
-        [("irrigate", "today"), ("harvest", "date"), ("sow", "undated")]
+    assert [(t["kind"], t["when"]["type"], t["when"]["date"]) for t in out["tasks"]] == \
+        [("irrigate", "today", None), ("harvest", "date", "2026-11-20"),
+         ("harvest", "date", "2027-07-01"), ("sow", "undated", None)]
+
+
+def _sow(when, workability=None, names=None, species="TRZDU", crop="TRZDU"):
+    detail = {"crop": crop, "species": species}
+    if workability:
+        detail["workability"] = workability
+    row = _row(plannedCrop={"species": species, **({"names": names} if names else {})},
+               jobs=[{"kind": "sow", "when": when, "detail": detail}])
+    return row
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("lang,word", [("es", "hacia el 12/11/2026"), ("en", "around 12/11/2026"),
+                                       ("eu", "12/11/2026 inguruan")])
+async def test_dated_sow_never_claims_good_conditions(lang, word):
+    out = await _build([_sow("2026-11-12", workability="optimal")])
+    text = out["tasks"][0]["text"][lang]
+    assert word in text["title"]
+    assert "buenas" not in text["why"] and "good" not in text["why"] and "onak" not in text["why"]
+
+
+@pytest.mark.anyio
+async def test_sow_today_good_only_when_optimal():
+    good = (await _build([_sow("today", "optimal")]))["tasks"][0]["text"]
+    assert good["es"]["why"] == "Las condiciones son buenas para sembrar."
+    assert good["en"]["why"] == "Conditions are good for sowing."
+    for wk in (None, "too_wet"):
+        t = (await _build([_sow("today", wk)]))["tasks"][0]["text"]
+        for lang in ("es", "eu", "en"):
+            assert t[lang]["why"] != good[lang]["why"]
+        assert "buenas" not in t["es"]["why"] and "good conditions" not in t["en"]["why"]
+
+
+@pytest.mark.anyio
+async def test_sow_never_prints_species_code():
+    out = await _build([_sow("2026-11-12")])
+    for lang, t in out["tasks"][0]["text"].items():
+        assert "TRZDU" not in t["title"] + t["why"]
+    named = await _build([_sow("2026-11-12", names={"es": "Trigo duro", "en": "Durum wheat"})])
+    t = named["tasks"][0]["text"]
+    assert "Trigo duro" in t["es"]["title"] and "Durum wheat" in t["en"]["title"]
+    assert "TRZDU" not in t["eu"]["title"]  # no eu name: nameless wording
+
+
+@pytest.mark.anyio
+async def test_cropless_stale_row_has_no_change_but_keeps_sow():
+    row = _sow("2026-11-12")
+    row.update(freshness="stale", cropStatus="none")
+    out = await _build([row])
+    assert out["changes"] == [] and [t["kind"] for t in out["tasks"]] == ["sow"]
+
+
+@pytest.mark.anyio
+async def test_figures_budget_is_what_is_left_of_55_s():
+    clock = iter([0.0, 50.0])
+    seen = []
+
+    async def rows(*a, **k):
+        return [_row()]
+
+    async def figs(tenant, week, rs, budget):
+        seen.append(budget)
+        return []
+
+    with patch.object(weekly_report, "build_parcel_rows", rows), \
+            patch.object(weekly_report, "_all_figures", figs), \
+            patch.object(weekly_report, "_monotonic", lambda: next(clock)):
+        await weekly_report.build(T, WEEK)
+    assert seen == [5.0]
+
+
+@pytest.mark.anyio
+async def test_figures_skipped_when_no_time_left():
+    clock = iter([0.0, 56.0])
+
+    async def rows(*a, **k):
+        return [_row(jobs=[{"kind": "irrigate", "when": "today", "detail": {}}])]
+
+    async def figs(*a, **k):
+        raise AssertionError("figures must not run")
+
+    with patch.object(weekly_report, "build_parcel_rows", rows), \
+            patch.object(weekly_report, "_all_figures", figs), \
+            patch.object(weekly_report, "_monotonic", lambda: next(clock)):
+        out = await weekly_report.build(T, WEEK)
+    assert out["figures"] == [] and out["complete"] is True and len(out["tasks"]) == 1
 
 
 @pytest.mark.anyio

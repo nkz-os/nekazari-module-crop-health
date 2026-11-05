@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from datetime import date, timedelta
 from typing import Any
 
@@ -24,13 +25,13 @@ from app.services.pipeline import (
     _hmac_secret,
     _utc_today,
 )
-from app.services.work_alerts import PARCEL_URN, _parcel_label, plain_text
+from app.services.work_alerts import PARCEL_URN, _human_date, _parcel_label, plain_text
 from app.services.worklist import job_when
 
 logger = logging.getLogger(__name__)
 
 VERSION = 1
-HORIZON_DAYS = 13           # tasks overdue or dated up to week_start + 13
+TOTAL_BUDGET_S = 55.0       # the aggregator gives a module 60 s
 FIGURES_CONCURRENCY = 5
 FIGURES_BUDGET_S = 45.0
 WEEK_DAYS = 7
@@ -57,6 +58,10 @@ _CHANGE_TEXTS = {
 }
 
 
+def _monotonic() -> float:
+    return time.monotonic()
+
+
 def _subject(row: dict) -> dict:
     return {"type": "parcel", "id": PARCEL_URN + str(row["parcelId"]), "name": _parcel_label(row)}
 
@@ -71,13 +76,51 @@ def _change(row: dict, key: str) -> dict:
             "text": {lang: {"title": t.format(parcel=label)} for lang, t in _CHANGE_TEXTS[key].items()}}
 
 
-def _in_horizon(when: dict, week_start: date) -> bool:
-    if when["type"] != "date":
-        return True
-    try:
-        return date.fromisoformat(when["date"]) <= week_start + timedelta(days=HORIZON_DAYS)
-    except ValueError:
-        return False
+# ASSUMPTION: eu wording is ours — confirm before shipping
+# (title without crop, title with crop, why); only the report uses these.
+_SOW_TEXTS = {
+    "sow_dated": {
+        "es": ("Siembra prevista en {parcel} hacia el {date}",
+               "Siembra prevista de {crop} en {parcel} hacia el {date}", "Prepara la siembra."),
+        "eu": ("{parcel} lursailean ereintza aurreikusita {date} inguruan",
+               "{parcel} lursailean {crop} ereintza aurreikusita {date} inguruan", "Prestatu ereintza."),
+        "en": ("Sowing planned in {parcel} around {date}",
+               "Sowing of {crop} planned in {parcel} around {date}", "Get ready for sowing."),
+    },
+    "sow_today": {
+        "es": ("Siembra pendiente en {parcel}", "Siembra pendiente de {crop} en {parcel}",
+               "Revisa si el suelo está en condiciones."),
+        "eu": ("{parcel} lursailean ereintza egiteke", "{parcel} lursailean {crop} ereintza egiteke",
+               "Begiratu lurra egoera onean dagoen."),
+        "en": ("Sowing due in {parcel}", "Sowing of {crop} due in {parcel}",
+               "Check whether the soil is in good condition."),
+    },
+    "sow_today_good": {
+        "es": ("Toca sembrar en {parcel}", "Toca sembrar {crop} en {parcel}",
+               "Las condiciones son buenas para sembrar."),
+        "eu": ("{parcel} lursailean ereiteko ordua da", "{parcel} lursailean {crop} ereiteko ordua da",
+               "Baldintzak onak dira ereiteko."),
+        "en": ("Time to sow in {parcel}", "Time to sow {crop} in {parcel}",
+               "Conditions are good for sowing."),
+    },
+}
+
+
+def _sow_text(row: dict, job: dict) -> dict:
+    """Report wording of a sowing: good conditions are claimed only when due today and workable."""
+    detail = job.get("detail") or {}
+    if job.get("when") == "today":
+        key = "sow_today_good" if detail.get("workability") == "optimal" else "sow_today"
+    else:
+        key = "sow_dated"
+    names = (row.get("plannedCrop") or {}).get("names") or {}
+    out = {}
+    for lang, (plain, with_crop, why) in _SOW_TEXTS[key].items():
+        # Only a localized name is printed, never a species code.
+        crop = str(names.get(lang) or "")
+        fields = {"parcel": _parcel_label(row), "crop": crop, "date": _human_date(detail, job.get("when"))}
+        out[lang] = {"title": (with_crop if crop else plain).format(**fields), "why": why.format(**fields)}
+    return out
 
 
 def _tasks_and_changes(row: dict, week_start: date) -> tuple[list[dict], list[dict]]:
@@ -89,22 +132,24 @@ def _tasks_and_changes(row: dict, week_start: date) -> tuple[list[dict], list[di
         if stale and kind in STALE_DROPPED:
             continue
         when = job_when(job)
-        if not _in_horizon(when, week_start):
-            continue
         detail = job.get("detail") or {}
-        text = plain_text(kind, row, detail, job.get("when"))
+        if kind == "sow":
+            text = _sow_text(row, job)
+        else:
+            text = {lang: {"title": v["title"], "why": v["body"]}
+                    for lang, v in plain_text(kind, row, detail, job.get("when")).items()}
         tasks.append({
             "id": f"{kind}:{row['parcelId']}",
             "subject": _subject(row),
             "kind": kind,
             "when": when,
-            "text": {lang: {"title": v["title"], "why": v["body"]} for lang, v in text.items()},
+            "text": text,
             "link": _link(row),
             "relatedAlertId": detail.get("alertId") or None,
         })
-    if stale:
+    if stale and row.get("cropStatus") == "active":
         changes.append(_change(row, "stale"))
-    else:
+    elif not stale:
         code = (row.get("surprise") or {}).get("code")
         if code in _CHANGE_TEXTS:
             changes.append(_change(row, code))
@@ -216,7 +261,8 @@ async def _parcel_figures(tenant_id: str, week_start: date, parcel_id: str) -> l
                               today=_utc_today(), week_start=week_start)
 
 
-async def _all_figures(tenant_id: str, week_start: date, rows: list[dict]) -> list[dict]:
+async def _all_figures(tenant_id: str, week_start: date, rows: list[dict],
+                       budget_s: float = FIGURES_BUDGET_S) -> list[dict]:
     """Figures of every parcel, 5 at a time within 45 s in total; the rest are left out."""
     semaphore = asyncio.Semaphore(FIGURES_CONCURRENCY)
 
@@ -226,7 +272,7 @@ async def _all_figures(tenant_id: str, week_start: date, rows: list[dict]) -> li
 
     tasks = [asyncio.ensure_future(one(r)) for r in rows]
     if tasks:
-        await asyncio.wait(tasks, timeout=FIGURES_BUDGET_S)
+        await asyncio.wait(tasks, timeout=budget_s)
     out: list[dict] = []
     for row, task in zip(rows, tasks):
         if not task.done():
@@ -243,6 +289,7 @@ async def _all_figures(tenant_id: str, week_start: date, rows: list[dict]) -> li
 
 async def build(tenant_id: str, week_start: date) -> dict[str, Any]:
     """The contribution of the tenant's parcels. Raises when Orion cannot be read."""
+    started = _monotonic()
     rows = await build_parcel_rows(None, tenant_id, with_history=False, strict=True)
     tasks: list[dict] = []
     changes: list[dict] = []
@@ -260,6 +307,11 @@ async def build(tenant_id: str, week_start: date) -> dict[str, Any]:
         tasks += t
         changes += c
     tasks.sort(key=lambda t: (_WHEN_RANK[t["when"]["type"]], t["when"]["date"] or ""))
-    figures = await _all_figures(tenant_id, week_start, rows)
+    budget = min(FIGURES_BUDGET_S, TOTAL_BUDGET_S - (_monotonic() - started))
+    if budget > 0:
+        figures = await _all_figures(tenant_id, week_start, rows, budget)
+    else:
+        logger.warning("weekly_report: no time left for figures tenant=%s", tenant_id)
+        figures = []
     return {"version": VERSION, "complete": complete, "tasks": tasks, "changes": changes,
             "figures": figures}

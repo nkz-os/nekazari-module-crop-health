@@ -113,19 +113,24 @@ def _when(iso: Optional[str], today: date) -> Optional[str]:
     return "today" if due <= today else iso
 
 
-def next_job(*, assessment: Optional[dict], timeline: Optional[dict], agro: Optional[dict],
-             alerts: list[dict], forecast: Optional[dict], today: date,
-             lang: str = DEFAULT_LANG) -> Optional[dict]:
-    # ASSUMPTION: `lang` is not in the brief signature; optional kwarg, default "es".
+def actionable_jobs(*, assessment: Optional[dict], timeline: Optional[dict], agro: Optional[dict],
+                    alerts: list[dict], forecast: Optional[dict], today: date,
+                    lang: str = DEFAULT_LANG) -> list[dict]:
+    """Every task of the parcel, most urgent first: treat, irrigate, sow, harvest.
+
+    `next_job` is the first of these; `pending_assessment` and `none_until` are not tasks.
+    """
+    jobs: list[dict] = []
     high = _high_alerts(alerts)
     if high:
-        return {"kind": "treat", "when": "today", "detail": {"disease": high[0].get("disease")}}
+        jobs.append({"kind": "treat", "when": "today",
+                     "detail": {"disease": high[0].get("disease"), "alertId": high[0].get("id")}})
 
     action = str((assessment or {}).get("recommendedAction") or "")
     if action == RecommendedAction.IRRIGATE_IMMEDIATE.value:
-        return {"kind": "irrigate", "when": "today", "detail": {}}
-    if action == RecommendedAction.IRRIGATE_SCHEDULED.value:
-        return {"kind": "irrigate", "when": None, "detail": {"scheduled": True}}
+        jobs.append({"kind": "irrigate", "when": "today", "detail": {}})
+    elif action == RecommendedAction.IRRIGATE_SCHEDULED.value:
+        jobs.append({"kind": "irrigate", "when": None, "detail": {"scheduled": True}})
 
     status = crop_status(timeline)
     planned = planned_cycle(timeline, today) or {}
@@ -138,13 +143,45 @@ def next_job(*, assessment: Optional[dict], timeline: Optional[dict], agro: Opti
         }
         if agro:
             detail["workability"] = ((agro.get("semaphores") or {}).get("workability"))
-        return {"kind": "sow", "when": _when(planned_date, today), "detail": detail}
+        jobs.append({"kind": "sow", "when": _when(planned_date, today), "detail": detail})
 
     harvest_date = ((forecast or {}).get("season") or {}).get("harvest_date")
     if (forecast or {}).get("status") == "done" and harvest_date:
         season_start = _cycle_date((timeline or {}).get("current"))
         if not season_start or str(harvest_date)[:10] >= season_start:
-            return {"kind": "harvest", "when": _when(harvest_date, today), "detail": {"date": harvest_date}}
+            jobs.append({"kind": "harvest", "when": _when(harvest_date, today),
+                         "detail": {"date": harvest_date}})
+    return jobs
+
+
+def job_when(job: dict) -> dict:
+    """The report's `when` of a job: today, this week (scheduled, no date), a date, or undated."""
+    when = job.get("when")
+    if when == "today":
+        return {"type": "today", "date": None}
+    if when:
+        return {"type": "date", "date": str(when)[:10]}
+    if (job.get("detail") or {}).get("scheduled"):
+        return {"type": "this_week", "date": None}
+    return {"type": "undated", "date": None}
+
+
+def next_job(*, assessment: Optional[dict], timeline: Optional[dict], agro: Optional[dict],
+             alerts: list[dict], forecast: Optional[dict], today: date,
+             lang: str = DEFAULT_LANG) -> Optional[dict]:
+    # ASSUMPTION: `lang` is not in the brief signature; optional kwarg, default "es".
+    jobs = actionable_jobs(assessment=assessment, timeline=timeline, agro=agro, alerts=alerts,
+                           forecast=forecast, today=today, lang=lang)
+    if jobs:
+        first = jobs[0]
+        if first["kind"] == "treat":
+            # next_job's detail stays what it always was; the alert id is for the report.
+            first = {**first, "detail": {"disease": first["detail"]["disease"]}}
+        return first
+
+    status = crop_status(timeline)
+    planned = planned_cycle(timeline, today) or {}
+    planned_date = _cycle_date(planned)
 
     if status == "active" and assessment is None:
         return {"kind": "pending_assessment", "when": None, "detail": {}}

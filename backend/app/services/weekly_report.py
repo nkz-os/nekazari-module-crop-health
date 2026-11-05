@@ -87,6 +87,15 @@ _SOW_TEXTS = {
         "en": ("Sowing planned in {parcel} around {date}",
                "Sowing of {crop} planned in {parcel} around {date}", "Get ready for sowing."),
     },
+    "sow_undated": {
+        "es": ("Siembra prevista en {parcel}, sin fecha",
+               "Siembra prevista de {crop} en {parcel}, sin fecha", "Aún no hay fecha de siembra."),
+        "eu": ("{parcel} lursailean ereintza aurreikusita, datarik gabe",
+               "{parcel} lursailean {crop} ereintza aurreikusita, datarik gabe",
+               "Oraindik ez dago ereintza-datarik."),
+        "en": ("Sowing planned in {parcel}, no date",
+               "Sowing of {crop} planned in {parcel}, no date", "There is no sowing date yet."),
+    },
     "sow_today": {
         "es": ("Siembra pendiente en {parcel}", "Siembra pendiente de {crop} en {parcel}",
                "Revisa si el suelo está en condiciones."),
@@ -111,8 +120,10 @@ def _sow_text(row: dict, job: dict) -> dict:
     detail = job.get("detail") or {}
     if job.get("when") == "today":
         key = "sow_today_good" if detail.get("workability") == "optimal" else "sow_today"
-    else:
+    elif job_when(job)["type"] == "date" and _human_date(detail, job.get("when")):
         key = "sow_dated"
+    else:
+        key = "sow_undated"
     names = (row.get("plannedCrop") or {}).get("names") or {}
     out = {}
     for lang, (plain, with_crop, why) in _SOW_TEXTS[key].items():

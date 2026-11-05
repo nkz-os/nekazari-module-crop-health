@@ -115,6 +115,22 @@ async def test_dated_sow_never_claims_good_conditions(lang, word):
 
 
 @pytest.mark.anyio
+async def test_undated_sow_text_and_when():
+    out = await _build([_sow(None, names={"es": "Trigo duro", "en": "Durum wheat"})])
+    task = out["tasks"][0]
+    assert task["when"] == {"type": "undated", "date": None}
+    for lang, t in task["text"].items():
+        title = t["title"]
+        assert title and not title.rstrip().endswith(("el", "around", "inguruan")) and "TRZDU" not in title
+        assert "  " not in title and t["why"]
+    assert task["text"]["es"]["title"] == "Siembra prevista de Trigo duro en Olive grove, sin fecha"
+    assert task["text"]["en"]["title"] == "Sowing of Durum wheat planned in Olive grove, no date"
+    assert task["text"]["eu"]["title"] == "Olive grove lursailean ereintza aurreikusita, datarik gabe"
+    plain = (await _build([_sow(None)]))["tasks"][0]["text"]
+    assert plain["es"]["title"] == "Siembra prevista en Olive grove, sin fecha"
+
+
+@pytest.mark.anyio
 async def test_sow_today_good_only_when_optimal():
     good = (await _build([_sow("today", "optimal")]))["tasks"][0]["text"]
     assert good["es"]["why"] == "Las condiciones son buenas para sembrar."

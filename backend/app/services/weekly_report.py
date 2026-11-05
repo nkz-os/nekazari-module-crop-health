@@ -25,7 +25,7 @@ from app.services.pipeline import (
     _hmac_secret,
     _utc_today,
 )
-from app.services.work_alerts import PARCEL_URN, _human_date, _parcel_label, plain_text
+from app.services.work_alerts import PARCEL_URN, _human_date, _parcel_label
 from app.services.worklist import job_when
 
 logger = logging.getLogger(__name__)
@@ -38,23 +38,17 @@ WEEK_DAYS = 7
 STALE_DROPPED = frozenset({"irrigate", "treat"})
 _WHEN_RANK = {"today": 0, "this_week": 1, "date": 2, "undated": 3}
 
+# Titles carry neither the parcel name nor the time: the renderer prints
+# "{name}: {title} — {when}" itself.
 # ASSUMPTION: eu wording is ours — confirm before shipping
 _CHANGE_TEXTS = {
-    "stale": {
-        "es": "{parcel}: sin evaluación reciente",
-        "eu": "{parcel}: ez dago ebaluazio berririk",
-        "en": "{parcel}: no recent assessment",
-    },
-    "vigor_below_expected": {
-        "es": "{parcel}: el cultivo pierde vigor",
-        "eu": "{parcel}: laboreak sasoia galtzen ari da",
-        "en": "{parcel}: the crop is losing vigor",
-    },
-    "phenology_deviation": {
-        "es": "{parcel}: el desarrollo del cultivo se desvía de lo esperado",
-        "eu": "{parcel}: laboreen garapena espero denetik aldentzen da",
-        "en": "{parcel}: crop development differs from what is expected",
-    },
+    "stale": {"es": "Sin evaluación reciente", "eu": "Ebaluazio berririk ez",
+              "en": "No recent assessment"},
+    "vigor_below_expected": {"es": "El cultivo pierde vigor", "eu": "Laboreak sasoia galtzen ari da",
+                             "en": "The crop is losing vigor"},
+    "phenology_deviation": {"es": "El desarrollo del cultivo se desvía de lo esperado",
+                            "eu": "Laboreen garapena espero denetik aldentzen da",
+                            "en": "Crop development differs from what is expected"},
 }
 
 
@@ -71,46 +65,56 @@ def _link(row: dict) -> dict:
 
 
 def _change(row: dict, key: str) -> dict:
-    label = _parcel_label(row)
     return {"subject": _subject(row), "link": _link(row),
-            "text": {lang: {"title": t.format(parcel=label)} for lang, t in _CHANGE_TEXTS[key].items()}}
+            "text": {lang: {"title": t} for lang, t in _CHANGE_TEXTS[key].items()}}
 
 
 # ASSUMPTION: eu wording is ours — confirm before shipping
-# (title without crop, title with crop, why); only the report uses these.
+# Report-only wording: (title without crop, title with crop, why). No parcel name, no time in titles.
 _SOW_TEXTS = {
     "sow_dated": {
-        "es": ("Siembra prevista en {parcel} hacia el {date}",
-               "Siembra prevista de {crop} en {parcel} hacia el {date}", "Prepara la siembra."),
-        "eu": ("{parcel} lursailean ereintza aurreikusita {date} inguruan",
-               "{parcel} lursailean {crop} ereintza aurreikusita {date} inguruan", "Prestatu ereintza."),
-        "en": ("Sowing planned in {parcel} around {date}",
-               "Sowing of {crop} planned in {parcel} around {date}", "Get ready for sowing."),
+        "es": ("Sembrar", "Sembrar {crop}", "Prepara la siembra hacia el {date}."),
+        "eu": ("Ereitea", "Ereitea: {crop}", "Prestatu ereintza {date} inguruan."),
+        "en": ("Sow", "Sow {crop}", "Get ready for sowing around {date}."),
     },
     "sow_undated": {
-        "es": ("Siembra prevista en {parcel}, sin fecha",
-               "Siembra prevista de {crop} en {parcel}, sin fecha", "Aún no hay fecha de siembra."),
-        "eu": ("{parcel} lursailean ereintza aurreikusita, datarik gabe",
-               "{parcel} lursailean {crop} ereintza aurreikusita, datarik gabe",
-               "Oraindik ez dago ereintza-datarik."),
-        "en": ("Sowing planned in {parcel}, no date",
-               "Sowing of {crop} planned in {parcel}, no date", "There is no sowing date yet."),
+        "es": ("Sembrar", "Sembrar {crop}", "Aún no hay fecha de siembra."),
+        "eu": ("Ereitea", "Ereitea: {crop}", "Oraindik ez dago ereintza-datarik."),
+        "en": ("Sow", "Sow {crop}", "There is no sowing date yet."),
     },
     "sow_today": {
-        "es": ("Siembra pendiente en {parcel}", "Siembra pendiente de {crop} en {parcel}",
-               "Revisa si el suelo está en condiciones."),
-        "eu": ("{parcel} lursailean ereintza egiteke", "{parcel} lursailean {crop} ereintza egiteke",
-               "Begiratu lurra egoera onean dagoen."),
-        "en": ("Sowing due in {parcel}", "Sowing of {crop} due in {parcel}",
-               "Check whether the soil is in good condition."),
+        "es": ("Sembrar", "Sembrar {crop}", "Revisa si el suelo está en condiciones."),
+        "eu": ("Ereitea", "Ereitea: {crop}", "Begiratu lurra egoera onean dagoen."),
+        "en": ("Sow", "Sow {crop}", "Check whether the soil is in good condition."),
     },
     "sow_today_good": {
-        "es": ("Toca sembrar en {parcel}", "Toca sembrar {crop} en {parcel}",
-               "Las condiciones son buenas para sembrar."),
-        "eu": ("{parcel} lursailean ereiteko ordua da", "{parcel} lursailean {crop} ereiteko ordua da",
-               "Baldintzak onak dira ereiteko."),
-        "en": ("Time to sow in {parcel}", "Time to sow {crop} in {parcel}",
-               "Conditions are good for sowing."),
+        "es": ("Sembrar", "Sembrar {crop}", "Las condiciones son buenas para sembrar."),
+        "eu": ("Ereitea", "Ereitea: {crop}", "Baldintzak onak dira ereiteko."),
+        "en": ("Sow", "Sow {crop}", "Conditions are good for sowing."),
+    },
+}
+
+# (title without disease, title with disease, why)
+_OTHER_TEXTS = {
+    "irrigate": {
+        "es": ("Regar", None, "Según el balance de agua, hoy conviene regar."),
+        "eu": ("Ureztatu", None, "Ur-balantzearen arabera, gaur ureztatzea komeni da."),
+        "en": ("Irrigate", None, "Based on the water balance, irrigating today is advisable."),
+    },
+    "irrigate_week": {
+        "es": ("Regar", None, "Según el balance de agua, conviene regar esta semana."),
+        "eu": ("Ureztatu", None, "Ur-balantzearen arabera, aste honetan ureztatzea komeni da."),
+        "en": ("Irrigate", None, "Based on the water balance, irrigating this week is advisable."),
+    },
+    "treat": {
+        "es": ("Tratar", "Tratar: {disease}", "Riesgo alto; conviene tratar hoy."),
+        "eu": ("Tratatu", "Tratatu: {disease}", "Arrisku handia; gaur tratatzea komeni da."),
+        "en": ("Treat", "Treat: {disease}", "High risk; treating today is advisable."),
+    },
+    "harvest": {
+        "es": ("Cosecha prevista", None, "Prepara la cosecha hacia el {date}."),
+        "eu": ("Uzta aurreikusita", None, "Prestatu uzta {date} inguruan."),
+        "en": ("Harvest expected", None, "Get ready to harvest around {date}."),
     },
 }
 
@@ -129,9 +133,31 @@ def _sow_text(row: dict, job: dict) -> dict:
     for lang, (plain, with_crop, why) in _SOW_TEXTS[key].items():
         # Only a localized name is printed, never a species code.
         crop = str(names.get(lang) or "")
-        fields = {"parcel": _parcel_label(row), "crop": crop, "date": _human_date(detail, job.get("when"))}
+        fields = {"crop": crop, "date": _human_date(detail, job.get("when"))}
         out[lang] = {"title": (with_crop if crop else plain).format(**fields), "why": why.format(**fields)}
     return out
+
+
+def _report_text(kind: str, job: dict) -> dict:
+    """Report wording of irrigate, treat and harvest: parcel-free titles, a sentence in `why`."""
+    detail = job.get("detail") or {}
+    key = "irrigate_week" if kind == "irrigate" and not job.get("when") else kind
+    disease = str(detail.get("disease") or "")
+    # A bare code (snake_case) is not a name a farmer reads: use the nameless wording.
+    named = bool(disease) and "_" not in disease
+    out = {}
+    for lang, (plain, with_disease, why) in _OTHER_TEXTS[key].items():
+        fields = {"disease": disease, "date": _human_date(detail, job.get("when"))}
+        title = with_disease if (with_disease and named) else plain
+        out[lang] = {"title": title.format(**fields), "why": why.format(**fields)}
+    return out
+
+
+def _is_unknown(row: dict) -> bool:
+    """An active-crop parcel with no recent assessment, or one still waiting for its first."""
+    if row.get("cropStatus") != "active":
+        return False
+    return row.get("freshness") == "stale" or (row.get("nextJob") or {}).get("kind") == "pending_assessment"
 
 
 def _tasks_and_changes(row: dict, week_start: date) -> tuple[list[dict], list[dict]]:
@@ -144,11 +170,7 @@ def _tasks_and_changes(row: dict, week_start: date) -> tuple[list[dict], list[di
             continue
         when = job_when(job)
         detail = job.get("detail") or {}
-        if kind == "sow":
-            text = _sow_text(row, job)
-        else:
-            text = {lang: {"title": v["title"], "why": v["body"]}
-                    for lang, v in plain_text(kind, row, detail, job.get("when")).items()}
+        text = _sow_text(row, job) if kind == "sow" else _report_text(kind, job)
         tasks.append({
             "id": f"{kind}:{row['parcelId']}",
             "subject": _subject(row),
@@ -305,9 +327,12 @@ async def build(tenant_id: str, week_start: date) -> dict[str, Any]:
     tasks: list[dict] = []
     changes: list[dict] = []
     complete = True
+    unknown = 0
     for row in rows:
         if row.get("_degraded"):
             complete = False
+        if _is_unknown(row):
+            unknown += 1
         try:
             t, c = _tasks_and_changes(row, week_start)
         except Exception as exc:  # noqa: BLE001 — one malformed row never hides the rest
@@ -324,5 +349,6 @@ async def build(tenant_id: str, week_start: date) -> dict[str, Any]:
     else:
         logger.warning("weekly_report: no time left for figures tenant=%s", tenant_id)
         figures = []
-    return {"version": VERSION, "complete": complete, "tasks": tasks, "changes": changes,
+    return {"version": VERSION, "complete": complete, "unknown_count": unknown,
+            "tasks": tasks, "changes": changes,
             "figures": figures}

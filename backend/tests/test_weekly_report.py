@@ -110,7 +110,7 @@ def _sow(when, workability=None, names=None, species="TRZDU", crop="TRZDU"):
 async def test_dated_sow_never_claims_good_conditions(lang, word):
     out = await _build([_sow("2026-11-12", workability="optimal")])
     text = out["tasks"][0]["text"][lang]
-    assert word in text["title"]
+    assert word in text["why"]
     assert "buenas" not in text["why"] and "good" not in text["why"] and "onak" not in text["why"]
 
 
@@ -123,11 +123,11 @@ async def test_undated_sow_text_and_when():
         title = t["title"]
         assert title and not title.rstrip().endswith(("el", "around", "inguruan")) and "TRZDU" not in title
         assert "  " not in title and t["why"]
-    assert task["text"]["es"]["title"] == "Siembra prevista de Trigo duro en Olive grove, sin fecha"
-    assert task["text"]["en"]["title"] == "Sowing of Durum wheat planned in Olive grove, no date"
-    assert task["text"]["eu"]["title"] == "Olive grove lursailean ereintza aurreikusita, datarik gabe"
+    assert task["text"]["es"]["title"] == "Sembrar Trigo duro"
+    assert task["text"]["en"]["title"] == "Sow Durum wheat"
+    assert task["text"]["eu"]["title"] == "Ereitea"  # no eu name: nameless wording
     plain = (await _build([_sow(None)]))["tasks"][0]["text"]
-    assert plain["es"]["title"] == "Siembra prevista en Olive grove, sin fecha"
+    assert plain["es"]["title"] == "Sembrar"
 
 
 @pytest.mark.anyio
@@ -341,3 +341,62 @@ async def test_parcel_figures_signed_call_and_failure_is_none():
         assert await weekly_report._parcel_figures(T, WEEK, "p1") is None
         route.mock(side_effect=httpx.ConnectError("down"))
         assert await weekly_report._parcel_figures(T, WEEK, "p1") is None
+
+
+# ---- C: titles carry neither the parcel name nor the time ------------------------------
+
+_FORBIDDEN = ("hoy", "esta semana", "hacia el", "today", "this week", "around", "gaur", "aste honetan",
+              "inguruan")
+
+
+@pytest.mark.anyio
+async def test_titles_have_no_parcel_name_nor_time():
+    rows = [_row(name="Campo Largo", jobs=[
+        {"kind": "treat", "when": "today", "detail": {"disease": "roya"}},
+        {"kind": "treat", "when": "today", "detail": {"disease": "powdery_mildew"}},
+        {"kind": "irrigate", "when": "today", "detail": {}},
+        {"kind": "irrigate", "when": None, "detail": {"scheduled": True}},
+        {"kind": "harvest", "when": "2026-11-14", "detail": {"date": "2026-11-14"}},
+    ]), _sow("today", "optimal"), _sow("2026-11-12", names={"es": "Trigo", "en": "Wheat", "eu": "Garia"}),
+        _sow(None),
+        _row(pid="s", name="Campo Largo", freshness="stale"),
+        _row(pid="v", name="Campo Largo", surprise={"code": "vigor_below_expected"}),
+        _row(pid="f", name="Campo Largo", surprise={"code": "phenology_deviation"})]
+    for r in rows:
+        r["parcelName"] = "Campo Largo"
+    out = await _build(rows)
+    assert len(out["tasks"]) == 8 and len(out["changes"]) == 3
+    for item in out["tasks"] + out["changes"]:
+        for lang, t in item["text"].items():
+            low = t["title"].lower()
+            assert "campo largo" not in low and "campo largo" not in t.get("why", "").lower()
+            assert not any(w in low for w in _FORBIDDEN), (lang, t["title"])
+    titles = {t["text"]["es"]["title"] for t in out["tasks"]}
+    assert {"Tratar: roya", "Tratar", "Regar", "Cosecha prevista", "Sembrar"} <= titles
+
+
+@pytest.mark.anyio
+async def test_irrigate_today_and_week_differ_in_why():
+    out = await _build([_row(jobs=[{"kind": "irrigate", "when": "today", "detail": {}},
+                                   {"kind": "irrigate", "when": None, "detail": {}}])])
+    whys = [t["text"]["es"]["why"] for t in out["tasks"]]
+    assert "hoy" in whys[0] and "esta semana" in whys[1]
+
+
+# ---- D: unknown_count ------------------------------------------------------------------
+
+@pytest.mark.anyio
+async def test_unknown_count():
+    rows = [_row(pid="a", freshness="stale"),
+            _row(pid="b", nextJob={"kind": "pending_assessment", "when": None, "detail": {}}),
+            _row(pid="c", freshness="stale", nextJob={"kind": "pending_assessment"}),  # once
+            _row(pid="d", freshness="stale", cropStatus="none"),
+            _row(pid="e")]
+    out = await _build(rows)
+    assert out["unknown_count"] == 3
+    assert out["complete"] is True
+
+
+@pytest.mark.anyio
+async def test_unknown_count_zero_by_default():
+    assert (await _build([_row()]))["unknown_count"] == 0

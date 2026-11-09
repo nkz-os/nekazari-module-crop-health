@@ -111,6 +111,11 @@ _OTHER_TEXTS = {
         "eu": ("Tratatu", "Tratatu: {disease}", "Arrisku handia; gaur tratatzea komeni da."),
         "en": ("Treat", "Treat: {disease}", "High risk; treating today is advisable."),
     },
+    "harvest_undated": {
+        "es": ("Cosecha prevista", None, "Prepara la cosecha."),
+        "eu": ("Uzta aurreikusita", None, "Prestatu uzta."),
+        "en": ("Harvest expected", None, "Get ready to harvest."),
+    },
     "harvest": {
         "es": ("Cosecha prevista", None, "Prepara la cosecha hacia el {date}."),
         "eu": ("Uzta aurreikusita", None, "Prestatu uzta {date} inguruan."),
@@ -142,6 +147,8 @@ def _report_text(kind: str, job: dict) -> dict:
     """Report wording of irrigate, treat and harvest: parcel-free titles, a sentence in `why`."""
     detail = job.get("detail") or {}
     key = "irrigate_week" if kind == "irrigate" and not job.get("when") else kind
+    if key == "harvest" and not _human_date(detail, job.get("when")):
+        key = "harvest_undated"
     disease = str(detail.get("disease") or "")
     # A bare code (snake_case) is not a name a farmer reads: use the nameless wording.
     named = bool(disease) and "_" not in disease
@@ -180,7 +187,7 @@ def _tasks_and_changes(row: dict, week_start: date) -> tuple[list[dict], list[di
             "link": _link(row),
             "relatedAlertId": detail.get("alertId") or None,
         })
-    if stale and row.get("cropStatus") == "active":
+    if _is_unknown(row):
         changes.append(_change(row, "stale"))
     elif not stale:
         code = (row.get("surprise") or {}).get("code")

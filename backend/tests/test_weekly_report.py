@@ -400,3 +400,25 @@ async def test_unknown_count():
 @pytest.mark.anyio
 async def test_unknown_count_zero_by_default():
     assert (await _build([_row()]))["unknown_count"] == 0
+
+
+@pytest.mark.anyio
+async def test_pending_active_parcel_emits_one_no_assessment_change():
+    rows = [_row(pid="b", nextJob={"kind": "pending_assessment", "when": None, "detail": {}}),
+            _row(pid="c", cropStatus="none", nextJob={"kind": "pending_assessment"})]
+    out = await _build(rows)
+    assert out["unknown_count"] == 1
+    assert len(out["changes"]) == 1
+    ch = out["changes"][0]
+    assert ch["subject"]["id"].endswith("b")
+    assert {lang: v["title"] for lang, v in ch["text"].items()} == {
+        "es": "Sin evaluación reciente", "eu": "Ebaluazio berririk ez", "en": "No recent assessment"}
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("lang,bad", [("es", "hacia el"), ("en", "around"), ("eu", "inguruan")])
+async def test_harvest_without_date_has_dateless_why(lang, bad):
+    row = _row(jobs=[{"kind": "harvest", "when": None, "detail": {}}])
+    out = await _build([row])
+    why = out["tasks"][0]["text"][lang]["why"]
+    assert why and bad not in why and "{" not in why

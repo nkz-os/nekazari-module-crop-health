@@ -7,6 +7,8 @@ POST /api/crop-health/internal/setup-parcel
 
 import hmac
 import logging
+import re
+from datetime import date
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
@@ -16,6 +18,7 @@ from nkz_platform_sdk.notify_auth import derived_tokens_from_env
 from nkz_platform_sdk.subscriptions import SubscriptionRegistrar
 
 from app.config import get_settings
+from app.services import weekly_report
 from app.services.pipeline import compute_assessment
 from app.services.work_alerts import emit_work_alerts
 from app.services.yield_forecast import compute_and_store
@@ -253,4 +256,29 @@ async def run_work_alerts(request: Request, body: WorkAlertsRunRequest):
         return await emit_work_alerts(body.tenant_id)
     except Exception as exc:  # noqa: BLE001 — surface as 502 so the CronJob logs and counts it
         logger.exception("work-alerts tenant=%s failed", body.tenant_id)
+        raise HTTPException(status_code=502, detail=type(exc).__name__) from exc
+
+
+_TENANT_RE = re.compile(r"^[a-z0-9_-]+$")
+
+
+@router.get("/weekly-report")
+async def weekly_report_contribution(request: Request, tenant_id: str = "", week_start: str = ""):
+    """Tasks, changes and figures for the tenant's weekly report (contract version 1)."""
+    secret = request.headers.get("X-Internal-Service-Secret", "")
+    if not INTERNAL_SECRET or not hmac.compare_digest(secret.encode(), INTERNAL_SECRET.encode()):
+        logger.warning("Unauthorized internal weekly-report call from %s", request.client)
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    if not _TENANT_RE.fullmatch(tenant_id):
+        raise HTTPException(status_code=400, detail="invalid tenant_id")
+    try:
+        start = date.fromisoformat(week_start)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="invalid week_start") from None
+    if start.weekday() != 0:
+        raise HTTPException(status_code=400, detail="week_start must be a Monday")
+    try:
+        return await weekly_report.build(tenant_id, start)
+    except Exception as exc:  # noqa: BLE001 — an outage is a failure, never an empty report
+        logger.exception("weekly-report tenant=%s failed", tenant_id)
         raise HTTPException(status_code=502, detail=type(exc).__name__) from exc

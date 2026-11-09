@@ -51,6 +51,12 @@ _TEXTS = {
         "eu": ("{parcel} tratatzeko ordua da", "Arrisku handia; gaur tratatzea komeni da."),
         "en": ("Time to treat {parcel}", "High risk; treating today is advisable."),
     },
+    # ASSUMPTION: eu wording is ours — confirm before shipping
+    "irrigate_week": {
+        "es": ("Riega {parcel} esta semana", "Según el balance de agua, conviene regar esta semana."),
+        "eu": ("Ureztatu {parcel} aste honetan", "Ur-balantzearen arabera, aste honetan ureztatzea komeni da."),
+        "en": ("Irrigate {parcel} this week", "Based on the water balance, irrigating this week is advisable."),
+    },
     "harvest": {
         "es": ("Cosecha prevista en {parcel}", "Prepara la cosecha hacia el {date}."),
         "eu": ("{parcel} lursailean uzta aurreikusita", "Prestatu uzta {date} inguruan."),
@@ -105,6 +111,16 @@ def _plain(kind: str, row: dict, detail: dict, when: str | None) -> dict:
                   "disease": disease, "date": _human_date(detail, when)}
         out[lang] = {"title": title.format(**fields), "body": body.format(**fields)}
     return out
+
+
+def plain_text(kind: str, row: dict, detail: dict, when: str | None) -> dict:
+    """Title and body in es, eu and en of one task, the wording the work Alerts use.
+
+    A scheduled irrigation (no date) reads "this week", not "today".
+    """
+    if kind == "irrigate" and not when:
+        return _plain("irrigate_week", row, detail, when)
+    return _plain(kind, row, detail, when)
 
 
 def build_work_alert(tenant_id: str, row: dict, today: date) -> dict | None:

@@ -143,6 +143,11 @@ def _worklist_fields(*, assessment: dict | None, assessed_at: str | None, crop_n
             alerts=alerts, forecast=inputs.get("forecast") if active else None,
             today=today,
         ),
+        "jobs": worklist.actionable_jobs(
+            assessment=live, timeline=timeline, agro=inputs.get("agro"),
+            alerts=alerts, forecast=inputs.get("forecast") if active else None,
+            today=today,
+        ),
         "surprise": worklist.surprise(
             assessment=live, history=(inputs.get("history") or []) if active else [], alerts=alerts,
         ),
@@ -819,7 +824,8 @@ async def build_parcel_rows(request: Request | None, tenant_id: str, *,
             logger.warning("worklist: row degraded tenant=%s parcel=%s: %s", tenant_id, p["parcelId"], exc)
             fresh = worklist.freshness(p.get("assessedAt"), now)
             p.update({"cropStatus": "none", "freshness": fresh, "stale": fresh == "stale",
-                      "nextJob": None, "surprise": None, "plannedCrop": None, "lastAssessment": None})
+                      "nextJob": None, "jobs": [], "surprise": None, "plannedCrop": None,
+                      "lastAssessment": None})
             if strict:
                 p["_degraded"] = True
     return parcels

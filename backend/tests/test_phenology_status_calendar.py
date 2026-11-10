@@ -204,3 +204,43 @@ def test_endpoint_survives_calendar_failure(client, monkeypatch):
     monkeypatch.setattr(phenology.observed_stage, "fetch_observed_stages", _boom)
     body = client.get(URL).json()
     assert body["currentStage"] == "vegetative" and "milestones" not in body
+
+
+def _fixed_rate_status():
+    """A status as the base builder leaves it: stage dates projected at a fixed daily rate."""
+    return {"seasonStart": "2026-11-01", "stages": [
+        {"stage": "emergence", "gddMin": 0.0, "gddMax": 150.0, "reached": True, "current": False,
+         "projectedDate": None, "projectedEnd": None},
+        {"stage": "vegetative", "gddMin": 150.0, "gddMax": 1450.0, "reached": True, "current": True,
+         "projectedDate": None, "projectedEnd": "2027-04-01"},
+        {"stage": "flowering", "gddMin": 1450.0, "gddMax": 1686.4, "reached": False, "current": False,
+         "projectedDate": "2027-04-01", "projectedEnd": None},
+        {"stage": "grain_filling", "gddMin": 1686.4, "gddMax": 2809.1, "reached": False, "current": False,
+         "projectedDate": "2027-05-01", "projectedEnd": None},
+        {"stage": "maturity", "gddMin": 2809.1, "gddMax": 2809.1, "reached": False, "current": False,
+         "projectedDate": "2027-09-01", "projectedEnd": None},
+    ]}
+
+
+def test_calendar_stage_dates_come_from_the_milestones_never_from_the_fixed_rate():
+    record = {"season": {"sowing": {"date": "2026-11-01"}}, "phenology": {"milestones": MILESTONES}}
+    out = pm.extend_status(_fixed_rate_status(), TABLE, record, [])
+    by = {s["stage"]: s for s in out["stages"]}
+    assert by["flowering"]["projectedDate"] == "2027-04-15"       # the milestone's median date
+    assert by["vegetative"]["projectedEnd"] == "2027-04-15"       # the current stage ends where the next begins
+    assert by["maturity"]["projectedDate"] == "2027-06-20"
+    assert by["grain_filling"]["projectedDate"] is None           # no milestone dates it: no date at all
+    assert by["emergence"]["projectedDate"] is None and by["emergence"]["projectedEnd"] is None
+
+
+def test_calendar_stage_dates_are_blank_without_a_milestone_answer():
+    out = pm.extend_status(_fixed_rate_status(), TABLE, None, [])
+    assert all(s["projectedDate"] is None and s["projectedEnd"] is None for s in out["stages"])
+
+
+def test_other_crops_keep_their_projected_stage_dates():
+    plain = StageTable(stages={"emergence": (0.0, 90.0), "vegetative": (90.0, 520.0)}, base_temp=10.0)
+    status = {"stages": [{"stage": "vegetative", "gddMin": 90.0, "gddMax": 520.0, "reached": False, "current": False,
+                          "projectedDate": "2027-04-01", "projectedEnd": None}]}
+    out = pm.extend_status(status, plain, None, [])
+    assert out["stages"][0]["projectedDate"] == "2027-04-01"

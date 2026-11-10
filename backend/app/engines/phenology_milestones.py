@@ -113,11 +113,32 @@ def observation_rows(observed: list[dict], table: StageTable, milestones: dict |
     return rows
 
 
+def _calendar_stage_dates(stages: list, table: StageTable, milestones: dict | None) -> None:
+    """Date the stages of a calendar table from the milestone dates only, in place.
+
+    The base status projects stage dates at a fixed daily rate; for the calendar that would show a
+    second, different date for an event the milestones already date. A stage not reached yet starts
+    on the date of the milestone with its lower bound; the current stage ends where the next one
+    begins; anything the milestones do not date gets no date.
+    """
+    starts = dict(_stage_starts(table, milestones or {}, None))
+    names = [item.get("stage") for item in stages]
+    for i, item in enumerate(stages):
+        start = starts.get(item.get("stage"))
+        nxt = starts.get(names[i + 1]) if i + 1 < len(names) else None
+        if "projectedDate" in item:
+            item["projectedDate"] = start.isoformat() if start and not item.get("reached") else None
+        if "projectedEnd" in item:
+            item["projectedEnd"] = nxt.isoformat() if nxt and item.get("current") else None
+
+
 def extend_status(status: dict, table: StageTable, record: dict | None, observed: list[dict] | None) -> dict:
-    """Add the cereal-calendar fields to a phenology-status dict, in place. Existing keys are never touched.
+    """Add the cereal-calendar fields to a phenology-status dict, in place.
 
     Table fields appear only when the table carries them; milestones only with a stored answer;
-    ``observations`` only when the table is the calendar's or something was observed.
+    ``observations`` only when the table is the calendar's or something was observed. For a
+    calendar table the projected stage dates are replaced by the milestone dates (or cleared);
+    for every other crop the existing keys are never touched.
     """
     if table.model is not None:
         status["model"] = table.model
@@ -133,6 +154,8 @@ def extend_status(status: dict, table: StageTable, record: dict | None, observed
         status["notes"] = block.get("notes") or []
         if block.get("basis"):
             status["basis"] = block["basis"]
+    if table.model is not None and isinstance(status.get("stages"), list):
+        _calendar_stage_dates(status["stages"], table, block.get("milestones"))
     if table.stage_bbch and isinstance(status.get("stages"), list):
         for item in status["stages"]:
             rng = table.stage_bbch.get(item.get("stage"))

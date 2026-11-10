@@ -142,7 +142,7 @@ async def _list_sources(request: Request) -> dict:
     now = datetime.now(timezone.utc)
     latest_per_parcel: dict[str, datetime] = {}
     for a in assessments:
-        ref_p = a.get("hasAgriParcel", "")
+        ref_p = a.get("hasAgriParcel") or a.get("refAgriParcel") or ""
         if isinstance(ref_p, dict):
             ref_p = ref_p.get("object", "")
         pid = ref_p.replace("urn:ngsi-ld:AgriParcel:", "")

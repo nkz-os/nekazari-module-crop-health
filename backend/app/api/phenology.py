@@ -108,7 +108,7 @@ def _build_status_from_dict(latest: dict, thresholds: dict[str, tuple[float, flo
         if gdd is not None and thresholds
         else []
     )
-    parcel_ref = latest.get("hasAgriParcel")
+    parcel_ref = latest.get("hasAgriParcel") or latest.get("refAgriParcel")
     if isinstance(parcel_ref, dict):
         parcel_ref = parcel_ref.get("object")
 

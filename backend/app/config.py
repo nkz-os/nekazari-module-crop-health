@@ -7,6 +7,7 @@ All secrets via env vars / K8s Secrets — never hardcoded.
 
 from functools import lru_cache
 
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings
 
 
@@ -56,6 +57,10 @@ class Settings(BaseSettings):
     # Subparcels are assessed as independent parcels; an area-weighted parent
     # composite stays off until parent aggregation is designed.
     parent_composite_enabled: bool = False  # env PARENT_COMPOSITE_ENABLED
+
+    # ── Prediction log (Postgres) ────────────────────────────────────────────
+    # No default: without it the log is off (loud, not fatal).
+    database_url: str | None = Field(default=None, validation_alias=AliasChoices("DATABASE_URL", "POSTGRES_URL"))
 
     # ── Service-to-service auth ──────────────────────────────────────────────
     module_management_key: str = ""

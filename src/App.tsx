@@ -43,7 +43,7 @@ const App: React.FC = () => {
       <aside
         className={`${
           selectedParcelId ? 'hidden md:flex' : 'flex'
-        } min-w-0 border-r border-nkz-border bg-nkz-surface-raised flex-col`}
+        } min-w-0 min-h-0 overflow-hidden border-r border-nkz-border bg-nkz-surface-raised flex-col`}
       >
         <header className="p-3 border-b border-nkz-border">
           <div className="flex items-center gap-2">
@@ -70,7 +70,7 @@ const App: React.FC = () => {
       <main
         className={`${
           selectedParcelId ? 'block' : 'hidden md:block'
-        } md:col-span-2 lg:col-span-3 min-w-0 overflow-y-auto p-4 bg-nkz-surface`}
+        } md:col-span-2 lg:col-span-3 min-w-0 min-h-0 overflow-y-auto p-4 bg-nkz-surface`}
       >
         {!selectedParcelId ? (
           <div className="flex items-center justify-center h-full">

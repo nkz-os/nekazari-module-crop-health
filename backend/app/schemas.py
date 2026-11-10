@@ -258,13 +258,14 @@ class PhenologyParams(BaseModel):
     """Species- and stage-specific agronomic coefficients with provenance.
 
     Kc: crop coefficient for water balance.
-    mds_ref: reference MDS for the species at current stage.
+    mds_ref: reference MDS for the species at current stage; None when the
+        crop has no dendrometer reference (e.g. cereals).
 
     Confidence intervals and provenance are present when data comes
     from the BioOrchestrator knowledge graph (non-default).
     """
     kc: float = Field(0.85, description="Crop coefficient")
-    mds_ref: float = Field(150.0, description="Reference MDS (µm)")
+    mds_ref: float | None = Field(150.0, description="Reference MDS (µm); None = no reference")
     species: str = "generic"
     stage: str = "vegetative"
     is_default: bool = True  # True if using hardcoded fallbacks

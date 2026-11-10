@@ -55,7 +55,7 @@ def mds_severity(mds_actual: float, mds_ref: float) -> Severity:
 
 def calculate_mds_from_readings(
     readings: list[TimeseriesPoint],
-    mds_ref: float,
+    mds_ref: float | None,
 ) -> MDSResult | None:
     """Calculate MDS from a list of trunk diameter readings.
 
@@ -64,12 +64,14 @@ def calculate_mds_from_readings(
     Args:
         readings: Trunk diameter readings in µm from the sliding window.
                   Must have at least 2 points.
-        mds_ref: Reference MDS for the species/stage (µm).
+        mds_ref: Reference MDS for the species/stage (µm); None when the crop
+                 has no published reference.
 
     Returns:
-        MDSResult or None if insufficient data.
+        MDSResult, or None with insufficient data or without a reference
+        (no severity can be stated against a missing reference).
     """
-    if len(readings) < 2:
+    if mds_ref is None or len(readings) < 2:
         return None
 
     values = [r.value for r in readings]

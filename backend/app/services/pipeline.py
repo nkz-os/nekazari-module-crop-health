@@ -59,7 +59,7 @@ from app.schemas import (
     VigorResult as VigorResultSchema,
     WeatherSnapshot,
 )
-from app.services import context_client
+from app.services import context_client, parcel_site
 from app.services.context_client import get_phenology_params
 from app.services.daily_balance import (
     DAY_FLOWS,
@@ -1010,7 +1010,7 @@ async def trigger(
     # _run_engines so the GDD-derived stage and phenology-progress deviation
     # are computed identically to the scheduled compute_assessment path.
     try:
-        stage_table = await context_client.get_phenology_stages(species)
+        stage_table = await parcel_site.get_parcel_stage_table(species, effective_parcel, tenant_id)
     except Exception as exc:
         logger.warning("pipeline: get_phenology_stages failed for %s — empty table: %s", species, exc)
         stage_table = {}
@@ -1030,6 +1030,7 @@ async def trigger(
             tenant_id, season_start, effective_parcel,
             base_temp=gdd_base_temp,
             upper_cutoff=gdd_upper_cutoff,
+            **parcel_site.gdd_kwargs(stage_table),
         ) if season_start else None
         if gdd_data and gdd_data.get("gdd_total"):
             gdd = float(gdd_data["gdd_total"])
@@ -2571,7 +2572,7 @@ async def compute_assessment(
     season_start = await resolve_season_start(parcel_short, tenant_id)
 
     # Seasonal GDD (authoritative stage source) — uses crop-specific base_temp/upper_cutoff
-    thresholds = await context_client.get_phenology_stages(species)
+    thresholds = await parcel_site.get_parcel_stage_table(species, parcel_id, tenant_id)
     if season_start is None:
         # No crop cycle in progress (sowing still planned): nothing accumulated.
         gdd_data = {"gdd_total": 0.0}
@@ -2580,6 +2581,7 @@ async def compute_assessment(
             tenant_id, season_start, parcel_id,
             base_temp=thresholds.base_temp if thresholds else 10.0,
             upper_cutoff=thresholds.upper_cutoff if thresholds else None,
+            **parcel_site.gdd_kwargs(thresholds),
         ) or {}
     gdd = gdd_data.get("gdd_total")
     if gdd is not None:
@@ -3183,6 +3185,7 @@ async def _fetch_gdd(
     parcel_id: str,
     base_temp: float = 10.0,
     upper_cutoff: float | None = None,
+    gdd_method: str | None = None,
 ) -> dict | None:
     """Season GDD from weather-api's parcel daily series, or None.
 
@@ -3190,6 +3193,8 @@ async def _fetch_gdd(
     the parcel's own series lacks from Open-Meteo and sums the GDD with the
     crop's base and Tmax cap. The call is signed like the gateway's
     (weather-api requires it). None when the series does not cover the season.
+    ``gdd_method`` (only the cereal calendar's ``aquacrop_m3``) is sent as such,
+    and the answer must echo it: a service that ignored it summed another GDD.
 
     Returns ``{"gdd_total": float, "days_count": int}``.
     """
@@ -3219,6 +3224,8 @@ async def _fetch_gdd(
         "base_temp": str(base_temp),
         "upper_cutoff": str(upper_cutoff if upper_cutoff is not None else _DEFAULT_UPPER_CUTOFF),
     }
+    if gdd_method:
+        params["gdd_method"] = gdd_method
     headers = {
         "X-Tenant-ID": tenant_id,
         "X-Auth-Signature": generate_hmac_signature(secret, "", tenant_id),
@@ -3234,9 +3241,14 @@ async def _fetch_gdd(
         if resp.status_code != 200:
             logger.warning("_fetch_gdd: HTTP %d for tenant %s parcel=%s", resp.status_code, tenant_id, parcel_id)
             return None
-        totals = (resp.json() or {}).get("totals") or {}
+        body = resp.json() or {}
+        totals = body.get("totals") or {}
     except Exception as exc:  # noqa: BLE001 — an assessment never fails on its GDD
         logger.warning("_fetch_gdd: failed for tenant %s parcel=%s — no season GDD: %s", tenant_id, parcel_id, exc)
+        return None
+    if gdd_method and body.get("gdd_method") != gdd_method:
+        logger.warning("_fetch_gdd: weather-api did not echo gdd_method=%s for tenant %s parcel=%s — no season GDD",
+                       gdd_method, tenant_id, parcel_id)
         return None
 
     gdd = totals.get("gdd")

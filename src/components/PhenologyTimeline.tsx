@@ -1,9 +1,18 @@
 import React from 'react';
 import { useTranslation } from '@nekazari/sdk';
 import type { PhenologyStageProjection, PhenologyStatus } from '../types/assessment';
+import PhenologyModelInfo from './phenology/PhenologyModelInfo';
+import PhenologyMilestones from './phenology/PhenologyMilestones';
+import PhenologyValidation from './phenology/PhenologyValidation';
+import PhenologyObservations from './phenology/PhenologyObservations';
+import ObservedStageForm from './phenology/ObservedStageForm';
 
 interface PhenologyTimelineProps {
   status: PhenologyStatus | null;
+  /** Parcel the observed-stage form records against (form hidden without it). */
+  parcelId?: string;
+  /** Called after an observed stage was recorded, to refresh the status. */
+  onRecorded?: () => void;
 }
 
 function stageStatusClass(status: string): string {
@@ -26,7 +35,7 @@ function deriveStageStatus(stage: PhenologyStageProjection): 'current' | 'comple
   return 'upcoming';
 }
 
-const PhenologyTimeline: React.FC<PhenologyTimelineProps> = ({ status }) => {
+const PhenologyTimeline: React.FC<PhenologyTimelineProps> = ({ status, parcelId, onRecorded }) => {
   const { t } = useTranslation('crop-health');
 
   if (!status || status.status === 'pending' || !status.stages?.length) {
@@ -44,6 +53,8 @@ const PhenologyTimeline: React.FC<PhenologyTimelineProps> = ({ status }) => {
         )}
       </div>
 
+      <PhenologyModelInfo status={status} />
+
       <div className="flex gap-1 overflow-x-auto pb-1">
         {status.stages.map((stage) => {
           const stageStatus = deriveStageStatus(stage);
@@ -55,6 +66,11 @@ const PhenologyTimeline: React.FC<PhenologyTimelineProps> = ({ status }) => {
               <p className="text-[11px] font-medium leading-tight">
                 {t(`phenology.stage.${stage.stage}`, stage.stage)}
               </p>
+              {status.model && stage.bbchFrom != null && stage.bbchTo != null && (
+                <p className="text-[10px] opacity-80">
+                  {t('phenologyTimeline.bbchRange', { from: stage.bbchFrom, to: stage.bbchTo })}
+                </p>
+              )}
               {stage.projectedDate && (
                 <p className="text-[10px] opacity-80 mt-0.5">{stage.projectedDate.slice(5)}</p>
               )}
@@ -67,6 +83,16 @@ const PhenologyTimeline: React.FC<PhenologyTimelineProps> = ({ status }) => {
         <p className="text-xs text-nkz-warning-strong mt-2">
           {t('phenologyTimeline.deviation', { value: status.deviation })}
         </p>
+      )}
+
+      {status.model && (
+        <>
+          <PhenologyMilestones status={status} />
+          <PhenologyValidation status={status} />
+          <PhenologyObservations status={status} />
+          {parcelId && <ObservedStageForm parcelId={parcelId} onRecorded={onRecorded} />}
+          <p className="text-[10px] text-nkz-text-muted mt-3">{t('phenologyTimeline.bbchAttribution')}</p>
+        </>
       )}
     </div>
   );

@@ -20,8 +20,11 @@ from nkz_platform_sdk.agronomy import (
     AgronomicValue, Source, confidence_from_fidelity,
 )
 
+from app.engines.phenology_milestones import extend_status
 from app.schemas import StageTable
-from app.services import context_client
+from app.services import context_client, observed_stage, parcel_site
+from app.services.phenology_dates import record_key
+from app.services.yield_forecast import parcel_urn
 from app.services.pipeline import compute_assessment
 
 logger = logging.getLogger(__name__)
@@ -162,6 +165,41 @@ def _build_status_from_assessment(assessment, thresholds: dict[str, tuple[float,
     return status
 
 
+async def _load_dates_record(tenant_id: str, parcel_id: str) -> dict | None:
+    """Latest stored milestone-dates answer for the parcel, or None. Read-only; never raises."""
+    try:
+        from app.main import get_redis_state
+
+        state = get_redis_state()
+        if not state.available:
+            return None
+        return await state.get_json(record_key(tenant_id, parcel_urn(parcel_id)))
+    except Exception as exc:  # noqa: BLE001 — the status is served without milestones
+        logger.warning("phenology-status: milestone dates unreadable tenant=%s parcel=%s: %s",
+                       tenant_id, parcel_id, exc)
+        return None
+
+
+async def _with_calendar(status: dict, table: StageTable, tenant_id: str, parcel_id: str) -> dict:
+    """Additive cereal-calendar fields. Other crops (no model on the table) are returned untouched."""
+    if table.model is None:
+        return status
+    try:
+        record = await _load_dates_record(tenant_id, parcel_id)
+        sowing = ((record or {}).get("season") or {}).get("sowing") or {}
+        season_start = str(status.get("seasonStart") or "")[:10]
+        if record and season_start and sowing.get("date") and str(sowing["date"])[:10] != season_start:
+            record = None  # the answer belongs to another cycle
+        since = season_start or (str(sowing.get("date"))[:10] if record and sowing.get("date") else "")
+        observed = []
+        if since:
+            observed = await observed_stage.fetch_observed_stages(tenant_id, parcel_id, date.fromisoformat(since))
+        return extend_status(status, table, record, observed)
+    except Exception:  # noqa: BLE001 — the base status is still served
+        logger.exception("phenology-status: calendar fields failed tenant=%s parcel=%s", tenant_id, parcel_id)
+        return status
+
+
 @router.get("/parcels/{parcel_id}/phenology-status")
 async def phenology_status(parcel_id: str, request: Request):
     """Read-only phenology status. Never writes to Orion.
@@ -177,8 +215,8 @@ async def phenology_status(parcel_id: str, request: Request):
         return {"status": "pending", "parcelId": parcel_id}
 
     species = _unwrap(latest.get("species")) or _unwrap(latest.get("cropSpecies")) or "generic"
-    thresholds = await context_client.get_phenology_stages(species)
-    return _build_status_from_dict(latest, thresholds)
+    thresholds = await parcel_site.get_parcel_stage_table(species, parcel_id, tenant_id)
+    return await _with_calendar(_build_status_from_dict(latest, thresholds), thresholds, tenant_id, parcel_id)
 
 
 @router.post("/parcels/{parcel_id}/phenology-status/sync")
@@ -195,5 +233,5 @@ async def phenology_status_sync(parcel_id: str, request: Request):
         return {"status": "no_crop", "parcelId": parcel_id}
 
     species = assessment.crop_species or "generic"
-    thresholds = await context_client.get_phenology_stages(species)
-    return _build_status_from_assessment(assessment, thresholds)
+    thresholds = await parcel_site.get_parcel_stage_table(species, parcel_id, tenant_id)
+    return await _with_calendar(_build_status_from_assessment(assessment, thresholds), thresholds, tenant_id, parcel_id)

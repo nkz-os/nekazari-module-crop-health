@@ -153,3 +153,34 @@ async def test_fetch_gdd_none_without_signing_secret(env, monkeypatch):
 
     assert await pipeline._fetch_gdd("t", "2026-10-01", "p1") is None
     assert "url" not in captured
+
+
+@pytest.mark.asyncio
+async def test_fetch_gdd_sends_gdd_method_and_cutoff_when_asked(env, monkeypatch):
+    captured = {}
+    payload = {**_daily(900.0, 13), "gdd_method": "aquacrop_m3"}
+    monkeypatch.setattr(httpx, "AsyncClient", _client(captured, _Resp(200, payload)))
+
+    result = await pipeline._fetch_gdd("t", "2026-10-01", "p1", base_temp=0.0, upper_cutoff=26.0,
+                                       gdd_method="aquacrop_m3")
+
+    assert result == {"gdd_total": 900.0, "days_count": 13}
+    assert captured["params"]["gdd_method"] == "aquacrop_m3"
+    assert captured["params"]["upper_cutoff"] == "26.0"
+
+
+@pytest.mark.asyncio
+async def test_fetch_gdd_no_method_param_by_default(env, monkeypatch):
+    captured = {}
+    monkeypatch.setattr(httpx, "AsyncClient", _client(captured, _Resp(200, _daily(100.0, 13))))
+    await pipeline._fetch_gdd("t", "2026-10-01", "p1", base_temp=8.0, upper_cutoff=28.0)
+    assert "gdd_method" not in captured["params"]
+
+
+@pytest.mark.asyncio
+async def test_fetch_gdd_refuses_total_when_method_not_echoed(env, monkeypatch):
+    """An older weather service ignores the method: its total would be another GDD."""
+    captured = {}
+    monkeypatch.setattr(httpx, "AsyncClient", _client(captured, _Resp(200, _daily(900.0, 13))))
+    assert await pipeline._fetch_gdd("t", "2026-10-01", "p1", base_temp=0.0, upper_cutoff=26.0,
+                                     gdd_method="aquacrop_m3") is None

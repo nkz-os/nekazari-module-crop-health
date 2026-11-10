@@ -44,11 +44,14 @@ _phenology_cache: TTLCache[tuple[str, str], PhenologyParams] = TTLCache(
 
 
 
-# Cache for StageTable results (keyed by species)
-_stages_cache: TTLCache[str, StageTable] = TTLCache(
-    maxsize=64,
+# Cache for StageTable results: key is the species alone (the plain request), or
+# (species, rounded lat, rounded lon, regime) for the site-aware cereal request.
+_stages_cache: TTLCache[Any, StageTable] = TTLCache(
+    maxsize=256,
     ttl=get_settings().phenology_cache_ttl,
 )
+
+_POINT_DECIMALS = 2  # ~1 km: enough for a province-level calendar, and the cache key
 
 
 # ── Default phenology parameters (fallback) ──────────────────────────────────
@@ -77,34 +80,64 @@ _DEFAULT_STAGE_TABLE = StageTable(
 )
 
 
-async def get_phenology_stages(species: str) -> StageTable:
+def _stage_bbch(stages: list[dict]) -> dict[str, tuple[int, int]]:
+    out: dict[str, tuple[int, int]] = {}
+    for s in stages:
+        lo, hi = s.get("bbchFrom"), s.get("bbchTo")
+        if isinstance(lo, int) and isinstance(hi, int) and not isinstance(lo, bool) and not isinstance(hi, bool):
+            out[s["stage"]] = (lo, hi)
+    return out
+
+
+def _dict_or_none(value: Any) -> dict | None:
+    return value if isinstance(value, dict) else None
+
+
+async def get_phenology_stages(
+    species: str,
+    *,
+    lat: float | None = None,
+    lon: float | None = None,
+    irrigation: str | None = None,
+) -> StageTable:
     """Full {stage: (gdd_min, gdd_max)} table from BioOrch; default on miss.
 
-    Calls GET /api/graph/phenology-stages?species=... (Task 0). Falls back
-    to _DEFAULT_STAGE_TABLE when bioorchestrator_url is not configured, the
-    service is unreachable/errors, or the response has no stages — never
-    raises (fail-safe).
+    Calls GET /api/graph/phenology-stages?species=... (Task 0), adding the
+    parcel point (rounded) and ``irrigation`` (rainfed|irrigated) when known:
+    the cereal calendar is regional. Falls back to _DEFAULT_STAGE_TABLE when
+    bioorchestrator_url is not configured, the service is unreachable/errors,
+    or the response has no stages — never raises (fail-safe).
     """
-    cached = _stages_cache.get(species)
+    rlat = round(float(lat), _POINT_DECIMALS) if lat is not None and lon is not None else None
+    rlon = round(float(lon), _POINT_DECIMALS) if lat is not None and lon is not None else None
+    regime = irrigation if irrigation in ("rainfed", "irrigated") else None
+    key: Any = species if (rlat is None and regime is None) else (species, rlat, rlon, regime)
+    cached = _stages_cache.get(key)
     if cached is not None:
         return cached
     settings = get_settings()
     if not settings.bioorchestrator_url:
-        _stages_cache[species] = _DEFAULT_STAGE_TABLE
+        _stages_cache[key] = _DEFAULT_STAGE_TABLE
         return _DEFAULT_STAGE_TABLE
     url = f"{settings.bioorchestrator_url}/api/graph/phenology-stages"
+    params: dict[str, str] = {"species": species}
+    if rlat is not None:
+        params["lat"], params["lon"] = str(rlat), str(rlon)
+    if regime is not None:
+        params["irrigation"] = regime
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(url, params={"species": species})
+            resp = await client.get(url, params=params)
             if resp.status_code == 200:
-                stages = resp.json().get("stages") or []
+                body = resp.json()
+                stages = body.get("stages") or []
                 table = {
                     s["stage"]: (float(s["gddMin"]), float(s["gddMax"]))
                     for s in stages
                     if s.get("gddMin") is not None and s.get("gddMax") is not None
                 }
                 if not table:
-                    _stages_cache[species] = _DEFAULT_STAGE_TABLE
+                    _stages_cache[key] = _DEFAULT_STAGE_TABLE
                     return _DEFAULT_STAGE_TABLE
                 base_temp = None
                 for s in stages:
@@ -112,17 +145,26 @@ async def get_phenology_stages(species: str) -> StageTable:
                     if bt is not None:
                         base_temp = float(bt)
                         break
+                cutoff = body.get("upperCutoff")
+                sources = body.get("sources")
                 result = StageTable(
                     stages=table,
                     base_temp=base_temp if base_temp is not None else _DEFAULT_STAGE_TABLE.base_temp,
-                    upper_cutoff=_DEFAULT_STAGE_TABLE.upper_cutoff,
-                    gdd_method=_DEFAULT_STAGE_TABLE.gdd_method,
+                    upper_cutoff=float(cutoff) if isinstance(cutoff, (int, float)) and not isinstance(cutoff, bool)
+                    else _DEFAULT_STAGE_TABLE.upper_cutoff,
+                    gdd_method=body.get("gddMethod") or _DEFAULT_STAGE_TABLE.gdd_method,
+                    stage_bbch={n: r for n, r in _stage_bbch(stages).items() if n in table},
+                    model=_dict_or_none(body.get("model")),
+                    calibration=_dict_or_none(body.get("calibration")),
+                    validation=_dict_or_none(body.get("validation")),
+                    sources=[x for x in sources if isinstance(x, dict)] if isinstance(sources, list) else None,
+                    origin=body.get("origin") if isinstance(body.get("origin"), str) else None,
                 )
-                _stages_cache[species] = result
+                _stages_cache[key] = result
                 return result
     except Exception as exc:  # noqa: BLE001 — fail-safe to default
         logger.warning("get_phenology_stages failed for %s — default table: %s", species, exc)
-    _stages_cache[species] = _DEFAULT_STAGE_TABLE
+    _stages_cache[key] = _DEFAULT_STAGE_TABLE
     return _DEFAULT_STAGE_TABLE
 
 

@@ -19,6 +19,7 @@ from nkz_platform_sdk.subscriptions import SubscriptionRegistrar
 
 from app.config import get_settings
 from app.services import weekly_report
+from app.services import phenology_dates
 from app.services.pipeline import compute_assessment
 from app.services.work_alerts import emit_work_alerts
 from app.services.yield_forecast import compute_and_store
@@ -151,6 +152,30 @@ async def _list_active_crop_parcels(tenant_id: str, cursor: str | None, batch_si
     return ids, next_cursor
 
 
+_DATES_MAX_CONSECUTIVE_FAILURES = 3
+
+
+async def _refresh_phenology_dates(tenant_id: str, parcel_id: str, species: str | None) -> str | None:
+    """Cereal-calendar milestone dates for the parcel; returns the outcome word, or None when not attempted.
+
+    Never raises and never changes the run's result.
+    """
+    if not species:
+        return None
+    try:
+        from app.main import get_redis_state
+
+        try:
+            state = get_redis_state()
+        except RuntimeError:
+            state = None
+        return await phenology_dates.refresh(state, tenant_id, parcel_id, species)
+    except Exception:  # noqa: BLE001 — the assessment run continues
+        logger.exception("run-scheduled-assessments: phenology dates failed tenant=%s parcel=%s",
+                         tenant_id, parcel_id)
+        return "error"
+
+
 @router.post("/run-scheduled-assessments")
 async def run_scheduled_assessments(request: Request, body: ScheduledRunRequest):
     secret = request.headers.get("X-Internal-Service-Secret", "")
@@ -164,11 +189,27 @@ async def run_scheduled_assessments(request: Request, body: ScheduledRunRequest)
         body.tenant_id, body.cursor, body.batch_size
     )
     written, errors = 0, []
+    dates_failures, dates_attempted, dates_stopped = 0, 0, False
     for parcel_id in ids:
         try:
             result = await compute_assessment(parcel_id, body.tenant_id)
             if result is not None:
                 written += 1
+                if not dates_stopped:
+                    outcome = await _refresh_phenology_dates(
+                        body.tenant_id, parcel_id, getattr(result, "crop_species", None))
+                    if outcome in ("failed", "error"):
+                        dates_attempted += 1
+                        dates_failures += 1
+                        if dates_failures >= _DATES_MAX_CONSECUTIVE_FAILURES:
+                            dates_stopped = True
+                            logger.warning(
+                                "run-scheduled-assessments: stopping phenology dates for the rest of the batch "
+                                "tenant=%s consecutive_failures=%d attempted=%d",
+                                body.tenant_id, dates_failures, dates_attempted)
+                    elif outcome not in (None, "not_calendar"):
+                        dates_attempted += 1
+                        dates_failures = 0
         except Exception as exc:  # noqa: BLE001 — isolate per parcel, never abort the batch
             logger.exception(
                 "run-scheduled-assessments: parcel %s tenant=%s failed",

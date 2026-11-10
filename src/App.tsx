@@ -37,12 +37,13 @@ const App: React.FC = () => {
     [parcels, selectedParcelId],
   );
 
+  // Grid, not a fixed-width sidebar: a module can only use classes the host stylesheet has.
   return (
-    <div className="flex flex-col md:flex-row h-full min-h-[calc(100vh-120px)] bg-nkz-surface">
+    <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 h-full min-h-[calc(100vh-120px)] bg-nkz-surface">
       <aside
         className={`${
           selectedParcelId ? 'hidden md:flex' : 'flex'
-        } w-full md:w-[360px] flex-shrink-0 md:border-r border-nkz-border bg-nkz-surface-raised flex-col`}
+        } min-w-0 min-h-0 overflow-hidden border-r border-nkz-border bg-nkz-surface-raised flex-col`}
       >
         <header className="p-3 border-b border-nkz-border">
           <div className="flex items-center gap-2">
@@ -69,7 +70,7 @@ const App: React.FC = () => {
       <main
         className={`${
           selectedParcelId ? 'block' : 'hidden md:block'
-        } flex-1 overflow-y-auto p-4 bg-nkz-surface`}
+        } md:col-span-2 lg:col-span-3 min-w-0 min-h-0 overflow-y-auto p-4 bg-nkz-surface`}
       >
         {!selectedParcelId ? (
           <div className="flex items-center justify-center h-full">

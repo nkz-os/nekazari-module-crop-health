@@ -229,6 +229,7 @@ const en = {
             model: 'Model: {{model}}',
             modelCalibrated: 'Model: {{model}}, calibrated for {{region}}',
             bbchRange: 'BBCH {{from}}–{{to}}',
+            bbchSingle: 'BBCH {{code}}',
             milestones: 'Milestones',
             milestone: {
                 emergence: 'Emergence',
@@ -333,7 +334,10 @@ const en = {
         },
         phenology: {
             stage: {
+                emergence: 'Emergence',
                 vegetative: 'Vegetative growth',
+                grain_filling: 'Grain filling',
+                maturity: 'Maturity',
                 stem_elongation: 'Stem elongation',
                 flowering: 'Flowering',
                 fruit_set: 'Fruit set',
@@ -713,6 +717,7 @@ const es = {
             model: 'Modelo: {{model}}',
             modelCalibrated: 'Modelo: {{model}}, calibrado para {{region}}',
             bbchRange: 'BBCH {{from}}–{{to}}',
+            bbchSingle: 'BBCH {{code}}',
             milestones: 'Hitos',
             milestone: {
                 emergence: 'Emergencia',
@@ -792,7 +797,10 @@ const es = {
         relativeTime: { now: 'ahora', minutes: 'hace {{count}} min', hours: 'hace {{count}} h', days: 'hace {{count}} d' },
         phenology: {
             stage: {
+                emergence: 'Emergencia',
                 vegetative: 'Crecimiento vegetativo',
+                grain_filling: 'Llenado del grano',
+                maturity: 'Madurez',
                 stem_elongation: 'Elongación del tallo',
                 flowering: 'Floración',
                 fruit_set: 'Cuajado',
@@ -1171,6 +1179,7 @@ const ca = {
             model: 'Model: {{model}}',
             modelCalibrated: 'Model: {{model}}, calibrated for {{region}}',
             bbchRange: 'BBCH {{from}}–{{to}}',
+            bbchSingle: 'BBCH {{code}}',
             milestones: 'Milestones',
             milestone: {
                 emergence: 'Emergence',
@@ -1250,7 +1259,10 @@ const ca = {
         relativeTime: { now: 'ara', minutes: 'fa {{count}} min', hours: 'fa {{count}} h', days: 'fa {{count}} d' },
         phenology: {
             stage: {
+                emergence: 'Emergència',
                 vegetative: 'Creixement vegetatiu',
+                grain_filling: 'Ompliment del gra',
+                maturity: 'Maduresa',
                 stem_elongation: 'Elongació de la tija',
                 flowering: 'Floració',
                 fruit_set: 'Quallat',
@@ -1598,6 +1610,7 @@ const eu = {
             model: 'Model: {{model}}',
             modelCalibrated: 'Model: {{model}}, calibrated for {{region}}',
             bbchRange: 'BBCH {{from}}–{{to}}',
+            bbchSingle: 'BBCH {{code}}',
             milestones: 'Milestones',
             milestone: {
                 emergence: 'Emergence',
@@ -1677,7 +1690,10 @@ const eu = {
         relativeTime: { now: 'orain', minutes: 'duela {{count}} min', hours: 'duela {{count}} h', days: 'duela {{count}} egun' },
         phenology: {
             stage: {
+                emergence: 'Erneketa',
                 vegetative: 'Hazkunde begetatiboa',
+                grain_filling: 'Alearen betetzea',
+                maturity: 'Heldutasuna',
                 stem_elongation: 'Zurtoinaren luzapena',
                 flowering: 'Loraldia',
                 fruit_set: 'Fruituaren ezarpena',
@@ -2025,6 +2041,7 @@ const fr = {
             model: 'Model: {{model}}',
             modelCalibrated: 'Model: {{model}}, calibrated for {{region}}',
             bbchRange: 'BBCH {{from}}–{{to}}',
+            bbchSingle: 'BBCH {{code}}',
             milestones: 'Milestones',
             milestone: {
                 emergence: 'Emergence',
@@ -2104,7 +2121,10 @@ const fr = {
         relativeTime: { now: 'maintenant', minutes: 'il y a {{count}} min', hours: 'il y a {{count}} h', days: 'il y a {{count}} j' },
         phenology: {
             stage: {
+                emergence: 'Levée',
                 vegetative: 'Croissance végétative',
+                grain_filling: 'Remplissage du grain',
+                maturity: 'Maturité',
                 stem_elongation: 'Élongation de la tige',
                 flowering: 'Floraison',
                 fruit_set: 'Nouaison',
@@ -2452,6 +2472,7 @@ const pt = {
             model: 'Model: {{model}}',
             modelCalibrated: 'Model: {{model}}, calibrated for {{region}}',
             bbchRange: 'BBCH {{from}}–{{to}}',
+            bbchSingle: 'BBCH {{code}}',
             milestones: 'Milestones',
             milestone: {
                 emergence: 'Emergence',
@@ -2531,7 +2552,10 @@ const pt = {
         relativeTime: { now: 'agora', minutes: 'há {{count}} min', hours: 'há {{count}} h', days: 'há {{count}} d' },
         phenology: {
             stage: {
+                emergence: 'Emergência',
                 vegetative: 'Crescimento vegetativo',
+                grain_filling: 'Enchimento do grão',
+                maturity: 'Maturação',
                 stem_elongation: 'Alongamento do caule',
                 flowering: 'Floração',
                 fruit_set: 'Vingamento',

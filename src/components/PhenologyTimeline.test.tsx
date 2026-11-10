@@ -22,7 +22,7 @@ const LEGACY: PhenologyStatus = {
   ],
 };
 
-const LEGACY_HTML = `<div class="bg-nkz-surface-raised border border-nkz-border rounded-lg p-3 mb-3"><div class="flex items-center justify-between mb-2"><h3 class="text-sm font-semibold text-nkz-text-primary">phenologyTimeline.title</h3><span class="text-xs text-nkz-text-muted">GDD 812</span></div><div class="flex gap-1 overflow-x-auto pb-1"><div class="min-w-[88px] flex-shrink-0 rounded-md border px-2 py-1.5 text-center border-nkz-success bg-nkz-success-soft text-nkz-success-strong"><p class="text-[11px] font-medium leading-tight">phenology.stage.emergence</p><p class="text-[10px] opacity-80 mt-0.5">11-17</p></div><div class="min-w-[88px] flex-shrink-0 rounded-md border px-2 py-1.5 text-center border-nkz-accent-base bg-nkz-accent-soft text-nkz-accent-strong"><p class="text-[11px] font-medium leading-tight">phenology.stage.vegetative</p></div><div class="min-w-[88px] flex-shrink-0 rounded-md border px-2 py-1.5 text-center border-nkz-border bg-nkz-surface text-nkz-text-muted"><p class="text-[11px] font-medium leading-tight">phenology.stage.flowering</p><p class="text-[10px] opacity-80 mt-0.5">04-15</p></div></div><p class="text-xs text-nkz-warning-strong mt-2">phenologyTimeline.deviation:{"value":"ahead"}</p></div>`;
+const LEGACY_HTML = `<div class="bg-nkz-surface-raised border border-nkz-border rounded-lg p-3 mb-3"><div class="flex items-center justify-between mb-2"><h3 class="text-sm font-semibold text-nkz-text-primary">phenologyTimeline.title</h3><span class="text-xs text-nkz-text-muted">GDD 812</span></div><div class="flex gap-1 overflow-x-auto pb-1"><div class="min-w-[70px] flex-shrink-0 rounded-md border px-2 py-1.5 text-center border-nkz-success bg-nkz-success-soft text-nkz-success-strong"><p class="text-[11px] font-medium leading-tight">phenology.stage.emergence</p><p class="text-[10px] opacity-80 mt-0.5">11-17</p></div><div class="min-w-[70px] flex-shrink-0 rounded-md border px-2 py-1.5 text-center border-nkz-accent-base bg-nkz-accent-soft text-nkz-accent-strong"><p class="text-[11px] font-medium leading-tight">phenology.stage.vegetative</p></div><div class="min-w-[70px] flex-shrink-0 rounded-md border px-2 py-1.5 text-center border-nkz-border bg-nkz-surface text-nkz-text-muted"><p class="text-[11px] font-medium leading-tight">phenology.stage.flowering</p><p class="text-[10px] opacity-80 mt-0.5">04-15</p></div></div><p class="text-xs text-nkz-warning-strong mt-2">phenologyTimeline.deviation:{"value":"ahead"}</p></div>`;
 
 const CEREAL: PhenologyStatus = {
   ...LEGACY,
@@ -76,6 +76,12 @@ describe('PhenologyTimeline', () => {
     const h = render(CEREAL);
     expect(h).toContain('phenologyTimeline.bbchRange:{"from":0,"to":9}');
     expect(h).toContain('phenologyTimeline.bbchRange:{"from":51,"to":69}');
+  });
+
+  it('shows a single BBCH code for a stage that is one code wide', () => {
+    const h = render({ ...CEREAL, stages: [...CEREAL.stages!, { stage: 'maturity', bbchFrom: 89, bbchTo: 89 }] });
+    expect(h).toContain('phenologyTimeline.bbchSingle:{"code":89}');
+    expect(h).not.toContain('"from":89');
   });
 
   it('shows milestone dates only as the data has them', () => {

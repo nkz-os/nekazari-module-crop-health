@@ -162,3 +162,29 @@ class TestParcels:
             resp = client.get("/api/crop-health/parcels")
             assert resp.status_code == 200
             assert resp.json() == {"parcels": [], "summary": {"surprises": 0, "jobsToday": 0, "noData": 0}}
+
+    def test_parcels_reads_the_parcel_link_under_its_legacy_name(self, client):
+        """The broker can compact the parcel relationship as refAgriParcel (keyValues: a plain URN)."""
+        calls = [0]
+
+        def mock_get(*args, **kwargs):
+            calls[0] += 1
+            if calls[0] == 1:
+                return MagicMock(status_code=200, json=MagicMock(return_value=[{
+                    "id": "urn:ngsi-ld:CropHealthAssessment:cha-9",
+                    "type": "CropHealthAssessment",
+                    "refAgriParcel": "urn:ngsi-ld:AgriParcel:Parcela-9",
+                    "overallSeverity": "HIGH",
+                    "assessedAt": "2026-06-03T14:22:00Z",
+                }]))
+            return MagicMock(status_code=200, json=MagicMock(return_value=[{
+                "id": "urn:ngsi-ld:AgriParcel:Parcela-9",
+                "type": "AgriParcel",
+                "name": "Parcela 9",
+            }]))
+
+        with patch("httpx.AsyncClient.get", side_effect=mock_get):
+            resp = client.get("/api/crop-health/parcels")
+        assert resp.status_code == 200
+        rows = resp.json()["parcels"]
+        assert [(r["parcelId"], r["hasData"], r.get("overallSeverity")) for r in rows] == [("Parcela-9", True, "HIGH")]

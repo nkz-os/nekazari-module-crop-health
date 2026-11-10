@@ -737,12 +737,7 @@ async def build_parcel_rows(request: Request | None, tenant_id: str, *,
     # Build assessment lookup by parcel ID (keep latest per parcel)
     assessment_by_parcel: dict[str, dict] = {}
     for e in assessments_raw:
-        parcel = ""
-        ref = e.get("hasAgriParcel")
-        if isinstance(ref, dict):
-            parcel = ref.get("object", "").replace("urn:ngsi-ld:AgriParcel:", "")
-        elif isinstance(ref, str):
-            parcel = ref.replace("urn:ngsi-ld:AgriParcel:", "")
+        parcel = extract_parcel_id(e)  # the broker may compact the link under either name
         if not parcel:
             continue
         existing = assessment_by_parcel.get(parcel)

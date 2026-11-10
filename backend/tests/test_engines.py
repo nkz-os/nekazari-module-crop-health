@@ -215,3 +215,12 @@ class TestCwsiBaselineGuard:
 
     def test_defaults_unchanged(self):
         assert cwsi(35.0, 30.0, 2.0, 8.0).cwsi == 0.5
+
+
+def test_mds_without_reference_gives_no_result():
+    """No reference MDS for the crop: no severity can be stated."""
+    from app.engines.mds_model import calculate_mds_from_readings
+    from app.schemas import TimeseriesPoint
+
+    readings = [TimeseriesPoint(ts=1.0, value=1000.0), TimeseriesPoint(ts=2.0, value=1180.0)]
+    assert calculate_mds_from_readings(readings, mds_ref=None) is None

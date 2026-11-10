@@ -90,3 +90,20 @@ describe('water stress strings', () => {
     });
   }
 });
+
+describe('phenologyTimeline parity', () => {
+  const en = (resources.en as any)['crop-health'];
+  for (const [lang, res] of Object.entries(resources)) {
+    it(`${lang} has the phenologyTimeline keys of en`, () => {
+      const ns = (res as any)['crop-health'];
+      expect(keys(ns.phenologyTimeline).sort()).toEqual(keys(en.phenologyTimeline).sort());
+      expect(keys(en.phenologyTimeline)).toContain('form.error.invalid_phenological_stage');
+      expect(typeof ns.phenologyTimeline.bbchStage['5']).toBe('string');
+    });
+  }
+  it('es has real Spanish stage names', () => {
+    const es = (resources['es'] as any)['crop-health'].phenologyTimeline.bbchStage;
+    expect(es['3']).toBe('Encañado');
+    expect(es['5']).toBe('Espigado');
+  });
+});

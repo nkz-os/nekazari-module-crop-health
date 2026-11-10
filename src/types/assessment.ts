@@ -306,6 +306,79 @@ export interface PhenologyStageProjection {
   gddMax?: number;
   projectedDate?: string;
   projectedEnd?: string;
+  /** BBCH range of the stage; only on cereal-calendar tables. */
+  bbchFrom?: number;
+  bbchTo?: number;
+}
+
+export interface PhenologyModel {
+  id?: string;
+  cultivar?: string;
+  version?: string;
+}
+
+export interface PhenologyCalibration {
+  status?: string;
+  scheme?: string;
+  /** Region name, or an object carrying one. */
+  region?: string | { name?: string; id?: string } | null;
+  version?: string;
+}
+
+export type PhenologyComparisonKey = 'emergence' | 'heading' | 'maturity' | 'harvest';
+
+/** Error of the engine against observed dates; the sign is engine minus observed (negative = engine early). */
+export interface PhenologyErrorMetric {
+  n: number;
+  bias_days: number;
+  mae_days: number;
+  p10_days: number;
+  p90_days: number;
+}
+
+export interface PhenologyValidationDataset {
+  name: string;
+  seasons: number[];
+  sheets?: number;
+  country?: string;
+  [extra: string]: unknown;
+}
+
+export interface PhenologyValidation {
+  status?: 'measured' | 'not_validated' | string;
+  version?: string;
+  sign?: string;
+  dataset?: PhenologyValidationDataset;
+  comparisons?: Record<string, { engine?: string; observed?: string }>;
+  groups?: Record<string, Partial<Record<PhenologyComparisonKey, PhenologyErrorMetric>>>;
+}
+
+export interface PhenologySource {
+  short?: string;
+  detail?: string;
+}
+
+export type PhenologyMilestoneKey = 'emergence' | 'flowering_start' | 'senescence_start' | 'maturity';
+
+export interface PhenologyMilestone {
+  gdd?: number;
+  status: 'reached' | 'projected' | 'unavailable' | string;
+  date?: string;
+  date_p10?: string;
+  date_p50?: string;
+  date_p90?: string;
+  n_members?: number;
+  reason?: string;
+}
+
+export interface PhenologyObservation {
+  date: string;
+  bbch: string;
+  stage: string | null;
+  modelStageOnDate: string | null;
+  milestone: string | null;
+  /** Model date minus observed date, in days; null when no comparable milestone date exists. */
+  deltaDays: number | null;
 }
 
 export interface PhenologyStatus {
@@ -318,4 +391,14 @@ export interface PhenologyStatus {
   dataFidelity?: string;
   gdd?: { accumulated?: number };
   stages?: PhenologyStageProjection[];
+  // Additive cereal-calendar fields; absent for crops without the calendar.
+  model?: PhenologyModel | null;
+  calibration?: PhenologyCalibration | null;
+  validation?: PhenologyValidation | null;
+  sources?: PhenologySource[];
+  experimental?: boolean;
+  basis?: string;
+  notes?: string[];
+  milestones?: Partial<Record<PhenologyMilestoneKey, PhenologyMilestone>>;
+  observations?: PhenologyObservation[];
 }

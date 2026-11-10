@@ -68,7 +68,7 @@ const ParcelHealthWorkbench: React.FC<ParcelHealthWorkbenchProps> = ({ parcelId,
         surprise={data.surprise}
         freshness={data.freshness}
       />
-      <PhenologyTimeline status={data.phenologyStatus} />
+      <PhenologyTimeline status={data.phenologyStatus} parcelId={parcelId} onRecorded={() => void data.refresh()} />
       <CropHealthDetailTabs
         parcelId={parcelId}
         assessment={data.assessment}

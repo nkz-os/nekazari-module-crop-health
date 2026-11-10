@@ -1,4 +1,5 @@
 """Work-list sources: every fetcher fails soft (None / [])."""
+import asyncio
 from unittest.mock import AsyncMock, patch
 
 import httpx
@@ -121,3 +122,48 @@ async def test_alert_rows_carry_id_and_are_unfiltered():
         rows = await assessments._active_alert_rows(TENANT)
     assert [(r["id"], r["parcelId"]) for r in rows] == [
         ("urn:ngsi-ld:Alert:1", "p1"), ("urn:ngsi-ld:Alert:2", "p2")]
+
+
+@pytest.fixture(autouse=True)
+def _fresh_agro_cache():
+    ws._agro_cache.clear()
+    yield
+    ws._agro_cache.clear()
+
+
+@respx.mock
+async def test_agro_status_calls_are_bounded(monkeypatch):
+    """The weather service degrades badly under a burst: never more than a few calls in flight."""
+    in_flight = {"now": 0, "max": 0}
+
+    async def _slow(request):
+        in_flight["now"] += 1
+        in_flight["max"] = max(in_flight["max"], in_flight["now"])
+        await asyncio.sleep(0.02)
+        in_flight["now"] -= 1
+        return httpx.Response(200, json={"ok": True})
+
+    respx.get(url__regex=r".*/agro-status$").mock(side_effect=_slow)
+    out = await asyncio.gather(*[ws.fetch_agro_status(TENANT, f"p{i}") for i in range(9)])
+    assert all(o == {"ok": True} for o in out)
+    assert in_flight["max"] <= ws._AGRO_MAX_CONCURRENT
+
+
+@respx.mock
+async def test_agro_status_is_cached_per_parcel_and_failures_are_not():
+    route = respx.get(_url()).mock(return_value=httpx.Response(200, json={"a": 1}))
+    assert await ws.fetch_agro_status(TENANT, SHORT) == {"a": 1}
+    assert await ws.fetch_agro_status(TENANT, SHORT) == {"a": 1}
+    assert route.call_count == 1
+    other = respx.get(url__regex=r".*/other/agro-status$").mock(return_value=httpx.Response(503))
+    assert await ws.fetch_agro_status(TENANT, "other") is None
+    assert await ws.fetch_agro_status(TENANT, "other") is None
+    assert other.call_count == 2
+
+
+@respx.mock
+async def test_agro_status_cache_is_per_tenant():
+    route = respx.get(_url()).mock(return_value=httpx.Response(200, json={"a": 1}))
+    await ws.fetch_agro_status(TENANT, SHORT)
+    await ws.fetch_agro_status("tenant-b", SHORT)
+    assert route.call_count == 2

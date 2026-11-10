@@ -7,8 +7,9 @@ keeps the last one; any other reason is the current truth and replaces it.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
+from app.services import prediction_log as plog
 from app.services.in_season_client import fetch_in_season
 from app.services.redis_state import StoreError
 
@@ -72,6 +73,60 @@ def _is_unknown_parcel(answer: dict) -> bool:
         u.get("code") == "404" for u in answer.get("unavailable") or [])
 
 
+def _iso_date(value) -> date | None:
+    try:
+        return date.fromisoformat(str(value)[:10])
+    except (TypeError, ValueError):
+        return None
+
+
+def build_prediction_record(tenant: str, urn: str, answer: dict) -> plog.PredictionRecord | None:
+    """Map a done in-season answer to a log row, or None when a key field is missing.
+
+    Only fields the answer really carries are stored; nothing is invented.
+    """
+    estimates = answer.get("estimates") or []
+    season = answer.get("season") or {}
+    first = estimates[0] if estimates else {}
+    model = first.get("provider_id") or answer.get("provider_id")
+    model_version = season.get("provider_version") or first.get("provider_version")
+    season_start = _iso_date((season.get("sowing") or {}).get("date"))
+    as_of = _iso_date(season.get("as_of"))
+    crop = season.get("crop")
+    if not (model and model_version and season_start and as_of and crop):
+        return None
+    payload = {"estimates": estimates, "season_status": season.get("status"),
+               "harvest_date": season.get("harvest_date"), "n_years": season.get("n_years")}
+    inputs = {"contract_version": answer.get("contract_version"), "regime": season.get("regime"),
+              "sowing": season.get("sowing"), "sowing_method": season.get("sowing_method"),
+              "sowing_method_source": season.get("sowing_method_source"),
+              "weather_source": season.get("weather_source"), "computed_at": season.get("computed_at")}
+    return plog.PredictionRecord(tenant_id=tenant, parcel_id=urn, season_start=season_start, crop=str(crop),
+                                 kind="yield", model=str(model), model_version=str(model_version),
+                                 as_of=as_of, payload=payload, inputs=inputs)
+
+
+async def _log_prediction(tenant: str, urn: str, answer: dict) -> None:
+    """Append one row for an answer that carries an estimate. Never raises."""
+    model = answer.get("provider_id")
+    try:
+        if answer.get("state") != "done" or not answer.get("estimates"):
+            return
+        record = build_prediction_record(tenant, urn, answer)
+        if record is None:
+            logger.warning("prediction_log skipped: season/crop/as_of missing tenant=%s parcel=%s model=%s",
+                           tenant, urn, model)
+            return
+        log = plog.get_prediction_log()
+        if log is None:
+            return
+        inserted = await log.append(record)
+        logger.info("prediction_log append tenant=%s parcel=%s model=%s as_of=%s inserted=%s",
+                    tenant, urn, record.model, record.as_of, inserted)
+    except Exception:
+        logger.exception("prediction_log append failed tenant=%s parcel=%s model=%s", tenant, urn, model)
+
+
 async def compute_and_store(state, tenant: str, parcel_id: str, *, hold_lock: bool = True,
                             retry: bool = False) -> str:
     """Fetch one parcel's forecast and apply the store rules.
@@ -96,6 +151,7 @@ async def compute_and_store(state, tenant: str, parcel_id: str, *, hold_lock: bo
             # A made-up or deleted parcel: no record, so ids cannot fill the shared store.
             logger.info("yield_forecast unknown parcel tenant=%s parcel=%s", tenant, urn)
             return "kept"
+        await _log_prediction(tenant, urn, answer)
         record = next_record(previous, answer, datetime.now(timezone.utc))
         if record is None:
             return "kept"

@@ -13,6 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.auth import ensure_signature_enforced
 from app.config import get_settings
 from app.api import router as api_router
+from app.services.prediction_log import close_prediction_log, get_prediction_log
 from app.services.redis_state import RedisState
 
 logger = logging.getLogger(__name__)
@@ -49,6 +50,9 @@ async def lifespan(app: FastAPI):
     )
     ensure_signature_enforced()
 
+    # Prediction log: logs CRITICAL when no database URL is set; the service runs on
+    get_prediction_log()
+
     # Connect Redis
     try:
         _redis_state = await RedisState.create()
@@ -60,6 +64,10 @@ async def lifespan(app: FastAPI):
     yield
 
     # Cleanup
+    try:
+        await close_prediction_log()
+    except Exception:
+        logger.exception("prediction_log pool close failed")
     if _redis_state:
         await _redis_state.close()
     logger.info("%s shut down", settings.app_name)

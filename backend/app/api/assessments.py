@@ -777,6 +777,7 @@ async def build_parcel_rows(request: Request | None, tenant_id: str, *,
             "cwsiValue": a.get("cwsiValue") if not isinstance(a.get("cwsiValue"), dict) else a.get("cwsiValue", {}).get("value"),
             "vigorIndex": a.get("vigorIndex") if not isinstance(a.get("vigorIndex"), dict) else a.get("vigorIndex", {}).get("value"),
             "assessedAt": a.get("assessedAt") if not isinstance(a.get("assessedAt"), dict) else a.get("assessedAt", {}).get("value"),
+            "irrigationRegime": prop_value(a, "irrigationRegime"),
             "hasData": True,
         })
 

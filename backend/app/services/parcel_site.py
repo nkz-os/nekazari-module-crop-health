@@ -167,6 +167,18 @@ async def get_parcel_stage_table(species: str, parcel_id: str, tenant_id: str) -
     return table if isinstance(table, StageTable) and table.model is not None else base
 
 
+async def parcel_regime(parcel_id: str, tenant_id: str) -> str | None:
+    """``"rainfed"`` | ``"irrigated"`` of the parcel's crop (or of the parcel), None when not known.
+
+    Never raises: an unreadable site is an unknown regime, which keeps the irrigated behaviour.
+    """
+    try:
+        return (await resolve_parcel_site(parcel_id, tenant_id)).regime
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("parcel_site: regime unreadable tenant=%s parcel=%s: %s", tenant_id, parcel_id, exc)
+        return None
+
+
 def gdd_kwargs(table: Any) -> dict[str, str]:
     """Extra ``_fetch_gdd`` keywords: the GDD method only when the table is the cereal calendar's."""
     if isinstance(table, StageTable) and table.gdd_method == "aquacrop_m3":

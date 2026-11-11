@@ -387,6 +387,8 @@ def test_olive_eppo_depletion_fraction():
 ENTITY_ID = "urn:ngsi-ld:CropHealthAssessment:p-1-20260715"
 # A day without a CWSI deletes the CWSI attributes an earlier write may have left.
 CWSI_ATTRS = ("cwsiValue", "vpdKpa", "cwsiDataFidelity", "cwsiTempSource")
+# No irrigation need and no known regime in these runs: both are cleared too.
+IRRIGATION_ATTRS = ("irrigationMm", "irrigationRegime")
 
 
 @pytest.mark.asyncio
@@ -397,7 +399,7 @@ async def test_unavailable_after_iot_clears_stale_attributes(monkeypatch):
     # everything present, nothing stale except the optional RDI note, phase basis,
     # baseline id and the CWSI attributes (no stage flag and no CWSI here)
     assert [d[1] for d in published["deletes"]] == [
-        "waterStressPhaseNote", "waterStressPhaseBasis", "cwsiBaselineId", *CWSI_ATTRS]
+        "waterStressPhaseNote", "waterStressPhaseBasis", "cwsiBaselineId", *CWSI_ATTRS, *IRRIGATION_ATTRS]
     # later same-day trigger: nothing computable
     published2, _ = _setup(monkeypatch, wm={}, regional={})
     await _trigger(FakeRedis())
@@ -408,7 +410,7 @@ async def test_unavailable_after_iot_clears_stale_attributes(monkeypatch):
         "waterStressIndex", "waterStressObservedAt", "shadeFraction", "shadeObservedAt",
         "underPanelWaterStressIndex", "underPanelWaterStressFidelity",
         "underPanelWaterStressObservedAt", "waterStressPhaseNote",
-        "waterStressPhaseBasis", "cwsiBaselineId", *CWSI_ATTRS,
+        "waterStressPhaseBasis", "cwsiBaselineId", *CWSI_ATTRS, *IRRIGATION_ATTRS,
     }
 
 
@@ -420,7 +422,7 @@ async def test_only_omitted_attrs_are_deleted(monkeypatch):
         "shadeFraction", "shadeObservedAt",
         "underPanelWaterStressIndex", "underPanelWaterStressFidelity",
         "underPanelWaterStressObservedAt", "waterStressPhaseNote",
-        "waterStressPhaseBasis", "cwsiBaselineId", *CWSI_ATTRS,
+        "waterStressPhaseBasis", "cwsiBaselineId", *CWSI_ATTRS, *IRRIGATION_ATTRS,
     ]
 
 
@@ -430,7 +432,7 @@ async def test_delete_404_is_success(monkeypatch):
     published["delete_behaviour"]["status"] = 404
     out = await _trigger(FakeRedis())
     assert out is not None
-    assert len(published["deletes"]) == 14  # does not stop after the first 404
+    assert len(published["deletes"]) == 16  # does not stop after the first 404
 
 
 @pytest.mark.asyncio
@@ -453,7 +455,7 @@ async def test_zonal_rollup_clears_stale_attributes(monkeypatch):
     await _trigger(FakeRedis())
     parcel = [e for e in published["entities"] if e["type"] == "CropHealthAssessment"][0]
     assert {d[0] for d in published["deletes"]} == {parcel["id"]}
-    assert len(published["deletes"]) == 14
+    assert len(published["deletes"]) == 16
 
 
 @pytest.mark.asyncio

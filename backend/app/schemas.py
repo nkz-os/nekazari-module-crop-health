@@ -611,6 +611,8 @@ class CropHealthAssessment(BaseModel):
     worst_zone_rank: int | None = None
     zone_spread: float | None = None
     crop_requirements: CropRequirements | None = None
+    # "rainfed" | "irrigated" when the crop or the parcel declares it; None = not known.
+    irrigation_regime: Literal["rainfed", "irrigated"] | None = None
     soil_suitability: "SoilSuitability | None" = None
     # Parcel-level only: never serialised on zone entities.
     water_stress: WaterStress | None = None
@@ -644,6 +646,8 @@ class CropHealthAssessment(BaseModel):
                 "value": self.phenology_source,
             },
         }
+        if self.irrigation_regime is not None:
+            entity["irrigationRegime"] = {"type": "Property", "value": self.irrigation_regime}
         if self.cwsi:
             entity["cwsiValue"] = {"type": "Property", "value": round(self.cwsi.cwsi, 4)}
             entity["vpdKpa"] = {"type": "Property", "value": round(self.cwsi.vpd_kpa, 4)}

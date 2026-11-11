@@ -98,7 +98,7 @@ const CropHealthWidget: React.FC = () => {
               <div className="grid grid-cols-2 gap-2">
                 <div>
                   <span className="text-xs text-nkz-text-secondary font-medium uppercase tracking-wider">{t('detail.waterStress')}</span>
-                  <p className={`text-xs font-medium ${LEVEL_TEXT_CLASS[levelIntent(a.waterStressLevel)]}`}>{t(levelKey(a.waterStressLevel))}</p>
+                  <p className={`text-xs font-medium ${LEVEL_TEXT_CLASS[levelIntent(a.waterStressLevel, a.irrigationRegime, a.overallSeverity)]}`}>{t(levelKey(a.waterStressLevel, a.irrigationRegime))}</p>
                 </div>
                 {a.compositeStressIndex !== undefined && (
                   <div>

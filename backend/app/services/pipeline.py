@@ -347,25 +347,16 @@ def _determine_overall_severity(assessment: CropHealthAssessment) -> Severity:
     indicator = assessment.water_stress_indicator
     if indicator is None:
         indicator = resolve_indicator(assessment.cwsi, assessment.water_stress, None)
-    level_sev = severity_name(indicator.level)
+    # The level is the only water signal: the soil depletion in millimetres is shown as data
+    # and no longer sets a severity of its own (it ignored how much water the soil holds).
+    level_sev = severity_name(
+        indicator.level, regime=assessment.irrigation_regime, stage=assessment.phenology_stage,
+    )
     if level_sev is not None:
         severities.append(Severity(level_sev))
 
     if assessment.mds:
         severities.append(assessment.mds.severity)
-
-    # A stage that needs no water raises no water alarm of any kind.
-    if (
-        indicator.level != "not_needed"
-        and assessment.water_balance
-        and assessment.water_balance.deficit
-    ):
-        if assessment.water_balance.balance_mm < -15:
-            severities.append(Severity.CRITICAL)
-        elif assessment.water_balance.balance_mm < -5:
-            severities.append(Severity.HIGH)
-        else:
-            severities.append(Severity.MEDIUM)
 
     if not severities:
         return Severity.LOW
@@ -520,7 +511,7 @@ def _refresh_rollup_level(
     if rollup.water_stress_indicator.level != "not_needed":
         new_sev = max(new_sev, rollup.overall_severity, key=_SEV_RANK.__getitem__)
     rollup.overall_severity = new_sev
-    rollup.recommended_action = _determine_action(new_sev)
+    rollup.recommended_action = _determine_action(new_sev, rollup.irrigation_regime)
 
 
 def _apply_parcel_balance_to_zones(
@@ -547,11 +538,11 @@ def _apply_parcel_balance_to_zones(
         if z.water_stress_indicator.level != "not_needed":
             new_sev = max(new_sev, z.overall_severity, key=_SEV_RANK.__getitem__)
         z.overall_severity = new_sev
-        z.recommended_action = _determine_action(new_sev)
+        z.recommended_action = _determine_action(new_sev, z.irrigation_regime)
 
 
 def _crop_requirements(rollup: CropHealthAssessment):
-    """Irrigation need from the soil water balance; none in a stage that needs no water."""
+    """Irrigation need from the soil water balance; none in a stage that needs no water or on rainfed."""
     from app.schemas import CropRequirements
 
     irrigation_mm = None
@@ -563,7 +554,8 @@ def _crop_requirements(rollup: CropHealthAssessment):
             rollup.water_stress_indicator is not None
             and rollup.water_stress_indicator.level == "not_needed"
         )
-        if swb.stress_level in ("high", "critical") and not not_needed:
+        rainfed = rollup.irrigation_regime == "rainfed"
+        if swb.stress_level in ("high", "critical") and not not_needed and not rainfed:
             irrigation_mm = water_deficit_mm
     return CropRequirements(irrigation_mm=irrigation_mm, water_deficit_mm=water_deficit_mm)
 
@@ -571,8 +563,10 @@ def _crop_requirements(rollup: CropHealthAssessment):
 _SEV_RANK = {Severity.LOW: 0, Severity.MEDIUM: 1, Severity.HIGH: 2, Severity.CRITICAL: 3}
 
 
-def _determine_action(severity: Severity) -> RecommendedAction:
-    """Map overall severity to recommended action."""
+def _determine_action(severity: Severity, regime: str | None = None) -> RecommendedAction:
+    """Map overall severity to recommended action; a rainfed parcel is never told to irrigate."""
+    if regime == "rainfed":
+        return RecommendedAction.NO_ACTION if severity == Severity.LOW else RecommendedAction.MONITOR
     return {
         Severity.LOW: RecommendedAction.NO_ACTION,
         Severity.MEDIUM: RecommendedAction.MONITOR,
@@ -618,6 +612,8 @@ _WATER_STRESS_OPTIONAL_ATTRS = (
     "waterStressLevel", "waterStressMethod", "waterStressPhaseNote",
     "waterStressReferenceSources", "waterStressPhaseBasis", "cwsiBaselineId",
     "cwsiValue", "vpdKpa", "cwsiDataFidelity", "cwsiTempSource",
+    # A parcel re-assessed as rainfed (or with no known regime) must not keep an earlier need or regime.
+    "irrigationMm", "irrigationRegime",
 )
 _AIR_TEMP_RANGE_C = (-50.0, 60.0)
 _RH_RANGE_PCT = (0.0, 100.0)
@@ -1038,8 +1034,8 @@ async def trigger(
         logger.warning("pipeline: GDD fetch failed for parcel %s — proceeding without GDD: %s", effective_parcel, exc)
 
     phenology = await get_phenology_params(species=species, gdd=gdd)
-
-
+    # Rainfed or irrigated: set on every assessment BEFORE its severity is computed.
+    irrigation_regime = await parcel_site.parcel_regime(effective_parcel, tenant_id)
 
     now_ts = _now_ts()
     meteo = await resolve_meteo_context(
@@ -1061,6 +1057,7 @@ async def trigger(
         a = CropHealthAssessment(
             parcel_id=effective_parcel,
             assessed_at=now,
+            irrigation_regime=irrigation_regime,
             phenology_source=crop_context.phenology_source if crop_context else "default",
             crop_species=species if species != "generic" else None,
             crop_name=crop_context.crop.name if crop_context and crop_context.crop else None,
@@ -1781,7 +1778,9 @@ async def _run_engines(
 
     # ── 3. Fuse and classify ─────────────────────────────────────────────
     assessment.overall_severity = _determine_overall_severity(assessment)
-    assessment.recommended_action = _determine_action(assessment.overall_severity)
+    assessment.recommended_action = _determine_action(
+        assessment.overall_severity, assessment.irrigation_regime,
+    )
 
     # ── 4. Publish ───────────────────────────────────────────────────────
     # When ``publish`` is False the caller (compute_assessment) owns the Orion
@@ -2407,6 +2406,7 @@ async def _assess_zone(
     assessment = CropHealthAssessment(
         parcel_id=parcel_short,
         assessed_at=now,
+        irrigation_regime=crop_ctx.get("irrigation_regime"),
         phenology_source="gdd_derived",
         crop_species=species,
         crop_name=species,
@@ -2622,6 +2622,8 @@ async def compute_assessment(
         "soil": soil,
         "root_depth_mm": root_depth_mm,
         "now": now,
+        # Rainfed or irrigated: every zone assessment carries it before its severity is computed.
+        "irrigation_regime": await parcel_site.parcel_regime(parcel_short, tenant_id),
     }
 
     # Resolve management zones (weather-map AgriParcelZone) or whole-parcel.

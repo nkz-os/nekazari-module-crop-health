@@ -127,14 +127,15 @@ const WaterStressTechnician: React.FC<{
   const citations = (phenology?.water_stress_reference?.citations ?? []).filter((c) => cited(c.sourceId));
   // Zones have no Ks of their own: their balance level is the parcel's.
   const zoneOfParcelBalance = method === 'balance' && Boolean((assessment as { zoneId?: string | null }).zoneId);
+  const techIntent = levelIntent(assessment.waterStressLevel, assessment.irrigationRegime, assessment.overallSeverity);
   return (
     <MetricSection>
       <span className="text-xs text-nkz-text-secondary font-medium uppercase tracking-wider block mb-1">
         {t('waterStress.technician.title')}
       </span>
       <div className="flex items-center gap-2 mb-1">
-        <Badge intent={levelIntent(assessment.waterStressLevel) === 'neutral' ? 'default' : levelIntent(assessment.waterStressLevel)}>
-          {t(levelKey(assessment.waterStressLevel))}
+        <Badge intent={techIntent === 'neutral' ? 'default' : techIntent}>
+          {t(levelKey(assessment.waterStressLevel, assessment.irrigationRegime))}
         </Badge>
         <span className="text-xs text-nkz-text-muted">{t(`waterStress.method.${method ?? 'none'}`)}</span>
       </div>
@@ -211,6 +212,7 @@ const CropHealthDetailTabs: React.FC<CropHealthDetailTabsProps> = ({
   }
 
   const sevStyle = SEVERITY_STYLES[assessment.overallSeverity as 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL'] || SEVERITY_STYLES.LOW;
+  const cwsiIntent = levelIntent(assessment.waterStressLevel, assessment.irrigationRegime, assessment.overallSeverity);
   const trendCW = trend.filter(p => p.cwsi != null).map(p => p.cwsi!);
   const trendMDS = trend.filter(p => p.mds != null).map(p => p.mds!);
   const trendDir = trendCW.length >= 2 ? (trendCW[trendCW.length - 1] - trendCW[0]) : null;
@@ -247,8 +249,8 @@ const CropHealthDetailTabs: React.FC<CropHealthDetailTabsProps> = ({
             </span>
             {trendCW.length >= 2 && <Sparkline data={trendCW} color="var(--nkz-color-danger)" />}
           </div>
-          <ProgressBar value={assessment.cwsiValue * 100} intent={levelIntent(assessment.waterStressLevel) === 'neutral' ? 'default' : levelIntent(assessment.waterStressLevel)} />
-          <p className="text-xs text-nkz-text-primary mt-1">{t(levelKey(assessment.waterStressLevel))}</p>
+          <ProgressBar value={assessment.cwsiValue * 100} intent={cwsiIntent === 'neutral' ? 'default' : cwsiIntent} />
+          <p className="text-xs text-nkz-text-primary mt-1">{t(levelKey(assessment.waterStressLevel, assessment.irrigationRegime))}</p>
           {assessment.waterStressPhaseNote === 'rdi' && <p className="text-xs text-nkz-text-muted">{t('waterStress.note.rdi')}</p>}
           {trendDir != null && (
             <p className="text-xs mt-1" style={{ color: Number(trendDir) > 0 ? 'var(--nkz-color-danger)' : 'var(--nkz-color-success)' }}>

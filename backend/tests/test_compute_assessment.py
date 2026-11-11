@@ -123,3 +123,39 @@ async def test_compute_assessment_surfaces_soil_suitability(monkeypatch):
     assert ctx is sentinel_ctx, "must be called with the fetched crop context"
     assert out.soil_suitability is not None
     assert out.soil_suitability.verdict == "marginal"
+
+
+@pytest.mark.asyncio
+async def test_scheduled_assessment_of_a_rainfed_parcel_carries_the_regime(monkeypatch):
+    from app.schemas import RecommendedAction, StageTable
+    from app.services import parcel_site
+
+    async def _read_crop(parcel_id, tenant_id):
+        return {"species": "Zea mays", "plantingDate": "2026-04-15", "variety": "MAS 26 T"}
+
+    async def _stages(species):
+        return StageTable(stages={"emergence": (0.0, 90.0), "vegetative": (90.0, 520.0)})
+
+    async def _gdd(tenant, season_start, parcel_id, base_temp=10.0, upper_cutoff=None):
+        return {"gdd_total": 300.0, "mean_daily_gdd": 10.0}
+
+    async def _site(parcel_id, tenant_id):
+        return parcel_site.ParcelSite(42.7, -1.6, "rainfed")
+
+    written = []
+
+    async def _write(entity, tenant_id):
+        written.append(entity)
+
+    monkeypatch.setattr(pipeline, "_read_assigned_crop", _read_crop, raising=False)
+    monkeypatch.setattr(pipeline.context_client, "get_phenology_stages", _stages)
+    monkeypatch.setattr(pipeline, "_fetch_gdd", _gdd, raising=False)
+    monkeypatch.setattr(pipeline.context_client, "resolve_season_start", _season_in_progress)
+    monkeypatch.setattr(pipeline, "_publish_assessment", _write, raising=False)
+    monkeypatch.setattr(parcel_site, "resolve_parcel_site", _site)
+
+    out = await pipeline.compute_assessment("urn:ngsi-ld:AgriParcel:t:p1", "t")
+    assert out.irrigation_regime == "rainfed"
+    assert written and all(e["irrigationRegime"]["value"] == "rainfed" for e in written)
+    assert out.recommended_action in (RecommendedAction.NO_ACTION, RecommendedAction.MONITOR)
+    assert all("irrigationMm" not in e for e in written)

@@ -4,7 +4,7 @@ import { DAY_MS, latestAtOrBefore, snapToUtcDay } from '@nekazari/viewer-kit';
 import { cropHealthFetch } from '../api/cropHealthApi';
 import { MAP_LAYER_MODE_KEY, readMapLayerMode, type MapLayerMode } from '../constants';
 import type { AssessmentData, ZoneAssessmentData } from '../types/assessment';
-import { LEVEL_SEVERITY, normalizeLevel } from '../utils/waterStress';
+import { levelSeverity } from '../utils/waterStress';
 import {
   SEVERITY_COLORS, emphasisStyle, parcelOnlyLabel, polygonRings, readZoneFromLocation, zoneCentroid, zoneEmphasis,
   zoneFillAlpha, zoneKey, zoneLabelStyle, zoneLabelText, zoneMapLabel, zoneNumbers, zoneOutlineStyle, zoneSelection, pinnedZoneExists, type ZoneRef,
@@ -54,7 +54,7 @@ export function layerColor(a: AssessmentData, mode: MapLayerMode): { fill: strin
   }
   if (mode === 'cwsi') {
     // The backend's resolved level is the only source of the cuts; no level means no data.
-    const sev = LEVEL_SEVERITY[normalizeLevel(a.waterStressLevel)];
+    const sev = levelSeverity(a.waterStressLevel, a.irrigationRegime, a.overallSeverity);
     return sev ? SEVERITY_COLORS[sev] : NO_DATA_COLOR;
   }
   const value = layerValue(a, mode);

@@ -1,0 +1,653 @@
+{
+ "source": "aquacrop 3.1.0 growing_degree_day(method=3) for aquacrop_m3; m2 = McMaster & Wilhelm 1997 Method 2; legacy = max(0,(min(Tmax,U)+Tmin)/2-B)",
+ "cases": [
+  {
+   "tmin": -10.0,
+   "tmax": -4.0,
+   "base": 0.0,
+   "upper": 26.0,
+   "legacy": 0.0,
+   "m2": 0.0,
+   "aquacrop_m3": 0.0
+  },
+  {
+   "tmin": -6.0,
+   "tmax": -1.0,
+   "base": 0.0,
+   "upper": 26.0,
+   "legacy": 0.0,
+   "m2": 0.0,
+   "aquacrop_m3": 0.0
+  },
+  {
+   "tmin": -6.0,
+   "tmax": 12.0,
+   "base": 0.0,
+   "upper": 26.0,
+   "legacy": 3.0,
+   "m2": 6.0,
+   "aquacrop_m3": 3.0
+  },
+  {
+   "tmin": -3.0,
+   "tmax": 3.0,
+   "base": 0.0,
+   "upper": 26.0,
+   "legacy": 0.0,
+   "m2": 1.5,
+   "aquacrop_m3": 0.0
+  },
+  {
+   "tmin": -1.0,
+   "tmax": 8.0,
+   "base": 0.0,
+   "upper": 26.0,
+   "legacy": 3.5,
+   "m2": 4.0,
+   "aquacrop_m3": 3.5
+  },
+  {
+   "tmin": 0.0,
+   "tmax": 5.0,
+   "base": 0.0,
+   "upper": 26.0,
+   "legacy": 2.5,
+   "m2": 2.5,
+   "aquacrop_m3": 2.5
+  },
+  {
+   "tmin": 1.0,
+   "tmax": 3.0,
+   "base": 0.0,
+   "upper": 26.0,
+   "legacy": 2.0,
+   "m2": 2.0,
+   "aquacrop_m3": 2.0
+  },
+  {
+   "tmin": 2.0,
+   "tmax": 9.0,
+   "base": 0.0,
+   "upper": 26.0,
+   "legacy": 5.5,
+   "m2": 5.5,
+   "aquacrop_m3": 5.5
+  },
+  {
+   "tmin": 5.0,
+   "tmax": 14.0,
+   "base": 0.0,
+   "upper": 26.0,
+   "legacy": 9.5,
+   "m2": 9.5,
+   "aquacrop_m3": 9.5
+  },
+  {
+   "tmin": 8.0,
+   "tmax": 20.0,
+   "base": 0.0,
+   "upper": 26.0,
+   "legacy": 14.0,
+   "m2": 14.0,
+   "aquacrop_m3": 14.0
+  },
+  {
+   "tmin": 11.0,
+   "tmax": 28.0,
+   "base": 0.0,
+   "upper": 26.0,
+   "legacy": 18.5,
+   "m2": 18.5,
+   "aquacrop_m3": 18.5
+  },
+  {
+   "tmin": 12.0,
+   "tmax": 30.0,
+   "base": 0.0,
+   "upper": 26.0,
+   "legacy": 19.0,
+   "m2": 19.0,
+   "aquacrop_m3": 19.0
+  },
+  {
+   "tmin": 15.0,
+   "tmax": 33.0,
+   "base": 0.0,
+   "upper": 26.0,
+   "legacy": 20.5,
+   "m2": 20.5,
+   "aquacrop_m3": 20.5
+  },
+  {
+   "tmin": 18.0,
+   "tmax": 36.0,
+   "base": 0.0,
+   "upper": 26.0,
+   "legacy": 22.0,
+   "m2": 22.0,
+   "aquacrop_m3": 22.0
+  },
+  {
+   "tmin": 24.0,
+   "tmax": 38.0,
+   "base": 0.0,
+   "upper": 26.0,
+   "legacy": 25.0,
+   "m2": 25.0,
+   "aquacrop_m3": 25.0
+  },
+  {
+   "tmin": 27.0,
+   "tmax": 40.0,
+   "base": 0.0,
+   "upper": 26.0,
+   "legacy": 26.5,
+   "m2": 26.0,
+   "aquacrop_m3": 26.0
+  },
+  {
+   "tmin": 29.0,
+   "tmax": 31.0,
+   "base": 0.0,
+   "upper": 26.0,
+   "legacy": 27.5,
+   "m2": 26.0,
+   "aquacrop_m3": 26.0
+  },
+  {
+   "tmin": 31.0,
+   "tmax": 37.0,
+   "base": 0.0,
+   "upper": 26.0,
+   "legacy": 28.5,
+   "m2": 26.0,
+   "aquacrop_m3": 26.0
+  },
+  {
+   "tmin": -10.0,
+   "tmax": -4.0,
+   "base": 2.0,
+   "upper": 28.0,
+   "legacy": 0.0,
+   "m2": 0.0,
+   "aquacrop_m3": 0.0
+  },
+  {
+   "tmin": -6.0,
+   "tmax": -1.0,
+   "base": 2.0,
+   "upper": 28.0,
+   "legacy": 0.0,
+   "m2": 0.0,
+   "aquacrop_m3": 0.0
+  },
+  {
+   "tmin": -6.0,
+   "tmax": 12.0,
+   "base": 2.0,
+   "upper": 28.0,
+   "legacy": 1.0,
+   "m2": 5.0,
+   "aquacrop_m3": 1.0
+  },
+  {
+   "tmin": -3.0,
+   "tmax": 3.0,
+   "base": 2.0,
+   "upper": 28.0,
+   "legacy": 0.0,
+   "m2": 0.5,
+   "aquacrop_m3": 0.0
+  },
+  {
+   "tmin": -1.0,
+   "tmax": 8.0,
+   "base": 2.0,
+   "upper": 28.0,
+   "legacy": 1.5,
+   "m2": 3.0,
+   "aquacrop_m3": 1.5
+  },
+  {
+   "tmin": 0.0,
+   "tmax": 5.0,
+   "base": 2.0,
+   "upper": 28.0,
+   "legacy": 0.5,
+   "m2": 1.5,
+   "aquacrop_m3": 0.5
+  },
+  {
+   "tmin": 1.0,
+   "tmax": 3.0,
+   "base": 2.0,
+   "upper": 28.0,
+   "legacy": 0.0,
+   "m2": 0.5,
+   "aquacrop_m3": 0.0
+  },
+  {
+   "tmin": 2.0,
+   "tmax": 9.0,
+   "base": 2.0,
+   "upper": 28.0,
+   "legacy": 3.5,
+   "m2": 3.5,
+   "aquacrop_m3": 3.5
+  },
+  {
+   "tmin": 5.0,
+   "tmax": 14.0,
+   "base": 2.0,
+   "upper": 28.0,
+   "legacy": 7.5,
+   "m2": 7.5,
+   "aquacrop_m3": 7.5
+  },
+  {
+   "tmin": 8.0,
+   "tmax": 20.0,
+   "base": 2.0,
+   "upper": 28.0,
+   "legacy": 12.0,
+   "m2": 12.0,
+   "aquacrop_m3": 12.0
+  },
+  {
+   "tmin": 11.0,
+   "tmax": 28.0,
+   "base": 2.0,
+   "upper": 28.0,
+   "legacy": 17.5,
+   "m2": 17.5,
+   "aquacrop_m3": 17.5
+  },
+  {
+   "tmin": 12.0,
+   "tmax": 30.0,
+   "base": 2.0,
+   "upper": 28.0,
+   "legacy": 18.0,
+   "m2": 18.0,
+   "aquacrop_m3": 18.0
+  },
+  {
+   "tmin": 15.0,
+   "tmax": 33.0,
+   "base": 2.0,
+   "upper": 28.0,
+   "legacy": 19.5,
+   "m2": 19.5,
+   "aquacrop_m3": 19.5
+  },
+  {
+   "tmin": 18.0,
+   "tmax": 36.0,
+   "base": 2.0,
+   "upper": 28.0,
+   "legacy": 21.0,
+   "m2": 21.0,
+   "aquacrop_m3": 21.0
+  },
+  {
+   "tmin": 24.0,
+   "tmax": 38.0,
+   "base": 2.0,
+   "upper": 28.0,
+   "legacy": 24.0,
+   "m2": 24.0,
+   "aquacrop_m3": 24.0
+  },
+  {
+   "tmin": 27.0,
+   "tmax": 40.0,
+   "base": 2.0,
+   "upper": 28.0,
+   "legacy": 25.5,
+   "m2": 25.5,
+   "aquacrop_m3": 25.5
+  },
+  {
+   "tmin": 29.0,
+   "tmax": 31.0,
+   "base": 2.0,
+   "upper": 28.0,
+   "legacy": 26.5,
+   "m2": 26.0,
+   "aquacrop_m3": 26.0
+  },
+  {
+   "tmin": 31.0,
+   "tmax": 37.0,
+   "base": 2.0,
+   "upper": 28.0,
+   "legacy": 27.5,
+   "m2": 26.0,
+   "aquacrop_m3": 26.0
+  },
+  {
+   "tmin": -10.0,
+   "tmax": -4.0,
+   "base": 0.0,
+   "upper": 15.0,
+   "legacy": 0.0,
+   "m2": 0.0,
+   "aquacrop_m3": 0.0
+  },
+  {
+   "tmin": -6.0,
+   "tmax": -1.0,
+   "base": 0.0,
+   "upper": 15.0,
+   "legacy": 0.0,
+   "m2": 0.0,
+   "aquacrop_m3": 0.0
+  },
+  {
+   "tmin": -6.0,
+   "tmax": 12.0,
+   "base": 0.0,
+   "upper": 15.0,
+   "legacy": 3.0,
+   "m2": 6.0,
+   "aquacrop_m3": 3.0
+  },
+  {
+   "tmin": -3.0,
+   "tmax": 3.0,
+   "base": 0.0,
+   "upper": 15.0,
+   "legacy": 0.0,
+   "m2": 1.5,
+   "aquacrop_m3": 0.0
+  },
+  {
+   "tmin": -1.0,
+   "tmax": 8.0,
+   "base": 0.0,
+   "upper": 15.0,
+   "legacy": 3.5,
+   "m2": 4.0,
+   "aquacrop_m3": 3.5
+  },
+  {
+   "tmin": 0.0,
+   "tmax": 5.0,
+   "base": 0.0,
+   "upper": 15.0,
+   "legacy": 2.5,
+   "m2": 2.5,
+   "aquacrop_m3": 2.5
+  },
+  {
+   "tmin": 1.0,
+   "tmax": 3.0,
+   "base": 0.0,
+   "upper": 15.0,
+   "legacy": 2.0,
+   "m2": 2.0,
+   "aquacrop_m3": 2.0
+  },
+  {
+   "tmin": 2.0,
+   "tmax": 9.0,
+   "base": 0.0,
+   "upper": 15.0,
+   "legacy": 5.5,
+   "m2": 5.5,
+   "aquacrop_m3": 5.5
+  },
+  {
+   "tmin": 5.0,
+   "tmax": 14.0,
+   "base": 0.0,
+   "upper": 15.0,
+   "legacy": 9.5,
+   "m2": 9.5,
+   "aquacrop_m3": 9.5
+  },
+  {
+   "tmin": 8.0,
+   "tmax": 20.0,
+   "base": 0.0,
+   "upper": 15.0,
+   "legacy": 11.5,
+   "m2": 11.5,
+   "aquacrop_m3": 11.5
+  },
+  {
+   "tmin": 11.0,
+   "tmax": 28.0,
+   "base": 0.0,
+   "upper": 15.0,
+   "legacy": 13.0,
+   "m2": 13.0,
+   "aquacrop_m3": 13.0
+  },
+  {
+   "tmin": 12.0,
+   "tmax": 30.0,
+   "base": 0.0,
+   "upper": 15.0,
+   "legacy": 13.5,
+   "m2": 13.5,
+   "aquacrop_m3": 13.5
+  },
+  {
+   "tmin": 15.0,
+   "tmax": 33.0,
+   "base": 0.0,
+   "upper": 15.0,
+   "legacy": 15.0,
+   "m2": 15.0,
+   "aquacrop_m3": 15.0
+  },
+  {
+   "tmin": 18.0,
+   "tmax": 36.0,
+   "base": 0.0,
+   "upper": 15.0,
+   "legacy": 16.5,
+   "m2": 15.0,
+   "aquacrop_m3": 15.0
+  },
+  {
+   "tmin": 24.0,
+   "tmax": 38.0,
+   "base": 0.0,
+   "upper": 15.0,
+   "legacy": 19.5,
+   "m2": 15.0,
+   "aquacrop_m3": 15.0
+  },
+  {
+   "tmin": 27.0,
+   "tmax": 40.0,
+   "base": 0.0,
+   "upper": 15.0,
+   "legacy": 21.0,
+   "m2": 15.0,
+   "aquacrop_m3": 15.0
+  },
+  {
+   "tmin": 29.0,
+   "tmax": 31.0,
+   "base": 0.0,
+   "upper": 15.0,
+   "legacy": 22.0,
+   "m2": 15.0,
+   "aquacrop_m3": 15.0
+  },
+  {
+   "tmin": 31.0,
+   "tmax": 37.0,
+   "base": 0.0,
+   "upper": 15.0,
+   "legacy": 23.0,
+   "m2": 15.0,
+   "aquacrop_m3": 15.0
+  },
+  {
+   "tmin": -10.0,
+   "tmax": -4.0,
+   "base": 10.0,
+   "upper": 30.0,
+   "legacy": 0.0,
+   "m2": 0.0,
+   "aquacrop_m3": 0.0
+  },
+  {
+   "tmin": -6.0,
+   "tmax": -1.0,
+   "base": 10.0,
+   "upper": 30.0,
+   "legacy": 0.0,
+   "m2": 0.0,
+   "aquacrop_m3": 0.0
+  },
+  {
+   "tmin": -6.0,
+   "tmax": 12.0,
+   "base": 10.0,
+   "upper": 30.0,
+   "legacy": 0.0,
+   "m2": 1.0,
+   "aquacrop_m3": 0.0
+  },
+  {
+   "tmin": -3.0,
+   "tmax": 3.0,
+   "base": 10.0,
+   "upper": 30.0,
+   "legacy": 0.0,
+   "m2": 0.0,
+   "aquacrop_m3": 0.0
+  },
+  {
+   "tmin": -1.0,
+   "tmax": 8.0,
+   "base": 10.0,
+   "upper": 30.0,
+   "legacy": 0.0,
+   "m2": 0.0,
+   "aquacrop_m3": 0.0
+  },
+  {
+   "tmin": 0.0,
+   "tmax": 5.0,
+   "base": 10.0,
+   "upper": 30.0,
+   "legacy": 0.0,
+   "m2": 0.0,
+   "aquacrop_m3": 0.0
+  },
+  {
+   "tmin": 1.0,
+   "tmax": 3.0,
+   "base": 10.0,
+   "upper": 30.0,
+   "legacy": 0.0,
+   "m2": 0.0,
+   "aquacrop_m3": 0.0
+  },
+  {
+   "tmin": 2.0,
+   "tmax": 9.0,
+   "base": 10.0,
+   "upper": 30.0,
+   "legacy": 0.0,
+   "m2": 0.0,
+   "aquacrop_m3": 0.0
+  },
+  {
+   "tmin": 5.0,
+   "tmax": 14.0,
+   "base": 10.0,
+   "upper": 30.0,
+   "legacy": 0.0,
+   "m2": 2.0,
+   "aquacrop_m3": 0.0
+  },
+  {
+   "tmin": 8.0,
+   "tmax": 20.0,
+   "base": 10.0,
+   "upper": 30.0,
+   "legacy": 4.0,
+   "m2": 5.0,
+   "aquacrop_m3": 4.0
+  },
+  {
+   "tmin": 11.0,
+   "tmax": 28.0,
+   "base": 10.0,
+   "upper": 30.0,
+   "legacy": 9.5,
+   "m2": 9.5,
+   "aquacrop_m3": 9.5
+  },
+  {
+   "tmin": 12.0,
+   "tmax": 30.0,
+   "base": 10.0,
+   "upper": 30.0,
+   "legacy": 11.0,
+   "m2": 11.0,
+   "aquacrop_m3": 11.0
+  },
+  {
+   "tmin": 15.0,
+   "tmax": 33.0,
+   "base": 10.0,
+   "upper": 30.0,
+   "legacy": 12.5,
+   "m2": 12.5,
+   "aquacrop_m3": 12.5
+  },
+  {
+   "tmin": 18.0,
+   "tmax": 36.0,
+   "base": 10.0,
+   "upper": 30.0,
+   "legacy": 14.0,
+   "m2": 14.0,
+   "aquacrop_m3": 14.0
+  },
+  {
+   "tmin": 24.0,
+   "tmax": 38.0,
+   "base": 10.0,
+   "upper": 30.0,
+   "legacy": 17.0,
+   "m2": 17.0,
+   "aquacrop_m3": 17.0
+  },
+  {
+   "tmin": 27.0,
+   "tmax": 40.0,
+   "base": 10.0,
+   "upper": 30.0,
+   "legacy": 18.5,
+   "m2": 18.5,
+   "aquacrop_m3": 18.5
+  },
+  {
+   "tmin": 29.0,
+   "tmax": 31.0,
+   "base": 10.0,
+   "upper": 30.0,
+   "legacy": 19.5,
+   "m2": 19.5,
+   "aquacrop_m3": 19.5
+  },
+  {
+   "tmin": 31.0,
+   "tmax": 37.0,
+   "base": 10.0,
+   "upper": 30.0,
+   "legacy": 20.5,
+   "m2": 20.0,
+   "aquacrop_m3": 20.0
+  }
+ ]
+}

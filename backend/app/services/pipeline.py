@@ -2645,6 +2645,7 @@ async def compute_assessment(
             thresholds.base_temp if thresholds else 10.0,
             thresholds.upper_cutoff if thresholds and thresholds.upper_cutoff is not None
             else _DEFAULT_UPPER_CUTOFF,
+            parcel_site.gdd_kwargs(thresholds).get("gdd_method", "legacy"),
         )
     except Exception as exc:  # noqa: BLE001 -- a bad series must not sink the assessment
         logger.warning("compute_assessment: zone GDD delta failed for %s, none applied: %s", parcel_short, exc)

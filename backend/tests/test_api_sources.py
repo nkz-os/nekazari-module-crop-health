@@ -356,3 +356,59 @@ async def test_bioorchestrator_without_kc_uses_neutral_literal():
 async def test_soil_summary_empty_without_texture_even_with_ph():
     src = await _bio_soil_sources({"soilPh": 6.5, "soilAWCmm": 46})
     assert src["soil"]["summary"] == "" and src["soil"]["status"] == "unavailable"
+
+
+@pytest.mark.anyio
+async def test_sources_detail_describes_the_latest_assessment():
+    """The broker returns assessments oldest first: the panel must describe the newest one."""
+    with respx.mock as mock:
+        mock.get(url__regex=r".*type=CropHealthAssessment.*").respond(json=[
+            {
+                "id": "urn:ngsi-ld:CropHealthAssessment:Parcela-61-20260606",
+                "hasAgriParcel": "urn:ngsi-ld:AgriParcel:Parcela-61",
+                "assessedAt": "2026-06-06T04:00:00Z",
+                "phenologyStage": "vegetative",
+            },
+            {
+                "id": "urn:ngsi-ld:CropHealthAssessment:Parcela-61-20260607",
+                "refAgriParcel": "urn:ngsi-ld:AgriParcel:Parcela-61",
+                "assessedAt": "2026-06-07T04:00:00Z",
+                "soilTexture": "loam",
+                "soilDataSource": "soilgrids",
+                "soilAWCmm": 80.0,
+                "phenologyStage": "flowering",
+            },
+        ])
+        mock.get().respond(json=[])
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test", headers=GATEWAY_HEADERS) as client:
+            resp = await client.get("/api/crop-health/sources?parcelId=Parcela-61")
+    assert resp.status_code == 200
+    src = resp.json()["sources"]
+    assert src["soil"]["status"] == "ok" and src["soil"]["details"]["texture"] == "loam"
+    assert src["soil"]["lastDataAt"] == "2026-06-07T04:00:00Z"
+    assert src["crop"]["phenologyStage"] == "flowering"
+
+
+@pytest.mark.anyio
+async def test_sources_detail_cache_is_per_tenant():
+    transport = ASGITransport(app=app)
+    with respx.mock as mock:
+        mock.get(url__regex=r".*type=CropHealthAssessment.*").respond(json=[{
+            "id": "urn:ngsi-ld:CropHealthAssessment:Parcela-62-20260607",
+            "hasAgriParcel": "urn:ngsi-ld:AgriParcel:Parcela-62",
+            "assessedAt": "2026-06-07T04:00:00Z",
+            "soilTexture": "loam",
+        }])
+        mock.get().respond(json=[])
+        async with AsyncClient(transport=transport, base_url="http://test",
+                               headers={"X-Tenant-ID": "tenant-a", "X-User-ID": "user-a"}) as client:
+            first = await client.get("/api/crop-health/sources?parcelId=Parcela-62")
+    with respx.mock as mock:
+        mock.get().respond(json=[])
+        async with AsyncClient(transport=transport, base_url="http://test",
+                               headers={"X-Tenant-ID": "tenant-b", "X-User-ID": "user-b"}) as client:
+            second = await client.get("/api/crop-health/sources?parcelId=Parcela-62")
+    assert first.json()["sources"]["soil"]["status"] == "ok"
+    assert second.json()["sources"]["soil"]["status"] == "unavailable"

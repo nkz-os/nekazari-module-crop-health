@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Query, Request
 
+from app.api.assessments import _fetch_assessment_entities
 from app.config import get_settings
 from app.services.parcel_link import PARCEL_PREFIX, parcel_link_targets
 from nkz_platform_sdk.orion import OrionClient
@@ -17,7 +18,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/sources", tags=["sources"])
 
 # Cache for detail responses: key=parcelId, value=(timestamp, data)
-_detail_cache: dict[str, tuple[float, dict]] = {}
+_detail_cache: dict[tuple[str, str], tuple[float, dict]] = {}  # (tenant, parcel)
 _DETAIL_CACHE_TTL = 45  # seconds
 
 
@@ -185,14 +186,14 @@ async def _detail_sources(request: Request, parcelId: str) -> dict:
 
     Result is cached for 45s to prevent rate-limit abuse on external services.
     """
-    # Check cache
-    cached = _detail_cache.get(parcelId)
+    tenant_id = getattr(request.state, "tenant_id", "")
+    cache_key = (tenant_id, parcelId)
+    cached = _detail_cache.get(cache_key)
     if cached:
         ts, data = cached
         if (datetime.now(timezone.utc).timestamp() - ts) < _DETAIL_CACHE_TTL:
             return data
 
-    tenant_id = getattr(request.state, "tenant_id", "")
     settings = get_settings()
 
     now = datetime.now(timezone.utc)
@@ -221,7 +222,8 @@ async def _detail_sources(request: Request, parcelId: str) -> dict:
         f'|refAgriParcel=="{parcel_urn}")'
     )
     results = await asyncio.gather(
-        _query("CropHealthAssessment", rel_q, 10),
+        # Every assessment of the parcel: the broker returns them oldest first, in pages.
+        _fetch_assessment_entities(tenant_id, parcelId),
         _query("Device", device_q, 20),
         # Canonical optical vegetation: one EOProduct per acquisition (no
         # productType discriminator). Fetch the recent set and pick the latest
@@ -243,7 +245,7 @@ async def _detail_sources(request: Request, parcelId: str) -> dict:
     weather_obs = [e for e in weather_obs if e.get("dailySummary") is not True]
     sar_products = results[5] if not isinstance(results[5], BaseException) else []
 
-    assessment = assessments[0] if assessments else {}
+    assessment = max(assessments, key=lambda e: str(e.get("assessedAt") or ""), default={})
 
     # ── Soil ──────────────────────────────────────────────────────────
     soil_texture = assessment.get("soilTexture")
@@ -455,5 +457,5 @@ async def _detail_sources(request: Request, parcelId: str) -> dict:
         },
     }
 
-    _detail_cache[parcelId] = (now.timestamp(), response)
+    _detail_cache[cache_key] = (now.timestamp(), response)
     return response

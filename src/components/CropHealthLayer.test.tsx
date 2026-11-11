@@ -10,6 +10,12 @@ const GREEN = '#16a34a';
 const assessment = (fields: Record<string, unknown>) => ({ parcelId: 'p1', overallSeverity: 'LOW', ...fields }) as never;
 
 describe('layerColor', () => {
+  it('does not paint a rainfed parcel red for its water level unless the severity was raised', () => {
+    const dry = { waterStressLevel: 'high', irrigationRegime: 'rainfed' };
+    expect(layerColor(assessment({ ...dry, overallSeverity: 'MEDIUM' }), 'cwsi').fill).not.toBe(RED);
+    expect(layerColor(assessment({ ...dry, overallSeverity: 'MEDIUM' }), 'cwsi').fill).toBe(layerColor(assessment({ overallSeverity: 'MEDIUM' }), 'severity').fill);
+    expect(layerColor(assessment({ ...dry, overallSeverity: 'HIGH' }), 'cwsi').fill).toBe(layerColor(assessment({ overallSeverity: 'HIGH' }), 'severity').fill);
+  });
   it('reads the composite index on its 0-100 scale', () => {
     expect(layerColor(assessment({ compositeStressIndex: 71.8 }), 'composite').fill).toBe(RED);
     expect(layerColor(assessment({ compositeStressIndex: 12 }), 'composite').fill).toBe(GREEN);

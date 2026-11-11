@@ -76,7 +76,8 @@ describe('water stress indicator', () => {
     expect(neutral).toContain('text-nkz-text-secondary');
     expect(neutral).not.toContain('danger');
     expect(neutral).not.toContain('warning');
-    expect(chip(lvl({ waterStressLevel: 'high', waterBalanceDeficit: -20 }))).toContain('text-nkz-danger-strong');
+    // the millimetres are data: amber whatever their size, the level chip carries the alarm
+    expect(chip(lvl({ waterStressLevel: 'high', waterBalanceDeficit: -20 }))).toContain('text-nkz-warning-strong');
   });
 });
 
@@ -121,5 +122,39 @@ describe('CropStatusSnapshotView worst zone', () => {
   });
   it('shows nothing when the mapper left the rank null', () => {
     expect(view({ ...mappedRollup, worstZoneRank: null, worstZoneId: null, zoneSpread: null })).not.toContain('zones.worst');
+  });
+});
+
+describe('rainfed parcel', () => {
+  const dry = (extra: Record<string, unknown> = {}) => render({
+    nextJob: null,
+    assessment: {
+      ...(assessment as object), irrigationRegime: 'rainfed', overallSeverity: 'MEDIUM',
+      recommendedAction: 'MONITOR', waterStressLevel: 'high', waterBalanceDeficit: -22.9,
+      soilWaterBalance: { stressLevel: 'high', swMm: 16, awcMm: 39, swRatio: 0.42 },
+      ...extra,
+    },
+  });
+  it('names the level as how dry it is and gives no irrigation task', () => {
+    const h = dry();
+    expect(h).toContain('waterStress.rainfed.high');
+    expect(h).not.toContain('waterStress.level.high');
+    expect(h).toContain('action.monitor');
+    expect(h).not.toContain('irrigate');
+  });
+  it('words the soil reserve without an irrigation instruction', () => {
+    const h = dry();
+    expect(h).toContain('soil.reservoirRainfed.high');
+    expect(h).not.toContain('soil.reservoir.high');
+  });
+  it('is amber, and red only when the severity was raised', () => {
+    expect(dry()).not.toContain('bg-nkz-danger-soft');
+    expect(dry({ overallSeverity: 'HIGH' })).toContain('bg-nkz-danger-soft');
+  });
+  it('an irrigated parcel keeps the usual wording, with the millimetres in amber', () => {
+    const h = dry({ irrigationRegime: 'irrigated', overallSeverity: 'CRITICAL', recommendedAction: 'IRRIGATE_IMMEDIATE' });
+    expect(h).toContain('waterStress.level.high');
+    expect(h).toContain('soil.reservoir.high');
+    expect(h).toContain('action.irrigateImmediate');
   });
 });

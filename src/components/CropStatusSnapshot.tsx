@@ -3,7 +3,7 @@ import { useTranslation } from '@nekazari/sdk';
 import { authHeaders, CROP_CONTEXT_URL } from '../api/cropHealthApi';
 import { SeverityBadge } from './shared/SeverityBadge';
 import { freshnessTone, jobText } from '../utils/worklist';
-import { levelIntent, levelKey, normalizeLevel } from '../utils/waterStress';
+import { levelIntent, levelKey, normalizeLevel, reservoirKey } from '../utils/waterStress';
 import type { AssessmentData, Freshness, NextJob, Surprise } from '../types/assessment';
 
 interface CropContext {
@@ -175,10 +175,11 @@ export const CropStatusSnapshotView: React.FC<ViewProps> = ({
   const fidelity = assessment.dataFidelity || 'regional_proxy';
   const chips: { icon: string; text: string; intent?: 'positive' | 'warning' | 'negative' }[] = [];
 
-  const waterIntent = levelIntent(assessment.waterStressLevel);
+  const regime = assessment.irrigationRegime;
+  const waterIntent = levelIntent(assessment.waterStressLevel, regime, assessment.overallSeverity);
   chips.push({
     icon: waterIntent === 'positive' ? '✅' : waterIntent === 'neutral' ? '💧' : '⚠️',
-    text: t(levelKey(assessment.waterStressLevel)),
+    text: t(levelKey(assessment.waterStressLevel, regime)),
     intent: waterIntent === 'neutral' ? undefined : waterIntent,
   });
   if (balance != null && balance < 0) {
@@ -187,7 +188,8 @@ export const CropStatusSnapshotView: React.FC<ViewProps> = ({
     chips.push({
       icon: '💧',
       text: `${Math.abs(balance).toFixed(1)}mm deficit`,
-      intent: waterNotNeeded ? undefined : balance < -15 ? 'negative' : 'warning',
+      // The millimetres are data: the level chip carries the alarm.
+      intent: waterNotNeeded ? undefined : 'warning',
     });
   }
   if (assessment.mdsSeverity && assessment.mdsSeverity !== 'LOW' && assessment.mdsValue != null) {
@@ -260,7 +262,7 @@ export const CropStatusSnapshotView: React.FC<ViewProps> = ({
       {assessment.soilWaterBalance && assessment.soilWaterBalance.stressLevel !== 'none' && (
         <div className="pt-2 border-t border-nkz-border">
           <p className="text-xs text-nkz-text-muted">
-            🪣 {t('soil.reservoir.' + (assessment.soilWaterBalance.stressLevel ?? 'none'), {
+            🪣 {t(reservoirKey(assessment.soilWaterBalance.stressLevel, regime), {
               current: (assessment.soilWaterBalance.swMm ?? 0).toFixed(0),
               capacity: (assessment.soilWaterBalance.awcMm ?? 0).toFixed(0),
               ratio: ((assessment.soilWaterBalance.swRatio ?? 0) * 100).toFixed(0),

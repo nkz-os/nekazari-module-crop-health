@@ -17,6 +17,7 @@ const en = {
         action: { noAction: 'No action needed', monitor: 'Monitor closely', irrigateScheduled: 'Schedule irrigation', irrigateImmediate: 'IRRIGATE NOW' },
         waterStress: {
             level: { none: 'No stress', mild: 'Mild stress', moderate: 'Moderate stress', high: 'High stress', no_data: 'No data', not_needed: 'Stage with no water need' },
+            rainfed: { mild: 'Slightly dry', moderate: 'Dry', high: 'Very dry' },
             note: { rdi: 'In this stage a moderate stress can be favourable if you use deficit irrigation.' },
             method: { cwsi_sensor: 'Canopy temperature sensor (CWSI)', balance: 'Water balance (Ks)', none: 'No method available' },
             phaseBasis: { gdd: 'Stage from growing degree-days', gdd_ndvi: 'Stage from growing degree-days and NDVI' },
@@ -356,6 +357,11 @@ const en = {
                 high: 'Soil water low at {{ratio}}% ({{current}}/{{capacity}} mm) — irrigate soon',
                 critical: 'Soil water critical at {{ratio}}% ({{current}}/{{capacity}} mm) — irrigate immediately',
             },
+            reservoirRainfed: {
+                moderate: 'Soil water at {{ratio}}% ({{current}}/{{capacity}} mm)',
+                high: 'Soil water low at {{ratio}}% ({{current}}/{{capacity}} mm)',
+                critical: 'Soil water critical at {{ratio}}% ({{current}}/{{capacity}} mm)',
+            },
         },
         waterlogging: {
             MEDIUM: 'Waterlogging risk ({{hours}}h) — monitor low areas',
@@ -509,6 +515,7 @@ const es = {
         action: { noAction: 'Sin acción necesaria', monitor: 'Monitorizar', irrigateScheduled: 'Programar riego', irrigateImmediate: 'REGAR AHORA' },
         waterStress: {
             level: { none: 'Sin estrés', mild: 'Estrés leve', moderate: 'Estrés moderado', high: 'Estrés alto', no_data: 'Sin dato', not_needed: 'Fase sin necesidad de agua' },
+            rainfed: { mild: 'Algo seco', moderate: 'Seco', high: 'Muy seco' },
             note: { rdi: 'En esta fase un estrés moderado puede ser favorable si haces riego deficitario.' },
             method: { cwsi_sensor: 'Sensor de temperatura de copa (CWSI)', balance: 'Balance hídrico (Ks)', none: 'Sin método disponible' },
             phaseBasis: { gdd: 'Fase por grados-día', gdd_ndvi: 'Fase por grados-día y NDVI' },
@@ -819,6 +826,11 @@ const es = {
                 high: 'Reserva de agua baja al {{ratio}}% ({{current}}/{{capacity}} mm) — regar pronto',
                 critical: 'Reserva de agua crítica al {{ratio}}% ({{current}}/{{capacity}} mm) — regar inmediatamente',
             },
+            reservoirRainfed: {
+                moderate: 'Reserva de agua al {{ratio}}% ({{current}}/{{capacity}} mm)',
+                high: 'Reserva de agua baja al {{ratio}}% ({{current}}/{{capacity}} mm)',
+                critical: 'Reserva de agua crítica al {{ratio}}% ({{current}}/{{capacity}} mm)',
+            },
         },
         waterlogging: {
             MEDIUM: 'Riesgo de encharcamiento ({{hours}}h) — vigilar zonas bajas',
@@ -972,6 +984,7 @@ const ca = {
         action: { noAction: 'Sense acció', monitor: 'Monitoritzar', irrigateScheduled: 'Programar reg', irrigateImmediate: 'REGAR ARA' },
         waterStress: {
             level: { none: 'Sense estrès', mild: 'Estrès lleu', moderate: 'Estrès moderat', high: 'Estrès alt', no_data: 'Sense dada', not_needed: 'Fase sense necessitat d\'aigua' },
+            rainfed: { mild: 'Una mica sec', moderate: 'Sec', high: 'Molt sec' },
             note: { rdi: 'En aquesta fase un estrès moderat pot ser favorable si fas reg deficitari.' },
             method: { cwsi_sensor: 'Sensor de temperatura de la capçada (CWSI)', balance: 'Balanç hídric (Ks)', none: 'Sense mètode disponible' },
             phaseBasis: { gdd: 'Fase per graus-dia', gdd_ndvi: 'Fase per graus-dia i NDVI' },
@@ -1281,6 +1294,11 @@ const ca = {
                 high: 'Reserva d\'aigua baixa al {{ratio}}% ({{current}}/{{capacity}} mm) — regar aviat',
                 critical: 'Reserva d\'aigua crítica al {{ratio}}% ({{current}}/{{capacity}} mm) — regar immediatament',
             },
+            reservoirRainfed: {
+                moderate: 'Reserva d\'aigua al {{ratio}}% ({{current}}/{{capacity}} mm)',
+                high: 'Reserva d\'aigua baixa al {{ratio}}% ({{current}}/{{capacity}} mm)',
+                critical: 'Reserva d\'aigua crítica al {{ratio}}% ({{current}}/{{capacity}} mm)',
+            },
         },
         waterlogging: {
             MEDIUM: 'Risc d\'embassament ({{hours}}h) — vigilar zones baixes',
@@ -1403,6 +1421,7 @@ const eu = {
         action: { noAction: 'Ez da ekintzarik behar', monitor: 'Monitorizatu', irrigateScheduled: 'Ureztatzea programatu', irrigateImmediate: 'UREZTATU ORAIN' },
         waterStress: {
             level: { none: 'Estresik ez', mild: 'Estres arina', moderate: 'Estres ertaina', high: 'Estres handia', no_data: 'Daturik ez', not_needed: 'Urik behar ez duen fasea' },
+            rainfed: { mild: 'Apur bat lehor', moderate: 'Lehor', high: 'Oso lehor' },
             note: { rdi: 'Fase honetan, estres ertaina onuragarria izan daiteke ureztatze defizitarioa egiten baduzu.' },
             method: { cwsi_sensor: 'Zuhaitz-hostoen tenperatura sentsorea (CWSI)', balance: 'Ur-balantzea (Ks)', none: 'Metodorik ez dago' },
             phaseBasis: { gdd: 'Fasea gradu-egunen arabera', gdd_ndvi: 'Fasea gradu-egunen eta NDVIren arabera' },
@@ -1712,6 +1731,11 @@ const eu = {
                 high: 'Ur-erreserba baxua %{{ratio}}ean ({{current}}/{{capacity}} mm) — laster ureztatu',
                 critical: 'Ur-erreserba kritikoa %{{ratio}}ean ({{current}}/{{capacity}} mm) — berehala ureztatu',
             },
+            reservoirRainfed: {
+                moderate: 'Ur-erreserba %{{ratio}}ean ({{current}}/{{capacity}} mm)',
+                high: 'Ur-erreserba baxua %{{ratio}}ean ({{current}}/{{capacity}} mm)',
+                critical: 'Ur-erreserba kritikoa %{{ratio}}ean ({{current}}/{{capacity}} mm)',
+            },
         },
         waterlogging: {
             MEDIUM: 'Ur-pilatze arriskua ({{hours}}h) — beheko guneak zaindu',
@@ -1834,6 +1858,7 @@ const fr = {
         action: { noAction: 'Aucune action', monitor: 'Surveiller', irrigateScheduled: 'Programmer l\'irrigation', irrigateImmediate: 'IRRIGUER MAINTENANT' },
         waterStress: {
             level: { none: 'Pas de stress', mild: 'Stress léger', moderate: 'Stress modéré', high: 'Stress élevé', no_data: 'Pas de donnée', not_needed: 'Stade sans besoin en eau' },
+            rainfed: { mild: 'Un peu sec', moderate: 'Sec', high: 'Très sec' },
             note: { rdi: 'À ce stade, un stress modéré peut être favorable si vous pratiquez l\'irrigation déficitaire.' },
             method: { cwsi_sensor: 'Capteur de température du feuillage (CWSI)', balance: 'Bilan hydrique (Ks)', none: 'Aucune méthode disponible' },
             phaseBasis: { gdd: 'Stade selon les degrés-jours', gdd_ndvi: 'Stade selon les degrés-jours et le NDVI' },
@@ -2143,6 +2168,11 @@ const fr = {
                 high: 'Réserve en eau basse à {{ratio}}% ({{current}}/{{capacity}} mm) — irriguer bientôt',
                 critical: 'Réserve en eau critique à {{ratio}}% ({{current}}/{{capacity}} mm) — irriguer immédiatement',
             },
+            reservoirRainfed: {
+                moderate: 'Réserve en eau à {{ratio}}% ({{current}}/{{capacity}} mm)',
+                high: 'Réserve en eau basse à {{ratio}}% ({{current}}/{{capacity}} mm)',
+                critical: 'Réserve en eau critique à {{ratio}}% ({{current}}/{{capacity}} mm)',
+            },
         },
         waterlogging: {
             MEDIUM: 'Risque d\'engorgement ({{hours}}h) — surveiller les zones basses',
@@ -2265,6 +2295,7 @@ const pt = {
         action: { noAction: 'Nenhuma ação', monitor: 'Monitorizar', irrigateScheduled: 'Programar irrigação', irrigateImmediate: 'IRRIGAR AGORA' },
         waterStress: {
             level: { none: 'Sem stress', mild: 'Stress ligeiro', moderate: 'Stress moderado', high: 'Stress elevado', no_data: 'Sem dados', not_needed: 'Fase sem necessidade de água' },
+            rainfed: { mild: 'Um pouco seco', moderate: 'Seco', high: 'Muito seco' },
             note: { rdi: 'Nesta fase, um stress moderado pode ser favorável se fizer rega deficitária.' },
             method: { cwsi_sensor: 'Sensor de temperatura do coberto (CWSI)', balance: 'Balanço hídrico (Ks)', none: 'Nenhum método disponível' },
             phaseBasis: { gdd: 'Fase por graus-dia', gdd_ndvi: 'Fase por graus-dia e NDVI' },
@@ -2573,6 +2604,11 @@ const pt = {
                 moderate: 'Reserva de água a {{ratio}}% ({{current}}/{{capacity}} mm) — programar irrigação',
                 high: 'Reserva de água baixa a {{ratio}}% ({{current}}/{{capacity}} mm) — irrigar em breve',
                 critical: 'Reserva de água crítica a {{ratio}}% ({{current}}/{{capacity}} mm) — irrigar imediatamente',
+            },
+            reservoirRainfed: {
+                moderate: 'Reserva de água a {{ratio}}% ({{current}}/{{capacity}} mm)',
+                high: 'Reserva de água baixa a {{ratio}}% ({{current}}/{{capacity}} mm)',
+                critical: 'Reserva de água crítica a {{ratio}}% ({{current}}/{{capacity}} mm)',
             },
         },
         waterlogging: {

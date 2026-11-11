@@ -238,6 +238,7 @@ def map_entity_to_assessment(entity: dict[str, Any]) -> dict[str, Any]:
         "mdsValue": prop_value(entity, "mdsValue"),
         "mdsSeverity": prop_value(entity, "mdsSeverity"),
         "waterBalanceDeficit": prop_value(entity, "waterBalanceDeficit"),
+        "irrigationRegime": prop_value(entity, "irrigationRegime"),
         "thermalCondition": prop_value(entity, "thermalCondition"),
         "thermalSeverity": prop_value(entity, "thermalSeverity"),
         "heatStressHours": prop_value(entity, "heatStressHours"),

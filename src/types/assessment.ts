@@ -170,6 +170,8 @@ export interface AssessmentData {
   };
   /** Resolved by the backend; absent on assessments written before the single level existed. */
   waterStressLevel?: 'none' | 'mild' | 'moderate' | 'high' | 'no_data' | 'not_needed' | null;
+  /** Of the parcel's crop (or of the parcel); absent or null when it is not known. */
+  irrigationRegime?: 'rainfed' | 'irrigated' | null;
   waterStressMethod?: 'cwsi_sensor' | 'balance' | 'none' | null;
   waterStressPhaseNote?: 'rdi' | null;
   waterStressReferenceSources?: string[] | null;

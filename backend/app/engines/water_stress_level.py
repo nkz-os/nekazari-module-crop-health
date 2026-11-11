@@ -71,9 +71,27 @@ def level_from_index(index: float) -> str:
     return "high"
 
 
-def severity_name(level: str) -> str | None:
-    """Severity name for a level, or None when the level adds no severity."""
-    return SEVERITY_BY_LEVEL.get(level)
+# Stages in which a water deficit costs most yield: flowering and yield formation (FAO-33,
+# Doorenbos & Kassam 1979). ASSUMPTION: owner-approved 2026-11-11; FAO-33 names the periods,
+# not this list of stage names
+RAINFED_SENSITIVE_STAGES = frozenset({"flowering", "grain_filling", "fruit_set", "kernel_fill"})
+
+
+def severity_name(level: str, *, regime: str | None = None, stage: str | None = None) -> str | None:
+    """Severity name for a level, or None when the level adds no severity.
+
+    A rainfed parcel cannot be irrigated, so its water stress is a state to watch: at most
+    MEDIUM, and HIGH only for a high level in a stage of ``RAINFED_SENSITIVE_STAGES``.
+    Any other regime (irrigated or unknown) keeps ``SEVERITY_BY_LEVEL``.
+    """
+    name = SEVERITY_BY_LEVEL.get(level)
+    if regime != "rainfed" or name is None:
+        return name
+    if level == "moderate":
+        return "MEDIUM"
+    if level == "high":
+        return "HIGH" if stage in RAINFED_SENSITIVE_STAGES else "MEDIUM"
+    return name
 
 
 def _baseline_sources(cwsi: CWSIResult, reference: WaterStressReference | None) -> tuple[str, ...]:

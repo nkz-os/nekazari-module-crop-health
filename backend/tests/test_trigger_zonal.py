@@ -192,3 +192,38 @@ async def test_zonal_trigger_labels_inherited_values_and_writes_rank_with_id(mon
     rollup = next(e for e in published if e["type"] == "CropHealthAssessment")
     assert rollup["nkz:worstZoneId"]["value"] == "z0"
     assert rollup["nkz:worstZoneRank"]["value"] == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("zones", [
+    [Zone("parcel", _Z0)],
+    [Zone("z0", _Z0, urn="urn:ngsi-ld:AgriParcelZone:t:p1:z0"),
+     Zone("z1", _Z1, urn="urn:ngsi-ld:AgriParcelZone:t:p1:z1")],
+])
+async def test_every_assessment_of_a_rainfed_parcel_carries_the_regime(monkeypatch, zones):
+    """The regime is on the assessment when the engines run, so severity never sees it missing."""
+    from app.services import parcel_site
+
+    calls, published = _patch_trigger(monkeypatch, zones=zones, device_coords=(5, 5))
+    seen = []
+    faked = pipeline._run_engines
+
+    async def _run(assessment, **kw):
+        seen.append(assessment.irrigation_regime)
+        return await faked(assessment, **kw)
+
+    async def _site(parcel_id, tenant_id):
+        return parcel_site.ParcelSite(43.0, -2.0, "rainfed")
+
+    monkeypatch.setattr(pipeline, "_run_engines", _run, raising=False)
+    monkeypatch.setattr(parcel_site, "resolve_parcel_site", _site)
+    out = await pipeline.trigger(
+        entity_id="urn:ngsi-ld:DeviceMeasurement:d1",
+        metric_type=MetricType.LEAF_TEMPERATURE.value,
+        redis_state=_Redis(),
+        parcel_id="p1",
+        tenant_id="t",
+    )
+    assert seen and set(seen) == {"rainfed"}
+    assert out.irrigation_regime == "rainfed"
+    assert all(e["irrigationRegime"]["value"] == "rainfed" for e in published)

@@ -17,17 +17,23 @@ def anyio_backend():
     return "asyncio"
 
 
-def _zone(zid, sensor=False, parcel="p-1"):
-    row = {
-        "id": f"urn:ngsi-ld:AgriParcelZone:test-tenant:{parcel}:{zid}",
-        "hasAgriParcel": f"urn:ngsi-ld:AgriParcel:{parcel}",
-        "nkz:zoneId": zid,
-        "nkz:centroid": [0.5, 0.5],
+_RANK = {"high": 1, "medium": 2, "low": 3, "critical": 4}
+
+
+def _zone(level, parcel="p-1"):
+    """Current-zoning level of a parcel (AgriManagementZone, keyValues)."""
+    return {
+        "id": f"urn:ngsi-ld:AgriManagementZone:{parcel}:abcdef12:L{_RANK[level]}",
+        "type": "AgriManagementZone",
+        "refAgriParcel": f"urn:ngsi-ld:AgriParcel:{parcel}",
+        "zoneLevel": level,
+        "zoneRank": _RANK[level],
+        "areaHa": 1.0,
+        "zoningRunId": "abcdef12" + "0" * 24,
+        "zoningMethod": "vegetationIndexMultiDate",
+        "dateZoned": {"@type": "DateTime", "@value": "2026-11-17T12:00:00Z"},
         "location": POLY,
     }
-    if sensor:
-        row["nkz:sensorNearby"] = True
-    return row
 
 
 def _zone_assessment(zid, cwsi, composite, at="2026-10-25T10:00:00Z", vigor=0.6, parcel="p-1"):
@@ -56,7 +62,7 @@ def _parcel_assessment(parcel="p-1", cwsi=0.5):
 
 
 def _mock_orion(mock, zones, zone_assessments, assessments):
-    mock.get(url__regex=r".*type=AgriParcelZone.*").respond(json=zones)
+    mock.get(url__regex=r".*type=AgriManagementZone.*").respond(json=zones)
     mock.get(url__regex=r".*type=CropHealthZoneAssessment.*").respond(json=zone_assessments)
     mock.get(url__regex=r".*type=CropHealthAssessment(&|$).*").respond(json=assessments)
 
@@ -72,18 +78,18 @@ async def test_zones_of_deleted_zone_ids_are_hidden_and_differs_flag_is_set():
     with respx.mock as mock:
         _mock_orion(
             mock,
-            [_zone("z-a"), _zone("z-b")],
+            [_zone("high"), _zone("medium")],
             [
-                _zone_assessment("z-a", 0.5, 61),
-                _zone_assessment("z-b", 0.8, 60),
-                _zone_assessment("z-old", 0.9, 90),
+                _zone_assessment("high", 0.5, 61),
+                _zone_assessment("medium", 0.8, 60),
+                _zone_assessment("critical", 0.9, 90),
             ],
             [_parcel_assessment()],
         )
         resp = await _get()
     assert resp.status_code == 200
     data = resp.json()
-    assert [z["zoneId"] for z in data["zones"]] == ["z-a", "z-b"]
+    assert [z["zoneId"] for z in data["zones"]] == ["high", "medium"]
     assert [z["differsFromParcel"] for z in data["zones"]] == [False, True]
     assert data["isWholeParcel"] is False
     assert data["parcelValues"]["cwsiValue"] == 0.5
@@ -98,35 +104,21 @@ async def test_stale_assessment_of_deleted_zone_does_not_shadow_live_zone():
     with respx.mock as mock:
         _mock_orion(
             mock,
-            [_zone("z-a")],
+            [_zone("high")],
             [
-                _zone_assessment("z-a", 0.5, 60, at="2026-10-24T10:00:00Z"),
-                _zone_assessment("z-a", 0.52, 62, at="2026-10-25T10:00:00Z"),
-                _zone_assessment("z-gone", 0.1, 5, at="2026-10-26T10:00:00Z"),
+                _zone_assessment("high", 0.5, 60, at="2026-10-24T10:00:00Z"),
+                _zone_assessment("high", 0.52, 62, at="2026-10-25T10:00:00Z"),
+                _zone_assessment("critical", 0.1, 5, at="2026-10-26T10:00:00Z"),
             ],
             [_parcel_assessment()],
         )
         data = (await _get()).json()
-    assert [z["zoneId"] for z in data["zones"]] == ["z-a"]
+    assert [z["zoneId"] for z in data["zones"]] == ["high"]
     assert data["zones"][0]["cwsiValue"] == 0.52
 
 
 @pytest.mark.anyio
-async def test_sensor_nearby_zone_always_differs():
-    with respx.mock as mock:
-        _mock_orion(
-            mock,
-            [_zone("z-a", sensor=True)],
-            [_zone_assessment("z-a", 0.5, 60)],
-            [_parcel_assessment()],
-        )
-        data = (await _get()).json()
-    assert data["zones"][0]["sensorNearby"] is True
-    assert data["zones"][0]["differsFromParcel"] is True
-
-
-@pytest.mark.anyio
-async def test_parcel_with_only_twi_classes_is_whole_parcel():
+async def test_parcel_without_current_zoning_is_whole_parcel():
     twi = {
         "id": "urn:ngsi-ld:AgriParcelZone:test-tenant:p-1:twi-1",
         "hasAgriParcel": PARCEL,
@@ -136,9 +128,10 @@ async def test_parcel_with_only_twi_classes_is_whole_parcel():
         "location": POLY,
     }
     with respx.mock as mock:
+        mock.get(url__regex=r".*type=AgriParcelZone.*").respond(json=[twi])
         _mock_orion(
             mock,
-            [twi],
+            [],
             [_zone_assessment("twi-1", 0.9, 90)],
             [_parcel_assessment()],
         )
@@ -151,23 +144,23 @@ async def test_parcel_with_only_twi_classes_is_whole_parcel():
 @pytest.mark.anyio
 async def test_no_parcel_assessment_gives_empty_parcel_values():
     with respx.mock as mock:
-        _mock_orion(mock, [_zone("z-a")], [_zone_assessment("z-a", 0.5, 60)], [])
+        _mock_orion(mock, [_zone("high")], [_zone_assessment("high", 0.5, 60)], [])
         data = (await _get()).json()
     assert data["parcelValues"] == {}
-    assert [z["zoneId"] for z in data["zones"]] == ["z-a"]
+    assert [z["zoneId"] for z in data["zones"]] == ["high"]
     assert data["zones"][0]["differsFromParcel"] is False
 
 
 @pytest.mark.anyio
 async def test_all_endpoint_hides_deleted_zones_and_flags_per_parcel():
     """Two parcels: p-1 has a deleted zone; p-2 has no parcel assessment."""
-    p1_zones = [_zone("z-a"), _zone("z-b")]
-    p2_zones = [_zone("z-c", parcel="p-2")]
+    p1_zones = [_zone("high"), _zone("medium")]
+    p2_zones = [_zone("low", parcel="p-2")]
     zone_assessments = [
-        _zone_assessment("z-a", 0.5, 61),
-        _zone_assessment("z-b", 0.8, 60),
-        _zone_assessment("z-old", 0.9, 90),
-        _zone_assessment("z-c", 0.3, 20, parcel="p-2"),
+        _zone_assessment("high", 0.5, 61),
+        _zone_assessment("medium", 0.8, 60),
+        _zone_assessment("critical", 0.9, 90),
+        _zone_assessment("low", 0.3, 20, parcel="p-2"),
     ]
 
     def zone_rows(request):
@@ -179,7 +172,7 @@ async def test_all_endpoint_hides_deleted_zones_and_flags_per_parcel():
         return httpx.Response(200, json=[_parcel_assessment()] if "p-2" not in str(request.url) else [])
 
     with respx.mock as mock:
-        mock.get(url__regex=r".*type=AgriParcelZone.*").mock(side_effect=zone_rows)
+        mock.get(url__regex=r".*type=AgriManagementZone.*").mock(side_effect=zone_rows)
         mock.get(url__regex=r".*type=CropHealthZoneAssessment.*").respond(json=zone_assessments)
         mock.get(url__regex=r".*type=CropHealthAssessment(&|$).*").mock(side_effect=parcel_rows)
         transport = ASGITransport(app=app)
@@ -188,10 +181,10 @@ async def test_all_endpoint_hides_deleted_zones_and_flags_per_parcel():
     assert resp.status_code == 200
     data = resp.json()
     assert [(z["parcelId"], z["zoneId"]) for z in data["zones"]] == [
-        ("p-1", "z-a"), ("p-1", "z-b"), ("p-2", "z-c"),
+        ("p-1", "high"), ("p-1", "medium"), ("p-2", "low"),
     ]
     flags = {z["zoneId"]: z["differsFromParcel"] for z in data["zones"]}
-    assert flags == {"z-a": False, "z-b": True, "z-c": False}
+    assert flags == {"high": False, "medium": True, "low": False}
     assert data["parcelValues"]["p-1"]["cwsiValue"] == 0.5
     assert data["parcelValues"]["p-2"] == {}
 
@@ -200,8 +193,9 @@ async def test_all_endpoint_hides_deleted_zones_and_flags_per_parcel():
 async def test_all_endpoint_pages_zone_assessments_beyond_two_hundred():
     import httpx
     n = 250
-    zones = [_zone(f"z-{i}") for i in range(n)]
-    rows = [_zone_assessment(f"z-{i}", 0.5, 61) for i in range(n)]
+    zones = [_zone("high")]
+    rows = [_zone_assessment("high", 0.5, 61, at=f"2026-10-25T{i // 60:02d}:{i % 60:02d}:00Z") for i in range(n)]
+    rows[-1]["cwsiValue"] = 0.77  # latest, beyond the first 200 rows
 
     def paged(request):
         off = int(request.url.params["offset"])
@@ -209,14 +203,15 @@ async def test_all_endpoint_pages_zone_assessments_beyond_two_hundred():
         return httpx.Response(200, json=rows[off:off + lim])
 
     with respx.mock as mock, patch("app.api.assessments.ORION_PAGE_SIZE", 100):
-        mock.get(url__regex=r".*type=AgriParcelZone.*").respond(json=zones)
+        mock.get(url__regex=r".*type=AgriManagementZone.*").respond(json=zones)
         mock.get(url__regex=r".*type=CropHealthZoneAssessment.*").mock(side_effect=paged)
         mock.get(url__regex=r".*type=CropHealthAssessment(&|$).*").respond(json=[_parcel_assessment()])
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test", headers=GATEWAY_HEADERS) as client:
             resp = await client.get("/api/crop-health/assessments/zones/all")
     assert resp.status_code == 200
-    assert len(resp.json()["zones"]) == n
+    out = resp.json()["zones"]
+    assert len(out) == 1 and out[0]["cwsiValue"] == 0.77
 
 
 P = {"cwsiValue": 0.5, "compositeStressIndex": 60, "vigorIndex": 0.6, "overallSeverity": "LOW"}

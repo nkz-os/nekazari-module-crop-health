@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from app.services import zonation
-from app.services.zonation import Zone, resolve_zones, zone_weights
+from app.services.zonation import Zone, fetch_terrain_units, zone_weights
 
 POLY = {"type": "Polygon", "coordinates": [[[-2, 42], [-2, 42.1], [-1.9, 42.1], [-2, 42]]]}
 NS = "https://nkz-os.org/ns/"
@@ -28,7 +28,7 @@ async def _resolve(rows):
     client = AsyncMock()
     client.query_entities.return_value = rows
     with patch.object(zonation, "_orion", return_value=client):
-        return await resolve_zones("p1", "acme", PARCEL_GEOM)
+        return await fetch_terrain_units("p1", "acme")
 
 
 @pytest.mark.asyncio
@@ -62,8 +62,7 @@ async def test_legacy_row_still_passes_heuristic():
 
 @pytest.mark.asyncio
 async def test_hydrology_simple_polygon_excluded():
-    (z,) = await _resolve([_row("nkz:", zoneType=None, **{"nkz:zoneType": "hydrology"})])
-    assert z.zone_id == "parcel"
+    assert await _resolve([_row("nkz:", zoneType=None, **{"nkz:zoneType": "hydrology"})]) == []
 
 
 def test_weights_by_area():

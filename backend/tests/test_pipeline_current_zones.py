@@ -1,5 +1,4 @@
 """Pipeline over the levels of the current zoning: crossed terrain weather, zone products, balance seed."""
-import time
 from datetime import date, datetime, timedelta, timezone
 from unittest.mock import patch
 
@@ -183,18 +182,6 @@ async def test_zone_version_change_seeds_from_parcel(caplog):
         )
     assert res.sw_mm > 50.0
     assert "reason=zone_version_changed" in caplog.text
-
-
-def test_overlap_cost_on_small_zones_is_bounded():
-    """A level with ~1,600 samples against several units: one crossing stays well under a second."""
-    from app.services.terrain_meteo import apply_terrain_meteo, overlap_fractions
-    zone = _poly(_rect(0, 0, 1, 1))
-    units = [_unit(f"u{i}", _poly(_rect(i / 6, 0, (i + 1) / 6, 1)), t_min=float(i)) for i in range(6)]
-    t0 = time.perf_counter()
-    fr, covered, ha = overlap_fractions(zone, units)
-    apply_terrain_meteo(_level("high", 1, zone), units, fr, covered, ha)
-    elapsed = time.perf_counter() - t0
-    assert elapsed < 2.0
 
 
 @pytest.mark.asyncio

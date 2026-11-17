@@ -6,7 +6,10 @@ that cover too little of the zone give no zone weather (the parcel's is used).
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import math
+from collections import OrderedDict
 from datetime import datetime
 
 from nkz_platform_sdk.gis.zones import point_in_polygon
@@ -14,7 +17,15 @@ from nkz_platform_sdk.gis.zones import point_in_polygon
 from app.services.zonation import Zone
 
 _M_PER_DEG_LAT = 111320.0
-_MAX_SAMPLES = 400_000
+# Weather weighting needs nothing finer than ~2,500 samples per zone; the cap keeps
+# the pure-Python point-in-polygon cost bounded whatever the zone size or vertex count.
+_MAX_SAMPLES = 2_500
+_CACHE_SIZE = 256
+_CACHE: "OrderedDict[tuple, tuple]" = OrderedDict()
+
+
+def _digest(geometry: dict) -> str:
+    return hashlib.sha1(json.dumps(geometry, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
 def _bbox(geometry: dict) -> tuple[float, float, float, float] | None:
@@ -32,7 +43,34 @@ def _bbox(geometry: dict) -> tuple[float, float, float, float] | None:
 def overlap_fractions(
     zone_geometry: dict, units: list[Zone], step_m: float = 10.0
 ) -> tuple[dict[str, float], float, dict[str, float]]:
-    """(share per unit normalised over the covered part, covered fraction, overlap ha per unit)."""
+    """(share per unit normalised over the covered part, covered fraction, overlap ha per unit).
+
+    Results are memoised (LRU) on the zone and unit geometries: fractions only change
+    when the zoning run or a unit changes, so repeated notifications cost nothing.
+    """
+    if not units or _bbox(zone_geometry) is None:
+        return {}, 0.0, {}
+    key = (
+        _digest(zone_geometry),
+        round(float(step_m), 6),
+        tuple(sorted((u.zone_id, _digest(u.geometry)) for u in units)),
+    )
+    hit = _CACHE.get(key)
+    if hit is not None:
+        _CACHE.move_to_end(key)
+        fr, covered, ha = hit
+        return dict(fr), covered, dict(ha)
+    result = _compute_overlap(zone_geometry, units, step_m)
+    _CACHE[key] = result
+    while len(_CACHE) > _CACHE_SIZE:
+        _CACHE.popitem(last=False)
+    fr, covered, ha = result
+    return dict(fr), covered, dict(ha)
+
+
+def _compute_overlap(
+    zone_geometry: dict, units: list[Zone], step_m: float
+) -> tuple[dict[str, float], float, dict[str, float]]:
     box = _bbox(zone_geometry)
     if box is None or not units:
         return {}, 0.0, {}
@@ -52,7 +90,7 @@ def overlap_fractions(
         nx = max(1, round((x1 - x0) / dx))
         ny = max(1, round((y1 - y0) / dy))
     dx, dy = (x1 - x0) / nx, (y1 - y0) / ny  # grid spans the bbox exactly
-    ordered = sorted(units, key=lambda u: u.zone_id)
+    ordered = [(u, _bbox(u.geometry)) for u in sorted(units, key=lambda u: u.zone_id)]
     counts: dict[str, int] = {}
     inside = 0
     for i in range(nx):
@@ -62,7 +100,9 @@ def overlap_fractions(
             if not point_in_polygon(lon, lat, zone_geometry):
                 continue
             inside += 1
-            for u in ordered:
+            for u, ub in ordered:
+                if ub is None or not (ub[0] <= lon <= ub[2] and ub[1] <= lat <= ub[3]):
+                    continue
                 if point_in_polygon(lon, lat, u.geometry):
                     counts[u.zone_id] = counts.get(u.zone_id, 0) + 1
                     break

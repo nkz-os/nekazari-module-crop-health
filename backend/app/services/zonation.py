@@ -285,7 +285,11 @@ async def resolve_zones(parcel_id: str, tenant_id: str, parcel_geometry: dict) -
         await client.close()
 
     current = default_zoning(group_zonings(rows))
-    if current is None or current.method != _CURRENT_METHOD:
+    if current is None:
+        logger.info("resolve_zones: whole parcel for %s (reason=no_zoning)", urn)
+        return _whole_parcel(parcel_geometry)
+    if current.method != _CURRENT_METHOD:
+        logger.info("resolve_zones: whole parcel for %s (reason=method=%s)", urn, current.method)
         return _whole_parcel(parcel_geometry)
 
     by_id = {r.get("id"): r for r in rows}
@@ -309,6 +313,7 @@ async def resolve_zones(parcel_id: str, tenant_id: str, parcel_geometry: dict) -
             zone_level=level,
         ))
     if not zones:
+        logger.info("resolve_zones: whole parcel for %s (reason=no_zones)", urn)
         return _whole_parcel(parcel_geometry)
     return sorted(zones, key=lambda z: (z.zone_rank is None, z.zone_rank or 0, z.zone_id))
 

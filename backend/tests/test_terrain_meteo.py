@@ -153,3 +153,93 @@ def test_cross_daily_ignores_non_numeric_values():
             "b": [{"date": "2026-05-01", "tMin": 4.0, "tMax": 22.0, "eto": 2.0}]}
     out = cross_daily(rows, {"a": 0.5, "b": 0.5})
     assert out == [{"date": "2026-05-01", "tMin": 4.0, "tMax": 21.0, "eto": 2.0}]
+
+
+# --- F1: bounded cost, cache, bounding-box prefilter -------------------------------------
+
+def _blob(n, r=0.5):
+    import math
+    ring = [[LON0 + (0.5 + r * (1 + 0.1 * math.sin(7 * 2 * math.pi * k / n)) * math.cos(2 * math.pi * k / n)) * DLON,
+             LAT0 + (0.5 + r * (1 + 0.1 * math.sin(7 * 2 * math.pi * k / n)) * math.sin(2 * math.pi * k / n)) * DLAT]
+            for k in range(n)]
+    return _poly(ring + [ring[0]])
+
+
+@pytest.fixture
+def pip_counter(monkeypatch):
+    from app.services import terrain_meteo as tm
+    tm._CACHE.clear()
+    calls = {"n": 0}
+    real = tm.point_in_polygon
+
+    def counting(lon, lat, geom):
+        calls["n"] += 1
+        return real(lon, lat, geom)
+
+    monkeypatch.setattr(tm, "point_in_polygon", counting)
+    yield calls
+    tm._CACHE.clear()
+
+
+def test_large_zone_pip_calls_are_capped(pip_counter):
+    from app.services.terrain_meteo import _MAX_SAMPLES
+    zone = _poly(_rect(0, 0, 1, 1))
+    units = [_unit(f"u{i}", _poly(_rect(i / 12, 0, (i + 1) / 12, 1))) for i in range(12)]
+    big = _poly(_rect(0, 0, 100, 100))  # ~1 km x ... bbox far larger than any parcel: still capped
+    overlap_fractions(big, units, step_m=1.0)
+    # zone test per sample + at most one hit per sample among the units
+    assert pip_counter["n"] <= _MAX_SAMPLES * (1 + len(units))
+    assert _MAX_SAMPLES <= 2_500
+
+
+def test_bbox_prefilter_skips_disjoint_units(pip_counter):
+    zone = _poly(_rect(0, 0, 1, 1))
+    far = [_unit(f"far{i}", _poly(_rect(5 + i, 5, 6 + i, 6))) for i in range(10)]
+    near = _unit("near", _poly(_rect(0, 0, 1, 1)))
+    fr, covered, _ = overlap_fractions(zone, far + [near], step_m=2.0)
+    assert fr == {"near": pytest.approx(1.0)} and covered == pytest.approx(1.0)
+    # far units never reach point_in_polygon: calls = zone + near per inside sample only
+    assert pip_counter["n"] <= 2 * 2_500
+
+
+def test_second_identical_call_hits_cache(pip_counter):
+    zone = _blob(300)
+    units = [_unit("A", _blob(120, 0.3)), _unit("B", _blob(120, 0.45))]
+    first = overlap_fractions(zone, units)
+    n = pip_counter["n"]
+    assert n > 0
+    second = overlap_fractions(zone, list(reversed(units)))  # order-insensitive
+    assert pip_counter["n"] == n
+    assert second == first
+    second[0]["A"] = 99.0  # callers cannot corrupt the cache
+    assert overlap_fractions(zone, units)[0]["A"] != 99.0
+
+
+def test_cache_invalidated_when_unit_geometry_changes(pip_counter):
+    zone = _poly(_rect(0, 0, 1, 1))
+    overlap_fractions(zone, [_unit("A", _poly(_rect(0, 0, 0.5, 1)))], step_m=2.0)
+    n = pip_counter["n"]
+    fr, _, _ = overlap_fractions(zone, [_unit("A", _poly(_rect(0, 0, 0.25, 1)))], step_m=2.0)
+    assert pip_counter["n"] > n
+
+
+def test_large_vertex_zone_completes_with_correct_split(pip_counter):
+    zone = _blob(1000)
+    units = [_unit("W", _poly(_rect(-1, -1, 0.5, 2))), _unit("E", _poly(_rect(0.5, -1, 2, 2)))]
+    fr, covered, _ = overlap_fractions(zone, units)
+    assert covered == pytest.approx(1.0)
+    assert fr["W"] == pytest.approx(0.5, abs=0.06)
+
+
+def test_multipolygon_zone_counts_both_parts():
+    """Production 'high' zones are MultiPolygons."""
+    from app.services import terrain_meteo as tm
+    tm._CACHE.clear()
+    zone = {"type": "MultiPolygon",
+            "coordinates": [[_rect(0, 0, 0.3, 1)], [_rect(0.7, 0, 1, 1)]]}
+    west = _unit("W", _poly(_rect(0, 0, 0.5, 1)))
+    east = _unit("E", _poly(_rect(0.5, 0, 1, 1)))
+    fr, covered, ha = overlap_fractions(zone, [west, east], step_m=2.0)
+    assert covered == pytest.approx(1.0)
+    assert fr["W"] == pytest.approx(0.5, abs=0.03) and fr["E"] == pytest.approx(0.5, abs=0.03)
+    assert ha["W"] + ha["E"] == pytest.approx(0.6 * 1.0 * 100 * 100 / 10_000, rel=0.08)  # 0.6 of 1 ha

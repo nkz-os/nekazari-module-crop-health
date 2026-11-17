@@ -1,7 +1,7 @@
 """resolve_zones: one Zone per level of the current multidate zoning."""
 import pytest
 
-from app.services.zonation import fetch_terrain_units, is_whole_parcel, resolve_zones
+from app.services.zonation import _parcel_urn, fetch_terrain_units, is_whole_parcel, resolve_zones
 
 PARCEL = "urn:ngsi-ld:AgriParcel:p1"
 GEOM = {"type": "Polygon", "coordinates": [[[0, 0], [0, 1], [1, 1], [1, 0], [0, 0]]]}
@@ -23,7 +23,7 @@ def _amz(level, rank, area, run=RUN, method="vegetationIndexMultiDate", geom=GEO
         "dateZoned": {"@type": "DateTime", "@value": date},
         "zoningRunId": run,
         "zoningMethod": method,
-        "refAgriParcel": PARCEL,
+        "hasAgriParcel": PARCEL,
         "location": geom,
     }
     if level is not None:
@@ -60,6 +60,7 @@ async def test_resolve_zones_current_multidate(monkeypatch):
     assert zones[0].zone_level == "high" and zones[0].zone_type == "management"
     assert zones[0].area_ha == 0.95
     assert fake.calls[0]["type"] == "AgriManagementZone"
+    assert fake.calls[0]["q"] == f'hasAgriParcel=="{_parcel_urn(PARCEL)}"'
 
 
 @pytest.mark.asyncio
@@ -153,3 +154,19 @@ async def test_fetch_terrain_units_accepts_management_and_terrain_excludes_hydro
 async def test_fetch_terrain_units_empty_no_whole_parcel_fallback(monkeypatch):
     _patch(monkeypatch, {})
     assert await fetch_terrain_units(PARCEL, "acme") == []
+
+
+@pytest.mark.asyncio
+async def test_whole_parcel_fallback_logs_reason_no_zoning(monkeypatch, caplog):
+    _patch(monkeypatch, {"AgriManagementZone": []})
+    with caplog.at_level("INFO", logger="app.services.zonation"):
+        assert is_whole_parcel(await resolve_zones(PARCEL, "acme", GEOM))
+    assert "reason=no_zoning" in caplog.text and PARCEL in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_whole_parcel_fallback_logs_method(monkeypatch, caplog):
+    _patch(monkeypatch, {"AgriManagementZone": [_amz("high", 1, 5.0, method="vegetationIndex")]})
+    with caplog.at_level("INFO", logger="app.services.zonation"):
+        assert is_whole_parcel(await resolve_zones(PARCEL, "acme", GEOM))
+    assert "reason=method=vegetationIndex" in caplog.text

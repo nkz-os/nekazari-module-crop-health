@@ -320,6 +320,17 @@ def _live_zone_assessments(entities: list[dict], live: list, parcel_values: dict
     return zones
 
 
+def _sort_by_rank(zones: list[dict], live: list) -> list[dict]:
+    """Order by the live zone rank (None last), then zoneId."""
+    rank = {z.zone_id: z.zone_rank for z in live}
+
+    def _key(z: dict):
+        r = rank.get(z.get("zoneId"))
+        return (r is None, r if r is not None else 0, z.get("zoneId", ""))
+
+    return sorted(zones, key=_key)
+
+
 @router.get("/assessments/zones/all")
 async def all_zone_assessments(request: Request):
     """Latest assessment per live zone of every parcel — map-layer compat."""
@@ -354,8 +365,8 @@ async def all_zone_assessments(request: Request):
         parcel_values[pid] = values
         if is_whole_parcel(live):
             continue
-        zones.extend(_live_zone_assessments(by_parcel[pid], live, values))
-    zones.sort(key=lambda z: (z.get("parcelId", ""), z.get("zoneId", "")))
+        zones.extend(_sort_by_rank(_live_zone_assessments(by_parcel[pid], live, values), live))
+    zones.sort(key=lambda z: z.get("parcelId", ""))  # stable: rank order kept within a parcel
     return {"zones": zones, "parcelValues": parcel_values}
 
 
@@ -384,7 +395,7 @@ async def zone_assessments(
     _flag_sensor_nearby(live, parcelId, await _list_devices(tenant_id))
     entities = await _fetch_zone_assessment_entities(tenant_id, parcel_id=parcelId)
     zones = _live_zone_assessments(entities, live, parcel_values)
-    zones.sort(key=lambda z: z.get("zoneId", ""))
+    zones = _sort_by_rank(zones, live)
     return {"zones": zones, "isWholeParcel": not zones, "parcelValues": parcel_values}
 
 

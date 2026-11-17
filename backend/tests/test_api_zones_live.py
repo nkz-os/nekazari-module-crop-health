@@ -2,6 +2,7 @@ from unittest.mock import patch
 """GET /assessments/zones: only live zones, differsFromParcel, parcelValues."""
 import httpx
 import pytest
+from urllib.parse import unquote
 import respx
 from httpx import ASGITransport, AsyncClient
 
@@ -26,7 +27,7 @@ def _zone(level, parcel="p-1"):
     return {
         "id": f"urn:ngsi-ld:AgriManagementZone:{parcel}:abcdef12:L{_RANK[level]}",
         "type": "AgriManagementZone",
-        "refAgriParcel": f"urn:ngsi-ld:AgriParcel:{parcel}",
+        "hasAgriParcel": f"urn:ngsi-ld:AgriParcel:{parcel}",
         "zoneLevel": level,
         "zoneRank": _RANK[level],
         "areaHa": 1.0,
@@ -120,6 +121,21 @@ async def test_stale_assessment_of_deleted_zone_does_not_shadow_live_zone():
         data = (await _get()).json()
     assert [z["zoneId"] for z in data["zones"]] == ["high"]
     assert data["zones"][0]["cwsiValue"] == 0.52
+
+
+@pytest.mark.anyio
+async def test_zones_are_ordered_by_rank_and_query_uses_has_agri_parcel():
+    with respx.mock as mock:
+        _mock_orion(
+            mock,
+            [_zone("critical"), _zone("low"), _zone("high"), _zone("medium")],
+            [_zone_assessment(z, 0.5, 60) for z in ("critical", "low", "high", "medium")],
+            [_parcel_assessment()],
+        )
+        data = (await _get()).json()
+        zone_calls = [c for c in mock.calls if "type=AgriManagementZone" in str(c.request.url)]
+    assert [z["zoneId"] for z in data["zones"]] == ["high", "medium", "low", "critical"]
+    assert zone_calls and "hasAgriParcel" in unquote(str(zone_calls[0].request.url))
 
 
 @pytest.mark.anyio
@@ -303,7 +319,7 @@ async def test_all_zones_flags_sensor_with_one_device_listing(monkeypatch):
         )
 
         def _by_parcel(request):  # the broker filters zones by the queried parcel
-            return httpx.Response(200, json=[z for z in zones if z["refAgriParcel"].split(":")[-1] in str(request.url)])
+            return httpx.Response(200, json=[z for z in zones if z["hasAgriParcel"].split(":")[-1] in str(request.url)])
 
         mock.get(url__regex=r".*type=AgriManagementZone.*").mock(side_effect=_by_parcel)
         transport = ASGITransport(app=app)

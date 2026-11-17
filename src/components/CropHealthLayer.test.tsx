@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 vi.mock('@nekazari/sdk', () => ({ useViewer: () => ({ cesiumViewer: null }), useTranslation: () => ({ t: (k: string) => k }) }));
 vi.mock('@nekazari/viewer-kit', () => ({ DAY_MS: 86400000, latestAtOrBefore: () => null, snapToUtcDay: (d: number) => d }));
 
-import { historicalAssessment, layerColor } from './CropHealthLayer';
+import { historicalAssessment, layerColor, zoneSecondaryLabel } from './CropHealthLayer';
 
 const RED = '#dc2626';
 const GREEN = '#16a34a';
@@ -43,6 +43,21 @@ describe('historicalAssessment', () => {
   it('is grey only when the history point has no level (never the latest level)', () => {
     for (const p of [pt({ cwsi: 0.9 }), pt({ waterStressLevel: null }), null]) {
       expect(layerColor(historicalAssessment(latest, p), 'cwsi').fill).toBe('#9ca3af');
+    }
+  });
+});
+
+describe('zoneSecondaryLabel', () => {
+  const t = (k: string) => k;
+  const zone = assessment({ overallSeverity: 'HIGH', cwsiValue: 0.52, compositeStressIndex: 31, vigorIndex: 0.64 });
+  it('keeps the health word in severity mode', () => {
+    expect(zoneSecondaryLabel(zone, 'severity', t)).toBe('severity.HIGH');
+  });
+  it('shows the value that colours the fill in the other modes, never the severity word', () => {
+    expect(zoneSecondaryLabel(zone, 'composite', t)).toBe('31.00');
+    expect(zoneSecondaryLabel(zone, 'vigor', t)).toBe('64');
+    for (const m of ['cwsi', 'composite', 'vigor'] as const) {
+      expect(zoneSecondaryLabel(zone, m, t)).not.toContain('severity.');
     }
   });
 });

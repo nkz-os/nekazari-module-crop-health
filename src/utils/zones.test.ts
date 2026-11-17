@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { fidelityLine, zoneNumberList, parcelOnlyLabel, readZoneFromLocation, zoneEmphasis, zoneFillAlpha, zoneKey, zoneLabelStyle, zoneLabelText, zoneMapLabel, zoneNumbers, zoneOutlineStyle, zoneSelection, pinnedZoneExists, zoneViewerPath } from './zones';
+import { fidelityLine, zoneNumberList, parcelOnlyLabel, readZoneFromLocation, zoneEmphasis, zoneFillAlpha, zoneKey, zoneLabelPoint, zoneLabelStyle, zoneLabelText, zoneLevelLabel, zoneMapLabel, zoneNumbers, zoneOutlineStyle, zoneSelection, pinnedZoneExists, zoneViewerPath } from './zones';
 
 const sq = (lon: number, lat: number) => ({ type: 'Polygon', coordinates: [[[lon, lat], [lon + 0.001, lat],
   [lon + 0.001, lat + 0.001], [lon, lat + 0.001], [lon, lat]]] });
@@ -171,5 +171,59 @@ describe('zoneNumberList with zoneRank', () => {
   it('falls back to north-to-south when a rank is missing', () => {
     const mixed = [zs[0], { ...(zs[1] as object), zoneRank: undefined }] as never[];
     expect(zoneNumbers(mixed).get(zoneKey('p1', 'a'))).toBe(1);
+  });
+});
+
+describe('level labels', () => {
+  it('labels a levelled zone with vigour and health', () => {
+    expect(zoneLabelText(undefined, 'Vigor alto', 'Sano')).toBe('Vigor alto · Sano');
+    expect(zoneMapLabel(undefined, 'S', 'Vigor alto')).toBe('Vigor alto · S');
+  });
+  it('keeps numbers for zones without level', () => {
+    expect(zoneLabelText(2, null, 'Sano')).toBe('2');
+    expect(zoneMapLabel(2, 'M', null)).toBe('2 · M');
+  });
+  it('zoneLevelLabel translates the four levels and ignores unknown ones', () => {
+    const t = (k: string) => `T:${k}`;
+    expect(zoneLevelLabel(t as never, 'high')).toBe('T:zones.level.high');
+    expect(zoneLevelLabel(t as never, 'critical')).toBe('T:zones.level.critical');
+    expect(zoneLevelLabel(t as never, 'weird')).toBeNull();
+    expect(zoneLevelLabel(t as never, null)).toBeNull();
+    expect(zoneLevelLabel(t as never, undefined)).toBeNull();
+  });
+});
+
+describe('zoneLabelPoint', () => {
+  const inRing = (p: number[], ring: number[][]) => {
+    let inside = false;
+    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+      const [xi, yi] = ring[i];
+      const [xj, yj] = ring[j];
+      if (yi > p[1] !== yj > p[1] && p[0] < ((xj - xi) * (p[1] - yi)) / (yj - yi) + xi) inside = !inside;
+    }
+    return inside;
+  };
+  const box = (x0: number, y0: number, x1: number, y1: number) => [[x0, y0], [x1, y0], [x1, y1], [x0, y1], [x0, y0]];
+  it('places the label inside its own zone for a holed level', () => {
+    const outer = box(0, 0, 10, 10);
+    const hole = box(3, 3, 7, 7);
+    const pt = zoneLabelPoint({ type: 'Polygon', coordinates: [outer, hole] })!;
+    expect(inRing(pt, outer)).toBe(true);
+    expect(inRing(pt, hole)).toBe(false);
+  });
+  it('uses the largest part of a multipart level', () => {
+    const small = box(0, 0, 1, 1);
+    const big = box(5, 5, 9, 9);
+    const pt = zoneLabelPoint({ type: 'MultiPolygon', coordinates: [[small], [big]] })!;
+    expect(inRing(pt, big)).toBe(true);
+  });
+  it('lands inside a concave (C-shaped) part', () => {
+    const c = [[0, 0], [10, 0], [10, 2], [2, 2], [2, 8], [10, 8], [10, 10], [0, 10], [0, 0]];
+    const pt = zoneLabelPoint({ type: 'Polygon', coordinates: [c] })!;
+    expect(inRing(pt, c)).toBe(true);
+  });
+  it('returns the plain centroid for a convex zone and null without geometry', () => {
+    expect(zoneLabelPoint({ type: 'Polygon', coordinates: [box(0, 0, 4, 2)] })).toEqual([2, 1]);
+    expect(zoneLabelPoint(undefined)).toBeNull();
   });
 });

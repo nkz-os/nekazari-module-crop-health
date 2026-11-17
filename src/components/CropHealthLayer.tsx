@@ -6,7 +6,7 @@ import { MAP_LAYER_MODE_KEY, readMapLayerMode, type MapLayerMode } from '../cons
 import type { AssessmentData, ZoneAssessmentData } from '../types/assessment';
 import { levelSeverity } from '../utils/waterStress';
 import {
-  SEVERITY_COLORS, emphasisStyle, parcelOnlyLabel, polygonRings, readZoneFromLocation, zoneCentroid, zoneEmphasis,
+  SEVERITY_COLORS, emphasisStyle, parcelOnlyLabel, polygonRings, readZoneFromLocation, zoneLabelPoint, zoneLevelLabel, polygonParts, zoneEmphasis,
   zoneFillAlpha, zoneKey, zoneLabelStyle, zoneLabelText, zoneMapLabel, zoneNumbers, zoneOutlineStyle, zoneSelection, pinnedZoneExists, type ZoneRef,
 } from '../utils/zones';
 import {
@@ -46,6 +46,14 @@ function layerLabel(a: AssessmentData, mode: MapLayerMode): string {
   if (mode === 'severity') return a.overallSeverity?.[0] ?? '?';
   const value = layerValue(a, mode);
   return value != null ? value.toFixed(mode === 'vigor' ? 0 : 2) : '—';
+}
+
+/** Second half of a zone's map label: the health word only in severity mode, else the value that colours the fill. */
+export function zoneSecondaryLabel(
+  a: AssessmentData, mode: MapLayerMode, t: (key: string) => string,
+): string | null {
+  if (mode === 'severity') return a.overallSeverity ? t(`severity.${a.overallSeverity}`) : null;
+  return layerLabel(a, mode);
 }
 
 export function layerColor(a: AssessmentData, mode: MapLayerMode): { fill: string; alpha: number } {
@@ -277,21 +285,26 @@ const CropHealthLayer: React.FC = () => {
         const emphasis = zoneEmphasis(selection, zone.parcelId, zone.zoneId);
         const style = emphasisStyle(emphasis, zoneFillAlpha(zone, colors.alpha));
         const number = numbers.get(zoneKey(zone.parcelId, zone.zoneId));
-        const description = zoneMapLabel(number, layerLabel(zone, currentMode));
+        const levelLabel = zoneLevelLabel(tRef.current, zone.zoneLevel);
+        const healthLabel = zoneSecondaryLabel(zone, currentMode, tRef.current);
+        const description = zoneMapLabel(number, layerLabel(zone, currentMode), levelLabel);
         const labelStyle = zoneLabelStyle(emphasis);
         const outlineStyle = zoneOutlineStyle(emphasis, colors.fill);
         const material = Cesium.Color.fromCssColorString(colors.fill)?.withAlpha(style.fillAlpha);
         const outline = (style.outlineWhite ? Cesium.Color.WHITE : Cesium.Color.fromCssColorString(colors.fill))
           ?.withAlpha(style.outlineAlpha);
-        const rings = polygonRings(zone.geometry);
+        // Every part keeps its holes: a level that surrounds another is not painted over it.
+        const parts = polygonParts(zone.geometry);
+        const toPositions = (ring: number[][]) => Cesium.Cartesian3.fromDegreesArray(ringToDegreesArray(ring));
 
-        for (let i = 0; i < rings.length; i += 1) {
-          const positions = Cesium.Cartesian3.fromDegreesArray(ringToDegreesArray(rings[i]));
+        for (let i = 0; i < parts.length; i += 1) {
+          const [outer, ...holes] = parts[i];
+          const positions = toPositions(outer);
           viewerEntities!.add({
             id: `crop-health-zone-${zone.parcelId}-${zone.zoneId}-${i}`,
             description,
             polygon: {
-              hierarchy: positions,
+              hierarchy: new Cesium.PolygonHierarchy(positions, holes.map((h) => new Cesium.PolygonHierarchy(toPositions(h)))),
               material,
               outline: true,
               outlineColor: outline,
@@ -301,25 +314,27 @@ const CropHealthLayer: React.FC = () => {
             },
           });
           // Cesium draws no polygon outline on terrain-clamped polygons: the outline is a ground polyline.
-          viewerEntities!.add({
-            id: `crop-health-zone-outline-${zone.parcelId}-${zone.zoneId}-${i}`,
-            polyline: {
-              positions: [...positions, positions[0]],
-              clampToGround: true,
-              width: outlineStyle.width,
-              material: Cesium.Color.fromCssColorString(outlineStyle.colorHex)?.withAlpha(outlineStyle.alpha),
-            },
+          [positions, ...holes.map(toPositions)].forEach((ringPositions, r) => {
+            viewerEntities!.add({
+              id: `crop-health-zone-outline-${zone.parcelId}-${zone.zoneId}-${i}-${r}`,
+              polyline: {
+                positions: [...ringPositions, ringPositions[0]],
+                clampToGround: true,
+                width: outlineStyle.width,
+                material: Cesium.Color.fromCssColorString(outlineStyle.colorHex)?.withAlpha(outlineStyle.alpha),
+              },
+            });
           });
         }
 
-        const centroid = zoneCentroid(zone.geometry);
+        const centroid = zoneLabelPoint(zone.geometry);
         if (centroid) {
           viewerEntities!.add({
             id: `crop-health-zone-label-${zone.parcelId}-${zone.zoneId}`,
             description,
             position: Cesium.Cartesian3.fromDegrees(centroid[0], centroid[1]),
             label: {
-              text: zoneLabelText(number),
+              text: zoneLabelText(number, levelLabel, healthLabel),
               font: labelStyle.font,
               scaleByDistance: new Cesium.NearFarScalar(...labelStyle.scaleByDistance),
               fillColor: Cesium.Color.WHITE.withAlpha(style.labelAlpha),

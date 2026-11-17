@@ -12,6 +12,7 @@ interface ZoneLike {
   geometry?: Geometry;
   differsFromParcel?: boolean;
   zoneRank?: number | null;
+  zoneLevel?: string | null;
 }
 
 export function polygonRings(geometry: Geometry): number[][][] {
@@ -31,6 +32,101 @@ export function zoneCentroid(geometry: Geometry): [number, number] | null {
     lat += y;
   }
   return [lon / ring.length, lat / ring.length];
+}
+
+type Ring = number[][];
+
+/** Polygon parts of a geometry, each as [outer ring, ...holes]. */
+export function polygonParts(geometry: Geometry): Ring[][] {
+  if (!geometry) return [];
+  if (geometry.type === 'Polygon') return [geometry.coordinates as Ring[]];
+  if (geometry.type === 'MultiPolygon') return geometry.coordinates as Ring[][];
+  return [];
+}
+
+function ringArea(ring: Ring): number {
+  let a = 0;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) a += ring[j][0] * ring[i][1] - ring[i][0] * ring[j][1];
+  return a / 2;
+}
+
+function ringCentroid(ring: Ring): [number, number] | null {
+  const a = ringArea(ring);
+  if (Math.abs(a) < 1e-18) return null;
+  let cx = 0;
+  let cy = 0;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const f = ring[j][0] * ring[i][1] - ring[i][0] * ring[j][1];
+    cx += (ring[j][0] + ring[i][0]) * f;
+    cy += (ring[j][1] + ring[i][1]) * f;
+  }
+  return [cx / (6 * a), cy / (6 * a)];
+}
+
+function inRing(x: number, y: number, ring: Ring): boolean {
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const [xi, yi] = ring[i];
+    const [xj, yj] = ring[j];
+    if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+}
+
+function inPart(x: number, y: number, part: Ring[]): boolean {
+  return inRing(x, y, part[0]) && !part.slice(1).some((hole) => inRing(x, y, hole));
+}
+
+// Midpoint of the widest stretch of the part along the horizontal line y (even-odd over every ring).
+function widestStretch(part: Ring[], y: number): [number, number] | null {
+  const xs: number[] = [];
+  for (const ring of part) {
+    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+      const [xi, yi] = ring[i];
+      const [xj, yj] = ring[j];
+      if (yi > y !== yj > y) xs.push(xi + ((y - yi) * (xj - xi)) / (yj - yi));
+    }
+  }
+  xs.sort((a, b) => a - b);
+  let best: [number, number] | null = null;
+  let bestWidth = 0;
+  for (let k = 0; k + 1 < xs.length; k += 2) {
+    const w = xs[k + 1] - xs[k];
+    if (w > bestWidth) {
+      bestWidth = w;
+      best = [(xs[k] + xs[k + 1]) / 2, y];
+    }
+  }
+  return best;
+}
+
+/**
+ * Where to put a zone's label: the centroid of its largest part (holes subtracted); if that falls
+ * outside the part (a hole, or a concave shape) a point inside the part instead. Nested levels
+ * (one level surrounding another) therefore never get their label in the neighbour's area.
+ */
+export function zoneLabelPoint(geometry: Geometry): [number, number] | null {
+  const parts = polygonParts(geometry).filter((p) => p[0]?.length);
+  if (parts.length === 0) return null;
+  const area = (p: Ring[]) => Math.abs(ringArea(p[0])) - p.slice(1).reduce((sum, h) => sum + Math.abs(ringArea(h)), 0);
+  const part = parts.reduce((best, p) => (area(p) > area(best) ? p : best));
+  const c = ringCentroid(part[0]);
+  if (c && inPart(c[0], c[1], part)) return c;
+  const ys = part[0].map((pt) => pt[1]);
+  const midY = (Math.min(...ys) + Math.max(...ys)) / 2;
+  for (const y of [c?.[1], midY, midY + (Math.max(...ys) - Math.min(...ys)) / 4, midY - (Math.max(...ys) - Math.min(...ys)) / 4]) {
+    if (y == null) continue;
+    const pt = widestStretch(part, y);
+    if (pt) return pt;
+  }
+  return part[0][0] as [number, number];
+}
+
+const LEVEL_CODES = ['high', 'medium', 'low', 'critical'];
+
+/** Translated vigour name of a zone level ("Vigor alto"), or null when the zone has no known level. */
+export function zoneLevelLabel(t: (key: string) => string, level: string | null | undefined): string | null {
+  return level && LEVEL_CODES.includes(level) ? t(`zones.level.${level}`) : null;
 }
 
 export function zoneKey(parcelId: string | null | undefined, zoneId: string): string {
@@ -116,8 +212,9 @@ export function fidelityLine(
   return { own, inherited };
 }
 
-/** The map label: zone number and the value of the active layer. */
-export function zoneMapLabel(n: number | undefined, value: string): string {
+/** The map description: the vigour level (or the zone number) and the value of the active layer. */
+export function zoneMapLabel(n: number | undefined, value: string, levelLabel?: string | null): string {
+  if (levelLabel) return `${levelLabel} · ${value}`;
   return n != null ? `${n} · ${value}` : value;
 }
 
@@ -217,8 +314,9 @@ export function zoneFillAlpha(zone: { differsFromParcel?: boolean }, base: numbe
   return zone.differsFromParcel ? base : 0.1;
 }
 
-/** The map label of a zone: just its number (the value goes to the infobox). */
-export function zoneLabelText(n: number | undefined): string {
+/** The map label of a zone: "Vigor alto · Sano" when it has a level, else just its number (the value goes to the infobox). */
+export function zoneLabelText(n: number | undefined, levelLabel?: string | null, healthLabel?: string | null): string {
+  if (levelLabel) return healthLabel ? `${levelLabel} · ${healthLabel}` : levelLabel;
   return String(n ?? '');
 }
 

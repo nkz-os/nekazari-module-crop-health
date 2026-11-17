@@ -232,6 +232,7 @@ export interface ZoneAssessmentData extends AssessmentData {
   differsFromParcel?: boolean;
   inputFidelity?: Record<string, string>;
   zoneRank?: number | null;
+  zoneLevel?: string | null;
   zoneVersion?: string | number | null;
   wetnessClass?: 'drained' | 'balanced' | 'wet' | null;
 }

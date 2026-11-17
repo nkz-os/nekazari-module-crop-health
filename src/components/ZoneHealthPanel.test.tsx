@@ -64,4 +64,11 @@ describe('ZoneHealthPanel', () => {
   it('omits the provenance line when nothing is own or inherited', () => {
     expect(render([zone('a', 42)])).not.toContain('zones.fidelity.own');
   });
+  it('lists levelled zones by level name instead of number', () => {
+    const lv = (zoneLevel: string, lat: number) => ({ ...(zone(zoneLevel, lat) as object), zoneLevel, zoneRank: zoneLevel === 'high' ? 1 : 2 }) as never;
+    const out = render([lv('high', 42.0), lv('medium', 42.01)]);
+    expect(out).toContain('zones.level.high');
+    expect(out).toContain('zones.level.medium');
+    expect(out).not.toContain('zones.zoneLabel');
+  });
 });

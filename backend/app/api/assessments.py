@@ -23,7 +23,7 @@ from app.api.assessment_mapper import (
 )
 from app.config import get_settings
 from app.services import worklist
-from app.services.zonation import is_whole_parcel, resolve_zones
+from app.services.zonation import is_whole_parcel, mark_sensor_nearby, resolve_zones
 from nkz_platform_sdk.orion import OrionClient
 
 router = APIRouter()
@@ -263,6 +263,18 @@ def _zone_geometry_lookup(zones: list) -> dict[str, dict]:
     return by_id
 
 
+async def _flag_sensor_nearby(live: list, parcel_id: str, tenant_id: str) -> None:
+    """Mark the zones that contain a located sensor of the parcel; best-effort."""
+    if is_whole_parcel(live):
+        return
+    from app.services.pipeline import _gather_parcel_sensors
+
+    try:
+        mark_sensor_nearby(live, await _gather_parcel_sensors(f"urn:ngsi-ld:AgriParcel:{parcel_id}", tenant_id))
+    except Exception as exc:  # noqa: BLE001 -- the flag is optional
+        logger.warning("sensorNearby: lookup failed for %s: %s", parcel_id, exc)
+
+
 async def _parcel_values(tenant_id: str, parcel_id: str) -> dict:
     """Four headline values of the parcel's latest assessment ({} if none)."""
     entities = await _fetch_assessment_entities(tenant_id, parcel_id=parcel_id)
@@ -311,10 +323,12 @@ async def all_zone_assessments(request: Request):
 
     async def _resolve(pid: str):
         async with semaphore:
-            return await asyncio.gather(
+            live, values = await asyncio.gather(
                 resolve_zones(f"urn:ngsi-ld:AgriParcel:{pid}", tenant_id, {}),
                 _parcel_values(tenant_id, pid),
             )
+            await _flag_sensor_nearby(live, pid, tenant_id)
+            return live, values
 
     pids = sorted(by_parcel)
     resolved = await asyncio.gather(*(_resolve(pid) for pid in pids))
@@ -349,6 +363,7 @@ async def zone_assessments(
     if is_whole_parcel(live):
         return {"zones": [], "isWholeParcel": True, "parcelValues": parcel_values}
 
+    await _flag_sensor_nearby(live, parcelId, tenant_id)
     entities = await _fetch_zone_assessment_entities(tenant_id, parcel_id=parcelId)
     zones = _live_zone_assessments(entities, live, parcel_values)
     zones.sort(key=lambda z: z.get("zoneId", ""))

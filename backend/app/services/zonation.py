@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from app.config import get_settings
-from nkz_platform_sdk.gis.zones import default_zoning, group_zonings
+from nkz_platform_sdk.gis.zones import default_zoning, group_zonings, point_in_polygon  # noqa: F401 (hole-aware; re-exported)
 from nkz_platform_sdk.orion import OrionClient
 
 logger = logging.getLogger(__name__)
@@ -313,31 +313,6 @@ async def resolve_zones(parcel_id: str, tenant_id: str, parcel_geometry: dict) -
     return sorted(zones, key=lambda z: (z.zone_rank is None, z.zone_rank or 0, z.zone_id))
 
 
-def point_in_polygon(lon: float, lat: float, geometry: dict) -> bool:
-    """Ray-casting point-in-polygon for a GeoJSON Polygon/MultiPolygon (outer ring)."""
-    def _ring(ring) -> bool:
-        inside = False
-        n = len(ring)
-        j = n - 1
-        for i in range(n):
-            xi, yi = ring[i][0], ring[i][1]
-            xj, yj = ring[j][0], ring[j][1]
-            if ((yi > lat) != (yj > lat)) and (
-                lon < (xj - xi) * (lat - yi) / (yj - yi) + xi
-            ):
-                inside = not inside
-            j = i
-        return inside
-
-    gtype = geometry.get("type")
-    coords = geometry.get("coordinates", [])
-    if gtype == "Polygon":
-        return _ring(coords[0]) if coords else False
-    if gtype == "MultiPolygon":
-        return any(poly and _ring(poly[0]) for poly in coords)
-    return False
-
-
 def sensors_in_zone(zone: Zone, sensors: list[dict]) -> list[dict]:
     """Sensors whose (lon, lat) fall inside the zone polygon.
 
@@ -376,3 +351,10 @@ def consolidate_sensor_readings(sensors: list[dict]) -> dict:
             if isinstance(v, (int, float)):
                 acc.setdefault(k, []).append(float(v))
     return {k: sum(vs) / len(vs) for k, vs in acc.items() if vs}
+
+
+def mark_sensor_nearby(zones: list[Zone], sensors: list[dict]) -> None:
+    """Flag every zone that contains at least one located sensor."""
+    for z in zones:
+        if sensors_in_zone(z, sensors):
+            z.sensor_nearby = True

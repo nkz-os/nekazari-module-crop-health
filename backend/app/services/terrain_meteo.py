@@ -74,6 +74,10 @@ def overlap_fractions(
     return fractions, hit / inside, {k: v * cell_ha for k, v in counts.items()}
 
 
+def _is_number(value) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+
+
 def _wmean(pairs: list[tuple[float, float]]) -> float | None:
     total = sum(w for _, w in pairs)
     if not pairs or total <= 0:
@@ -127,6 +131,6 @@ def cross_daily(daily_by_unit: dict[str, list[dict]], fractions: dict[str, float
     for date in sorted(by_date):
         row = {"date": date}
         for key in ("tMin", "tMax", "eto"):
-            row[key] = _wmean([(r[key], w) for r, w in by_date[date] if r.get(key) is not None])
+            row[key] = _wmean([(r[key], w) for r, w in by_date[date] if _is_number(r.get(key))])
         out.append(row)
     return out

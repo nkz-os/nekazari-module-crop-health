@@ -11,6 +11,7 @@ import logging
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 
+from app.services.terrain_meteo import cross_daily
 from app.services.zonation import (
     Zone,
     consolidate_sensor_readings,
@@ -124,8 +125,10 @@ def zone_meteo_ctx(zone: Zone, now: datetime) -> dict:
     out: dict = {}
     if zone.t_min is not None and zone.t_max is not None:
         out["air_temp_c"] = (zone.t_min + zone.t_max) / 2
-    if zone.t_min is not None:
-        out["air_temp_min_24h"] = zone.t_min
+    # Frost looks at the coldest terrain unit that matters for the zone, not the mean.
+    coldest = zone.t_min_coldest if zone.t_min_coldest is not None else zone.t_min
+    if coldest is not None:
+        out["air_temp_min_24h"] = coldest
     if zone.eto is not None:
         out["et0_mm"] = zone.eto
     if zone.solar_radiation_wm2 is not None:
@@ -145,8 +148,14 @@ async def gather_zone_inputs(
     gather_sensors=None,
     fetch_soil=None,
     fetch_twi=None,
+    fractions_by_zone: dict[str, dict[str, float]] | None = None,
 ) -> dict[str, ZoneInputs]:
-    """One daily-series request and one sensor query per parcel, split by zone."""
+    """One daily-series request and one sensor query per parcel, split by zone.
+
+    The daily series come per weather-map terrain unit. With ``fractions_by_zone``
+    (terrain-unit shares of each zone with enough coverage) each zone gets the
+    crossed series; a zone without an entry gets none.
+    """
     if fetch_daily is None or gather_sensors is None:
         from app.services import pipeline
         fetch_daily = fetch_daily or pipeline._fetch_zone_daily
@@ -188,6 +197,8 @@ async def gather_zone_inputs(
         else:
             values.append(res)
     daily = values[0] or {}
+    if fractions_by_zone is not None:
+        daily = {zid: cross_daily(daily, fr) for zid, fr in fractions_by_zone.items()}
     sensors = values[1] or []
     soil_by_zone = values[2] or {}
     twi_by_zone = values[3] or {}
@@ -196,6 +207,8 @@ async def gather_zone_inputs(
         rows = list(daily.get(z.zone_id) or [])
         weather = zone_meteo_ctx(z, now)
         in_zone = sensors_in_zone(z, sensors)
+        if in_zone:
+            z.sensor_nearby = True
         consolidated = consolidate_sensor_readings(in_zone)
         soil = _soil_from_zone(soil_by_zone.get(z.zone_id))
         twi = _twi_from_zone(twi_by_zone.get(z.zone_id))

@@ -146,3 +146,10 @@ def test_coldest_fallback_tie_broken_by_zone_id():
     z = _u("L")
     apply_terrain_meteo(z, [_u("B", t_min=1.0), _u("A", t_min=5.0)], {"A": 0.05, "B": 0.05}, 1.0, {"A": 0.0, "B": 0.0})
     assert z.t_min_coldest == 5.0  # A wins the tie
+
+
+def test_cross_daily_ignores_non_numeric_values():
+    rows = {"a": [{"date": "2026-05-01", "tMin": "n/a", "tMax": 20.0, "eto": 2.0}],
+            "b": [{"date": "2026-05-01", "tMin": 4.0, "tMax": 22.0, "eto": 2.0}]}
+    out = cross_daily(rows, {"a": 0.5, "b": 0.5})
+    assert out == [{"date": "2026-05-01", "tMin": 4.0, "tMax": 21.0, "eto": 2.0}]

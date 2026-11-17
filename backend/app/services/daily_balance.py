@@ -202,16 +202,18 @@ async def advance_daily_balance(
     try:
         try:
             state = await redis_state.get_balance_state(tenant_id, parcel_id, **zkw)
-            if zone_id and state is not None and state.get("zone_version") != zone_version:
+            if zone_id and (state is None or state.get("zone_version") != zone_version):
+                reason = "zone_state_missing" if state is None else "zone_version_changed"
                 logger.info(
-                    "daily_balance: reason=zone_version_changed tenant=%s parcel=%s zone=%s stored=%s received=%s",
-                    tenant_id, parcel_id, zone_id, state.get("zone_version"), zone_version,
+                    "daily_balance: reason=%s tenant=%s parcel=%s zone=%s stored=%s received=%s",
+                    reason, tenant_id, parcel_id, zone_id,
+                    None if state is None else state.get("zone_version"), zone_version,
                 )
                 parcel_state = await redis_state.get_balance_state(tenant_id, parcel_id)
                 if parcel_state is None:
                     logger.info(
-                        "daily_balance: reason=zone_version_changed fallback=fresh tenant=%s parcel=%s zone=%s",
-                        tenant_id, parcel_id, zone_id,
+                        "daily_balance: reason=%s fallback=fresh tenant=%s parcel=%s zone=%s",
+                        reason, tenant_id, parcel_id, zone_id,
                     )
                 # No parcel state: the old zone state is dropped too (fresh anchor).
                 state = parcel_state

@@ -15,6 +15,7 @@ water_stress_model.py. The risk-worker uses batch meteorological data
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import logging
 import math
@@ -86,6 +87,7 @@ from app.services.redis_state import MAX_FUTURE_SKEW_S, RedisState, StoreError
 from app.services.zonation import (
     zone_weights,
     resolve_zones,
+    fetch_terrain_units,
     is_whole_parcel,
     sensors_in_zone,
     consolidate_sensor_readings,
@@ -2243,6 +2245,8 @@ _SENSOR_METRICS = {
 }
 _SENSOR_MAX_AGE_H = 24
 _DEVICE_LIST_LIMIT = 1000
+# Terrain units must cover at least this share of a zone for it to get zone weather.
+_MIN_TERRAIN_COVERAGE = 0.5
 
 
 def _device_point(device: dict) -> tuple[float, float] | None:
@@ -2359,6 +2363,37 @@ async def _gather_parcel_sensors(
     except Exception as exc:  # noqa: BLE001 — fail-safe
         logger.warning("_gather_parcel_sensors: failed for %s — []: %s", parcel_id, exc)
         return []
+
+
+async def _cross_terrain_weather(
+    zones: list[Zone], parcel_id: str, tenant_id: str
+) -> dict[str, dict[str, float]]:
+    """Fill each zone's weather from the terrain units it overlaps.
+
+    Returns the terrain-unit shares of the zones with enough coverage (those get
+    crossed daily series); a zone without enough coverage keeps no zone weather.
+    Fail-safe: any error gives no zone weather.
+    """
+    from app.services.terrain_meteo import apply_terrain_meteo, overlap_fractions
+
+    try:
+        units = await fetch_terrain_units(parcel_id, tenant_id)
+        if not units:
+            return {}
+
+        def _cross() -> dict[str, dict[str, float]]:
+            out: dict[str, dict[str, float]] = {}
+            for z in zones:
+                fr, covered, ha = overlap_fractions(z.geometry, units)
+                apply_terrain_meteo(z, units, fr, covered, ha)
+                if covered >= _MIN_TERRAIN_COVERAGE and fr:
+                    out[z.zone_id] = fr
+            return out
+
+        return await asyncio.to_thread(_cross)
+    except Exception as exc:  # noqa: BLE001 -- zone weather is optional, the parcel's is used
+        logger.warning("_cross_terrain_weather: failed for %s, no zone weather: %s", parcel_id, exc)
+        return {}
 
 
 async def _assess_zone(
@@ -2633,11 +2668,15 @@ async def compute_assessment(
     zones = await resolve_zones(parcel_id, tenant_id, parcel_geom or {})
     whole = is_whole_parcel(zones)
 
+    # Zone weather is crossed from the weather-map terrain units over each zone.
+    fractions_by_zone = None if whole else await _cross_terrain_weather(zones, parcel_id, tenant_id)
+
     # Per-zone inputs: zone meteo + daily series (one request) and located sensors.
     from app.services.zone_inputs import gather_zone_inputs, zone_meteo_ctx
     inputs = await gather_zone_inputs(
         parcel_id, parcel_short, tenant_id, zones, season_start, now,
         fetch_daily=_fetch_zone_daily, gather_sensors=_gather_parcel_sensors,
+        fractions_by_zone=fractions_by_zone,
     )
 
     from app.services.zonation import zone_weights
@@ -3494,16 +3533,24 @@ async def _query_eoproducts(tenant_id: str, q: str, limit: int) -> list[dict]:
     return entities if isinstance(entities, list) else []
 
 
+def _zone_relation(zone_urn: str) -> str:
+    """Relation per-zone EOProducts carry: current-zoning zones vs legacy terrain units."""
+    if ":AgriManagementZone:" in zone_urn:
+        return "hasAgriManagementZone"
+    return "hasAgriParcelZone"
+
+
 async def _zone_eoproduct(tenant_id: str, zone_urn: str, attr: str, extra_q: str = "") -> dict | None:
     """Newest per-zone EOProduct carrying ``attr``, sensed within ZONE_PRODUCT_MAX_AGE_DAYS.
 
-    Per-zone products carry ``hasAgriParcelZone`` and no ``hasAgriParcel``, so the
-    parcel query never sees them and this one never sees parcel products.
+    Per-zone products carry ``hasAgriManagementZone`` (current zoning) or
+    ``hasAgriParcelZone`` (legacy) and no ``hasAgriParcel``, so the parcel query
+    never sees them and this one never sees parcel products.
     """
     now = datetime.now(timezone.utc)
     since = (now - timedelta(days=ZONE_PRODUCT_MAX_AGE_DAYS)).strftime("%Y-%m-%d")
     # The date term keeps old products from filling the page; the age check below stays as a guard.
-    q = f'hasAgriParcelZone=="{zone_urn}";sensingDate>="{since}"' + extra_q
+    q = f'{_zone_relation(zone_urn)}=="{zone_urn}";sensingDate>="{since}"' + extra_q
     entities = await _query_eoproducts(tenant_id, q, _ZONE_PRODUCT_LIMIT)
     fresh = []
     for e in entities:
@@ -3583,7 +3630,7 @@ async def _fetch_ndvi_series(
     """
     since_s = since.isoformat()
     if zone_urn:
-        q = f'hasAgriParcelZone=="{zone_urn}";sensingDate>="{since_s}"'
+        q = f'{_zone_relation(zone_urn)}=="{zone_urn}";sensingDate>="{since_s}"'
     else:
         urn = f"urn:ngsi-ld:AgriParcel:{parcel_id}"
         q = f'(hasAgriParcel=="{urn}"|refAgriParcel=="{urn}");sensingDate>="{since_s}"'

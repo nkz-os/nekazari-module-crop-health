@@ -239,3 +239,30 @@ def test_differs_from_parcel_thresholds(zone, expected):
 def test_differs_from_parcel_missing_on_parcel_side_does_not_count():
     assert differs_from_parcel({**P, "cwsiValue": 0.9}, {"cwsiValue": None}) is False
     assert differs_from_parcel({**P}, {}) is False
+
+
+@pytest.mark.anyio
+async def test_sensor_nearby_zone_always_differs(monkeypatch):
+    """A level with a located sensor inside reports sensorNearby and differs from the parcel."""
+    from app.services import pipeline
+
+    inner = {"type": "Polygon", "coordinates": [[[0, 0], [0, 1], [1, 1], [1, 0], [0, 0]]]}
+    outer = {"type": "Polygon", "coordinates": [[[-5, -5], [-5, 5], [5, 5], [5, -5], [-5, -5]],
+                                                [[0, 0], [1, 0], [1, 1], [0, 1], [0, 0]]]}
+    high, medium = _zone("high"), _zone("medium")
+    high["location"], medium["location"] = inner, outer
+
+    async def _sensors(pid, tid, **kw):
+        return [{"device_id": "d1", "lon": 0.5, "lat": 0.5}]
+
+    monkeypatch.setattr(pipeline, "_gather_parcel_sensors", _sensors)
+    with respx.mock as mock:
+        _mock_orion(
+            mock, [high, medium],
+            [_zone_assessment("high", 0.5, 60), _zone_assessment("medium", 0.5, 60)],
+            [_parcel_assessment()],
+        )
+        data = (await _get()).json()
+    by_id = {z["zoneId"]: z for z in data["zones"]}
+    assert by_id["high"]["sensorNearby"] is True and by_id["high"]["differsFromParcel"] is True
+    assert by_id["medium"]["sensorNearby"] is False  # the sensor sits in the hole, not in this level

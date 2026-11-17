@@ -27,8 +27,20 @@ def _no_zone_soil_twi_calls(monkeypatch):
     monkeypatch.setattr(context_client, "get_zone_twi", _empty)
 
 
+@pytest.fixture(autouse=True)
+def _no_terrain_units(monkeypatch):
+    """No real Orion call for the weather-map terrain units (tests that need units override it)."""
+    async def _none(*a, **k):
+        return []
+
+    monkeypatch.setattr(pipeline, "fetch_terrain_units", _none)
+
+
 _Z0 = {"type": "Polygon", "coordinates": [[[0, 0], [0, 1], [1, 1], [1, 0], [0, 0]]]}
 _Z1 = {"type": "Polygon", "coordinates": [[[1, 0], [1, 1], [2, 1], [2, 0], [1, 0]]]}
+# Parcel-sized (~50 m) squares: the zone/terrain overlap is sampled on a metric grid.
+_S0 = {"type": "Polygon", "coordinates": [[[0, 0], [0, 0.0005], [0.0005, 0.0005], [0.0005, 0], [0, 0]]]}
+_S1 = {"type": "Polygon", "coordinates": [[[0.0005, 0], [0.0005, 0.0005], [0.001, 0.0005], [0.001, 0], [0.0005, 0]]]}
 
 
 def _patch_crop_level(monkeypatch):
@@ -176,8 +188,13 @@ async def _run_gdd(monkeypatch, zones, daily):
     async def _daily(*a, **k):
         return daily
 
+    async def _units(pid, tid):
+        # One terrain unit per zone, same footprint: the crossed series equal the unit's own.
+        return [Zone(z.zone_id, z.geometry) for z in zones]
+
     monkeypatch.setattr(pipeline, "_publish_assessment", _pub, raising=False)
     monkeypatch.setattr(pipeline, "resolve_zones", _zones, raising=False)
+    monkeypatch.setattr(pipeline, "fetch_terrain_units", _units)
     monkeypatch.setattr(pipeline, "_gather_parcel_sensors", _no_sensors)
     monkeypatch.setattr(pipeline, "_fetch_zone_daily", _daily)
     seen = {}
@@ -195,8 +212,8 @@ async def _run_gdd(monkeypatch, zones, daily):
 
 @pytest.mark.asyncio
 async def test_zone_gdd_is_parcel_plus_delta(monkeypatch):
-    zones = [Zone("zA", _Z0, urn="urn:ngsi-ld:AgriParcelZone:t:p1:zA", area_ha=1.0),
-             Zone("zB", _Z1, urn="urn:ngsi-ld:AgriParcelZone:t:p1:zB", area_ha=1.0)]
+    zones = [Zone("zA", _S0, urn="urn:ngsi-ld:AgriParcelZone:t:p1:zA", area_ha=1.0),
+             Zone("zB", _S1, urn="urn:ngsi-ld:AgriParcelZone:t:p1:zB", area_ha=1.0)]
     seen = await _run_gdd(monkeypatch, zones,
                           {"zA": _day_rows(10, 8, 22), "zB": _day_rows(10, 9, 23)})
     assert seen["zA"].gdd_accumulated == pytest.approx(295.0)  # parcel 300 - 5
@@ -211,8 +228,8 @@ async def test_whole_parcel_gdd_unchanged(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_non_numeric_tmin_does_not_sink_the_assessment(monkeypatch):
-    zones = [Zone("zA", _Z0, urn="urn:ngsi-ld:AgriParcelZone:t:p1:zA", area_ha=1.0),
-             Zone("zB", _Z1, urn="urn:ngsi-ld:AgriParcelZone:t:p1:zB", area_ha=1.0)]
+    zones = [Zone("zA", _S0, urn="urn:ngsi-ld:AgriParcelZone:t:p1:zA", area_ha=1.0),
+             Zone("zB", _S1, urn="urn:ngsi-ld:AgriParcelZone:t:p1:zB", area_ha=1.0)]
     bad = [{"date": "2026-05-01", "tMin": "n/a", "tMax": 22}] * 10
     seen = await _run_gdd(monkeypatch, zones, {"zA": bad, "zB": _day_rows(10, 9, 23)})
     assert seen["zA"].gdd_accumulated == pytest.approx(300.0)
@@ -225,7 +242,7 @@ async def test_zone_gdd_clamped_at_zero(monkeypatch):
     from app.services import zone_gdd
 
     monkeypatch.setattr(zone_gdd, "zone_gdd_delta", lambda *a, **k: {"zA": -500.0})
-    zones = [Zone("zA", _Z0, urn="urn:ngsi-ld:AgriParcelZone:t:p1:zA", area_ha=1.0),
-             Zone("zB", _Z1, urn="urn:ngsi-ld:AgriParcelZone:t:p1:zB", area_ha=1.0)]
+    zones = [Zone("zA", _S0, urn="urn:ngsi-ld:AgriParcelZone:t:p1:zA", area_ha=1.0),
+             Zone("zB", _S1, urn="urn:ngsi-ld:AgriParcelZone:t:p1:zB", area_ha=1.0)]
     seen = await _run_gdd(monkeypatch, zones, {"zA": _day_rows(10, 8, 22), "zB": _day_rows(10, 9, 23)})
     assert seen["zA"].gdd_accumulated == 0.0

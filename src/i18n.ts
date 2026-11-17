@@ -394,7 +394,13 @@ const en = {
             "validation": {
                 "validated": "Validated",
                 "experimental": "Experimental",
-                "not_applicable": "Ceiling"
+                "not_applicable": "Ceiling",
+                "unvalidated": "Not validated"
+            },
+            "unvalidatedNote": {
+                "ceiling": "Model ceiling with the water available, not an expected harvest. This crop is not validated yet.",
+                "irrigated": "Computed with full irrigation and no regional calibration.",
+                "durum": "Durum wheat is simulated with soft-wheat parameters."
             },
             "provider": {
                 "aquacrop": "AquaCrop",
@@ -864,7 +870,13 @@ const es = {
             "validation": {
                 "validated": "Validada",
                 "experimental": "Experimental",
-                "not_applicable": "Techo"
+                "not_applicable": "Techo",
+                "unvalidated": "Sin validar"
+            },
+            "unvalidatedNote": {
+                "ceiling": "Techo del modelo con el agua disponible, no una cosecha esperada. Este cultivo aún no está validado.",
+                "irrigated": "Calculado con riego pleno y sin calibración regional.",
+                "durum": "El trigo duro se simula con los parámetros del trigo blando."
             },
             "provider": {
                 "aquacrop": "AquaCrop",
@@ -1332,7 +1344,13 @@ const ca = {
             "validation": {
                 "validated": "Validada",
                 "experimental": "Experimental",
-                "not_applicable": "Sostre"
+                "not_applicable": "Sostre",
+                "unvalidated": "Sense validar"
+            },
+            "unvalidatedNote": {
+                "ceiling": "Sostre del model amb l'aigua disponible, no una collita esperada. Aquest cultiu encara no està validat.",
+                "irrigated": "Calculat amb reg ple i sense calibratge regional.",
+                "durum": "El blat dur se simula amb els paràmetres del blat tou."
             },
             "provider": {
                 "aquacrop": "AquaCrop",
@@ -1769,7 +1787,13 @@ const eu = {
             "validation": {
                 "validated": "Balioztatua",
                 "experimental": "Esperimentala",
-                "not_applicable": "Sabaia"
+                "not_applicable": "Sabaia",
+                "unvalidated": "Balioztatu gabe"
+            },
+            "unvalidatedNote": {
+                "ceiling": "Ereduaren sabaia eskuragarri dagoen urarekin, ez espero den uzta. Labore hau oraindik ez dago balioztatuta.",
+                "irrigated": "Ureztatze osoarekin eta eskualdeko kalibraziorik gabe kalkulatua.",
+                "durum": "Gari gogorra gari bigunaren parametroekin simulatzen da."
             },
             "provider": {
                 "aquacrop": "AquaCrop",
@@ -2206,7 +2230,13 @@ const fr = {
             "validation": {
                 "validated": "Validée",
                 "experimental": "Expérimentale",
-                "not_applicable": "Plafond"
+                "not_applicable": "Plafond",
+                "unvalidated": "Non validé"
+            },
+            "unvalidatedNote": {
+                "ceiling": "Plafond du modèle avec l'eau disponible, pas une récolte attendue. Cette culture n'est pas encore validée.",
+                "irrigated": "Calculé avec irrigation complète et sans calibration régionale.",
+                "durum": "Le blé dur est simulé avec les paramètres du blé tendre."
             },
             "provider": {
                 "aquacrop": "AquaCrop",
@@ -2643,7 +2673,13 @@ const pt = {
             "validation": {
                 "validated": "Validada",
                 "experimental": "Experimental",
-                "not_applicable": "Teto"
+                "not_applicable": "Teto",
+                "unvalidated": "Não validado"
+            },
+            "unvalidatedNote": {
+                "ceiling": "Teto do modelo com a água disponível, não uma colheita esperada. Esta cultura ainda não está validada.",
+                "irrigated": "Calculado com rega plena e sem calibração regional.",
+                "durum": "O trigo duro é simulado com os parâmetros do trigo mole."
             },
             "provider": {
                 "aquacrop": "AquaCrop",

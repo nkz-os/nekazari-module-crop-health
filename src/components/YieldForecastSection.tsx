@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from '@nekazari/sdk';
 import { MetricSection, Badge } from './detail/MetricPrimitives';
 import { getYieldForecast, navigateTo, refreshYieldForecast, saveParcelRegime } from '../api/cropHealthApi';
-import { detailLink, refreshSettled, rowsFor, stopRefreshing, toParcelUrn } from './yieldForecastModel';
+import { detailLink, refreshSettled, rowsFor, stopRefreshing, toParcelUrn, unvalidatedNotes } from './yieldForecastModel';
 import type { YieldForecastRecord } from '../types/yieldForecast';
 
 const BTN = 'text-xs text-nkz-accent-base underline bg-transparent border-none cursor-pointer';
@@ -70,10 +70,13 @@ export function YieldForecastView({ parcelId, record, loading, onRefresh, onRegi
                   {t('yieldForecast.range', { low: num(row.low), high: num(row.high) })}
                   {row.median != null && ` · ${t('yieldForecast.median', { value: num(row.median) })}`}
                 </span>
-                <Badge intent={row.validation === 'validated' ? 'positive' : row.validation === 'experimental' ? 'warning' : 'default'}>
+                <Badge intent={row.validation === 'validated' ? 'positive' : row.validation === 'experimental' ? 'warning' : row.validation === 'unvalidated' ? 'negative' : 'default'}>
                   {t(`yieldForecast.validation.${row.validation}`)}
                 </Badge>
               </div>
+            ))}
+            {unvalidatedNotes(rows, season).map((key) => (
+              <p key={`unvalidated-${key}`} className="text-xs text-nkz-text-muted">{t(`yieldForecast.unvalidatedNote.${key}`)}</p>
             ))}
             {(record.unavailable ?? []).map((u) => (
               <p key={`${u.provider_id ?? ''}-${u.reason}`} className="text-xs text-nkz-text-muted">

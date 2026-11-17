@@ -5,7 +5,7 @@ export interface C4Estimate {
   unit?: string;
   percentiles?: { p10: number; p50: number; p90: number } | null;
   range?: { low: number; high: number } | null;
-  validation: { status: 'validated' | 'experimental' | 'unvalidated' | 'not_applicable'; scope?: string | null };
+  validation: { status: 'validated' | 'experimental' | 'unvalidated' | 'not_applicable'; scope?: string | null; metric?: string | null };
   warnings?: string[];
 }
 

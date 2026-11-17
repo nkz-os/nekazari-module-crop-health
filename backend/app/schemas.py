@@ -602,6 +602,8 @@ class CropHealthAssessment(BaseModel):
     input_fidelity: dict[str, str] | None = None
     zone_version: str | None = None
     zone_rank: int | None = None
+    # Level code of the current-zoning zone ("high"/"medium"/"low"/"critical"); None otherwise.
+    zone_level: str | None = None
     # Zone terrain wetness (hydrology TWI stats); None when the zone has none.
     twi_mean: float | None = None
     wet_fraction: float | None = None
@@ -883,7 +885,10 @@ class CropHealthAssessment(BaseModel):
         )
         entity["type"] = "CropHealthZoneAssessment"
         zone_urn = self.zone_urn or f"urn:ngsi-ld:AgriParcelZone:{self.parcel_id}-{zone}"
-        entity["hasAgriParcelZone"] = {
+        # A current-zoning level points at its AgriManagementZone; legacy terrain units
+        # keep the AgriParcelZone relationship.
+        relation = "hasAgriManagementZone" if ":AgriManagementZone:" in zone_urn else "hasAgriParcelZone"
+        entity[relation] = {
             "type": "Relationship",
             "object": zone_urn,
         }
@@ -898,6 +903,10 @@ class CropHealthAssessment(BaseModel):
             entity["nkz:wetnessClass"] = {"type": "Property", "value": self.wetness_class}
         if self.zone_version is not None:
             entity["nkz:zoneVersion"] = {"type": "Property", "value": self.zone_version}
+        if self.zone_level is not None:
+            entity["nkz:zoneLevel"] = {"type": "Property", "value": self.zone_level}
+            if self.zone_version is not None:
+                entity["nkz:zoningRunId"] = {"type": "Property", "value": self.zone_version}
         if self.zone_rank is not None:
             entity["nkz:zoneRank"] = {"type": "Property", "value": self.zone_rank}
         return entity

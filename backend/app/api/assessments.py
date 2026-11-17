@@ -19,6 +19,7 @@ from app.api.assessment_mapper import (
     extract_zone_urn,
     map_entity_to_assessment,
     map_entity_to_zone_assessment,
+    nkz_value,
     prop_value,
 )
 from app.config import get_settings
@@ -285,15 +286,26 @@ async def _parcel_values(tenant_id: str, parcel_id: str) -> dict:
 
 
 def _live_zone_assessments(entities: list[dict], live: list, parcel_values: dict) -> list[dict]:
-    """Latest assessment per live zone, mapped and flagged against the parcel.
+    """Latest assessment per live zone of the current run, mapped and flagged against the parcel.
 
-    Assessments of zones not in ``live`` are dropped before deduplicating.
+    Only assessments of a live level AND of the live zoning run are kept (before
+    deduplicating): terrain-unit assessments and the state of an older geometry
+    are never shown on the new one.
     """
-    live_keys = {z.zone_id for z in live} | {z.urn for z in live if z.urn}
-    kept = [
-        e for e in entities
-        if extract_zone_id(e) in live_keys or extract_zone_urn(e) in live_keys
-    ]
+    run_by_key: dict[str, str | None] = {}
+    for z in live:
+        run_by_key[z.zone_id] = z.zone_version
+        if z.urn:
+            run_by_key[z.urn] = z.zone_version
+
+    def _is_current(e: dict) -> bool:
+        for key in (extract_zone_id(e), extract_zone_urn(e)):
+            if key in run_by_key:
+                run = run_by_key[key]
+                return run is not None and nkz_value(e, "zoningRunId") == run
+        return False
+
+    kept = [e for e in entities if _is_current(e)]
     lookup = _zone_geometry_lookup(live)
     zones: list[dict] = []
     for entity in dedupe_latest_per_zone(kept):

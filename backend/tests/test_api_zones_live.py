@@ -37,8 +37,12 @@ def _zone(level, parcel="p-1"):
     }
 
 
-def _zone_assessment(zid, cwsi, composite, at="2026-10-25T10:00:00Z", vigor=0.6, parcel="p-1"):
+RUN = "abcdef12" + "0" * 24
+
+
+def _zone_assessment(zid, cwsi, composite, at="2026-10-25T10:00:00Z", vigor=0.6, parcel="p-1", run=RUN):
     return {
+        "nkz:zoningRunId": run,
         "id": f"urn:ngsi-ld:CropHealthZoneAssessment:{parcel}:{zid}:{at}",
         "hasAgriParcel": f"urn:ngsi-ld:AgriParcel:{parcel}",
         "zoneId": zid,

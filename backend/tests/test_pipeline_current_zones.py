@@ -83,7 +83,9 @@ async def test_compute_assessment_uses_current_zones_and_crossed_meteo(monkeypat
     await pipeline.compute_assessment("urn:ngsi-ld:AgriParcel:p1", "acme")
     zone_entities = [e for e in published if e["type"] == "CropHealthZoneAssessment"]
     assert len(zone_entities) == 2
-    assert {e["hasAgriParcelZone"]["object"] for e in zone_entities} == {f"{AMZ}1", f"{AMZ}2"}
+    assert {e["hasAgriManagementZone"]["object"] for e in zone_entities} == {f"{AMZ}1", f"{AMZ}2"}
+    assert all("hasAgriParcelZone" not in e for e in zone_entities)
+    assert {e["nkz:zoneLevel"]["value"] for e in zone_entities} == {"high", "medium"}
     # each level took the weather of the unit that covers it; frost uses the coldest unit
     assert ctxs["high"]["air_temp_min_24h"] == pytest.approx(2.0, abs=0.1)
     assert ctxs["medium"]["air_temp_min_24h"] == pytest.approx(6.0, abs=0.1)

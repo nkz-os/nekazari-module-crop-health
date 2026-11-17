@@ -1077,6 +1077,7 @@ async def trigger(
             a.zone_geometry = zone.geometry
             a.zone_version = zone.zone_version
             a.zone_rank = zone.zone_rank
+            a.zone_level = zone.zone_level
         return a
 
     # ── Soil properties (benefits 1+2) ───────────────────────────────────
@@ -2507,6 +2508,7 @@ async def _assess_zone(
         zone_geometry=None if whole else zone.geometry,
         zone_version=None if whole else zone.zone_version,
         zone_rank=None if whole else zone.zone_rank,
+        zone_level=None if whole else zone.zone_level,
     )
     if not whole and zone_twi:
         assessment.twi_mean = zone_twi.get("twiMean")

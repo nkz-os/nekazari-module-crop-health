@@ -60,27 +60,38 @@ def _rank_int(value: Any) -> int | None:
         return None
 
 
+_ZONE_REF_KEYS = (
+    "hasAgriManagementZone",
+    "nkz:hasAgriManagementZone",
+    _NKZ_NS + "hasAgriManagementZone",
+    "hasAgriParcelZone",
+)
+
+
+def extract_zone_urn(entity: dict[str, Any]) -> str:
+    """Zone URN: the AgriManagementZone relationship (three forms), else the legacy terrain one."""
+    for key in _ZONE_REF_KEYS:
+        ref = entity.get(key)
+        if isinstance(ref, dict):
+            obj = ref.get("object", "")
+        elif isinstance(ref, str):
+            obj = ref
+        else:
+            continue
+        if obj:
+            return obj
+    return ""
+
+
 def extract_zone_id(entity: dict[str, Any]) -> str:
     zid = prop_value(entity, "zoneId")
     if zid:
         return str(zid)
-    ref = entity.get("hasAgriParcelZone")
-    if isinstance(ref, dict):
-        urn = ref.get("object", "")
-    elif isinstance(ref, str):
-        urn = ref
-    else:
-        return ""
+    urn = extract_zone_urn(entity)
+    if ":AgriManagementZone:" in urn:
+        level = nkz_value(entity, "zoneLevel")
+        return str(level) if level else ""
     return urn.split(":")[-1] if urn else ""
-
-
-def extract_zone_urn(entity: dict[str, Any]) -> str:
-    ref = entity.get("hasAgriParcelZone")
-    if isinstance(ref, dict):
-        return ref.get("object", "") or ""
-    if isinstance(ref, str):
-        return ref
-    return ""
 
 
 def _soil_stress_level(ratio: float | None) -> str:
@@ -352,6 +363,7 @@ def map_entity_to_zone_assessment(
     rank = nkz_value(entity, "zoneRank")
     result["zoneRank"] = _rank_int(rank)
     result["zoneVersion"] = nkz_value(entity, "zoneVersion")
+    result["zoneLevel"] = nkz_value(entity, "zoneLevel")
     result["wetnessClass"] = nkz_value(entity, "wetnessClass")
     if geometry is not None:
         result["geometry"] = geometry

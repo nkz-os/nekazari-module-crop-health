@@ -3,7 +3,7 @@ import { useTranslation } from '@nekazari/sdk';
 import { SeverityBadge } from './shared/SeverityBadge';
 import type { ZoneAssessmentData, ZonesResponse } from '../types/assessment';
 import { navigateTo } from '../api/cropHealthApi';
-import { fidelityLine, splitZones, zoneKey, zoneNumberList, zoneNumbers, zoneSelection, zoneViewerPath, type ZoneRef } from '../utils/zones';
+import { fidelityLine, splitZones, zoneKey, zoneNumberList, zoneNumbers, zoneLevelLabel, zoneSelection, zoneViewerPath, type ZoneRef } from '../utils/zones';
 
 interface ZoneHealthPanelProps {
   zones: ZoneAssessmentData[];
@@ -65,6 +65,11 @@ const ZoneHealthPanel: React.FC<ZoneHealthPanelProps> = ({ zones, isWholeParcel,
   // Leaving the parcel (or the panel) must not leave a zone lit on the map.
   useEffect(() => () => zoneSelection.pin(null), []);
 
+  // Levelled zones are named by level; numbers only for zones without one.
+  const restList = rest.every((z) => zoneLevelLabel(t, z.zoneLevel))
+    ? rest.map((z) => zoneLevelLabel(t, z.zoneLevel)).join(', ')
+    : zoneNumberList(rest, numbers);
+
   if (isWholeParcel || zones.length === 0) {
     return null;
   }
@@ -96,7 +101,8 @@ const ZoneHealthPanel: React.FC<ZoneHealthPanelProps> = ({ zones, isWholeParcel,
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="text-sm font-semibold text-nkz-text-primary">
-                        {t('zones.zoneLabel', { id: numbers.get(zoneKey(zone.parcelId, zone.zoneId)) ?? zone.zoneId })}
+                        {zoneLevelLabel(t, zone.zoneLevel) ??
+                          t('zones.zoneLabel', { id: numbers.get(zoneKey(zone.parcelId, zone.zoneId)) ?? zone.zoneId })}
                       </span>
                       {zone.sensorNearby && (
                         <span className="text-[10px] uppercase tracking-wide text-nkz-accent-base font-medium">
@@ -146,7 +152,7 @@ const ZoneHealthPanel: React.FC<ZoneHealthPanelProps> = ({ zones, isWholeParcel,
         </>
       )}
       {differing.length > 0 && rest.length > 0 && (
-        <p className="text-xs text-nkz-text-muted mt-3">{t('zones.rest', { list: zoneNumberList(rest, numbers) })}</p>
+        <p className="text-xs text-nkz-text-muted mt-3">{t('zones.rest', { list: restList })}</p>
       )}
     </div>
   );

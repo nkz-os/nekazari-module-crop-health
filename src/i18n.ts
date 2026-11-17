@@ -190,6 +190,7 @@ const en = {
                 balance: 'water balance',
             },
             worst: 'Worst zone: {{n}}',
+            level: { high: 'High vigour', medium: 'Medium vigour', low: 'Low vigour', critical: 'Critical vigour' },
             wetness: {
                 drained: 'drained',
                 balanced: 'balanced',
@@ -688,6 +689,7 @@ const es = {
                 balance: 'balance hídrico',
             },
             worst: 'Peor zona: {{n}}',
+            level: { high: 'Vigor alto', medium: 'Vigor medio', low: 'Vigor bajo', critical: 'Vigor crítico' },
             wetness: {
                 drained: 'drenada',
                 balanced: 'equilibrada',

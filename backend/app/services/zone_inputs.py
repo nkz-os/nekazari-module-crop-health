@@ -16,6 +16,7 @@ from app.services.zonation import (
     Zone,
     consolidate_sensor_readings,
     is_whole_parcel,
+    mark_sensor_nearby,
     sensors_in_zone,
 )
 
@@ -203,12 +204,11 @@ async def gather_zone_inputs(
     soil_by_zone = values[2] or {}
     twi_by_zone = values[3] or {}
 
+    mark_sensor_nearby(zones, sensors)
     for z in zones:
         rows = list(daily.get(z.zone_id) or [])
         weather = zone_meteo_ctx(z, now)
         in_zone = sensors_in_zone(z, sensors)
-        if in_zone:
-            z.sensor_nearby = True
         consolidated = consolidate_sensor_readings(in_zone)
         soil = _soil_from_zone(soil_by_zone.get(z.zone_id))
         twi = _twi_from_zone(twi_by_zone.get(z.zone_id))

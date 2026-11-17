@@ -192,5 +192,61 @@ def test_overlap_cost_on_small_zones_is_bounded():
     fr, covered, ha = overlap_fractions(zone, units)
     apply_terrain_meteo(_level("high", 1, zone), units, fr, covered, ha)
     elapsed = time.perf_counter() - t0
-    print(f"overlap crossing 1 zone x 6 units: {elapsed * 1000:.0f} ms")
     assert elapsed < 2.0
+
+
+@pytest.mark.asyncio
+async def test_sensor_triggered_zonal_assessment_uses_crossed_zone_weather(monkeypatch):
+    """The sensor path crosses terrain weather too: each zone gets its own zone meteo context."""
+    from tests.test_trigger_zonal import _Redis, _patch_trigger
+    from app.schemas import MetricType
+
+    zones = [_level("high", 1, _poly(_rect(0, 0, 0.5, 1))), _level("medium", 2, _poly(_rect(0.5, 0, 1, 1)))]
+    units = [_unit("uW", _poly(_rect(0, 0, 0.5, 1)), t_min=2.0, t_max=10.0),
+             _unit("uE", _poly(_rect(0.5, 0, 1, 1)), t_min=6.0, t_max=30.0)]
+    calls, _ = _patch_trigger(monkeypatch, zones=zones, device_coords=(LON0 + 0.25 * DLON, LAT0 + 0.5 * DLAT))
+
+    async def _units(pid, tid):
+        return units
+
+    seen = {}
+    real = pipeline.resolve_meteo_context
+
+    async def _spy(parcel_id, tenant_id, **kw):
+        ctx = kw.get("zone_ctx")
+        if ctx:
+            seen[round(ctx["air_temp_c"])] = ctx["air_temp_min_24h"]
+        return await real(parcel_id, tenant_id, **kw)
+
+    monkeypatch.setattr(pipeline, "fetch_terrain_units", _units)
+    monkeypatch.setattr(pipeline, "resolve_meteo_context", _spy)
+    out = await pipeline.trigger(
+        entity_id="urn:ngsi-ld:DeviceMeasurement:d1", metric_type=MetricType.LEAF_TEMPERATURE.value,
+        redis_state=_Redis(), parcel_id="p1", tenant_id="t",
+    )
+    assert out is not None
+    # high: mean (2+10)/2 = 6, coldest 2; medium: mean (6+30)/2 = 18, coldest 6
+    assert seen == {6: pytest.approx(2.0, abs=0.1), 18: pytest.approx(6.0, abs=0.1)}
+    by_zone = {c["zone_id"]: c["weather"].temp_air for c in calls}
+    assert by_zone["high"] == pytest.approx(6.0, abs=0.1)
+    assert by_zone["medium"] == pytest.approx(18.0, abs=0.1)
+
+
+@pytest.mark.asyncio
+async def test_sensor_path_keeps_parcel_weather_when_crossing_fails(monkeypatch):
+    from tests.test_trigger_zonal import _Redis, _patch_trigger
+    from app.schemas import MetricType
+
+    zones = [_level("high", 1, _poly(_rect(0, 0, 0.5, 1))), _level("medium", 2, _poly(_rect(0.5, 0, 1, 1)))]
+    calls, _ = _patch_trigger(monkeypatch, zones=zones, device_coords=(LON0, LAT0))
+
+    async def _boom(pid, tid):
+        raise RuntimeError("broker down")
+
+    monkeypatch.setattr(pipeline, "fetch_terrain_units", _boom)
+    out = await pipeline.trigger(
+        entity_id="urn:ngsi-ld:DeviceMeasurement:d1", metric_type=MetricType.LEAF_TEMPERATURE.value,
+        redis_state=_Redis(), parcel_id="p1", tenant_id="t",
+    )
+    assert out is not None
+    assert {c["weather"].temp_air for c in calls} == {21.0}  # the parcel's weather-map value

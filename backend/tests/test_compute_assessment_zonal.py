@@ -27,15 +27,6 @@ def _no_zone_soil_twi_calls(monkeypatch):
     monkeypatch.setattr(context_client, "get_zone_twi", _empty)
 
 
-@pytest.fixture(autouse=True)
-def _no_terrain_units(monkeypatch):
-    """No real Orion call for the weather-map terrain units (tests that need units override it)."""
-    async def _none(*a, **k):
-        return []
-
-    monkeypatch.setattr(pipeline, "fetch_terrain_units", _none)
-
-
 _Z0 = {"type": "Polygon", "coordinates": [[[0, 0], [0, 1], [1, 1], [1, 0], [0, 0]]]}
 _Z1 = {"type": "Polygon", "coordinates": [[[1, 0], [1, 1], [2, 1], [2, 0], [1, 0]]]}
 # Parcel-sized (~50 m) squares: the zone/terrain overlap is sampled on a metric grid.

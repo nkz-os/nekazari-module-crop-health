@@ -1,5 +1,6 @@
 from unittest.mock import patch
 """GET /assessments/zones: only live zones, differsFromParcel, parcelValues."""
+import httpx
 import pytest
 import respx
 from httpx import ASGITransport, AsyncClient
@@ -241,6 +242,11 @@ def test_differs_from_parcel_missing_on_parcel_side_does_not_count():
     assert differs_from_parcel({**P}, {}) is False
 
 
+def _device(dev_id, lon, lat):
+    return {"id": f"urn:ngsi-ld:Device:{dev_id}", "type": "Device",
+            "location": {"type": "Point", "coordinates": [lon, lat]}}
+
+
 @pytest.mark.anyio
 async def test_sensor_nearby_zone_always_differs(monkeypatch):
     """A level with a located sensor inside reports sensorNearby and differs from the parcel."""
@@ -252,10 +258,10 @@ async def test_sensor_nearby_zone_always_differs(monkeypatch):
     high, medium = _zone("high"), _zone("medium")
     high["location"], medium["location"] = inner, outer
 
-    async def _sensors(pid, tid, **kw):
-        return [{"device_id": "d1", "lon": 0.5, "lat": 0.5}]
+    async def _devices(tid):
+        return [_device("d1", 0.5, 0.5)]
 
-    monkeypatch.setattr(pipeline, "_gather_parcel_sensors", _sensors)
+    monkeypatch.setattr(pipeline, "_list_devices", _devices)
     with respx.mock as mock:
         _mock_orion(
             mock, [high, medium],
@@ -266,3 +272,41 @@ async def test_sensor_nearby_zone_always_differs(monkeypatch):
     by_id = {z["zoneId"]: z for z in data["zones"]}
     assert by_id["high"]["sensorNearby"] is True and by_id["high"]["differsFromParcel"] is True
     assert by_id["medium"]["sensorNearby"] is False  # the sensor sits in the hole, not in this level
+
+
+@pytest.mark.anyio
+async def test_all_zones_flags_sensor_with_one_device_listing(monkeypatch):
+    """/zones/all lists the tenant's Devices once for several parcels and flags the right zones."""
+    from app.services import pipeline
+
+    calls = []
+
+    async def _devices(tid):
+        calls.append(tid)
+        return [_device("d1", 0.5, 0.5)]
+
+    monkeypatch.setattr(pipeline, "_list_devices", _devices)
+    with respx.mock as mock:
+        zones = [_zone("high", parcel="p-1"), _zone("high", parcel="p-2")]
+        zones[1]["location"] = {"type": "Polygon", "coordinates": [[[10, 10], [10, 11], [11, 11], [11, 10], [10, 10]]]}
+        zones += [_zone("medium", parcel="p-1"), _zone("medium", parcel="p-2")]
+        zones[2]["location"] = {"type": "Polygon", "coordinates": [[[5, 5], [5, 6], [6, 6], [6, 5], [5, 5]]]}
+        zones[3]["location"] = zones[1]["location"]
+        _mock_orion(
+            mock, zones,
+            [_zone_assessment(z, 0.5, 60, parcel=p) for p in ("p-1", "p-2") for z in ("high", "medium")],
+            [_parcel_assessment("p-1"), _parcel_assessment("p-2")],
+        )
+
+        def _by_parcel(request):  # the broker filters zones by the queried parcel
+            return httpx.Response(200, json=[z for z in zones if z["refAgriParcel"].split(":")[-1] in str(request.url)])
+
+        mock.get(url__regex=r".*type=AgriManagementZone.*").mock(side_effect=_by_parcel)
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test", headers=GATEWAY_HEADERS) as client:
+            data = (await client.get("/api/crop-health/assessments/zones/all")).json()
+    assert len(calls) == 1
+    flag = {(z["parcelId"], z["zoneId"]): z["sensorNearby"] for z in data["zones"]}
+    assert flag[("p-1", "high")] is True
+    assert flag[("p-1", "medium")] is False
+    assert flag[("p-2", "high")] is False

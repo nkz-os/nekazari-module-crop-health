@@ -263,16 +263,16 @@ def _zone_geometry_lookup(zones: list) -> dict[str, dict]:
     return by_id
 
 
-async def _flag_sensor_nearby(live: list, parcel_id: str, tenant_id: str) -> None:
-    """Mark the zones that contain a located sensor of the parcel; best-effort."""
+def _flag_sensor_nearby(live: list, parcel_id: str, devices: list[dict]) -> None:
+    """Mark the zones that contain a located sensor of the parcel (positions only, no readings)."""
     if is_whole_parcel(live):
         return
-    from app.services.pipeline import _gather_parcel_sensors
+    from app.services.pipeline import located_parcel_sensors
 
     try:
-        mark_sensor_nearby(live, await _gather_parcel_sensors(f"urn:ngsi-ld:AgriParcel:{parcel_id}", tenant_id))
+        mark_sensor_nearby(live, located_parcel_sensors(devices, parcel_id, live))
     except Exception as exc:  # noqa: BLE001 -- the flag is optional
-        logger.warning("sensorNearby: lookup failed for %s: %s", parcel_id, exc)
+        logger.warning("sensorNearby: flag failed for %s: %s", parcel_id, exc)
 
 
 async def _parcel_values(tenant_id: str, parcel_id: str) -> dict:
@@ -321,13 +321,17 @@ async def all_zone_assessments(request: Request):
 
     semaphore = asyncio.Semaphore(WORKLIST_MAX_CONCURRENCY)
 
+    from app.services.pipeline import _list_devices
+
+    devices = await _list_devices(tenant_id)  # one listing for every parcel
+
     async def _resolve(pid: str):
         async with semaphore:
             live, values = await asyncio.gather(
                 resolve_zones(f"urn:ngsi-ld:AgriParcel:{pid}", tenant_id, {}),
                 _parcel_values(tenant_id, pid),
             )
-            await _flag_sensor_nearby(live, pid, tenant_id)
+            _flag_sensor_nearby(live, pid, devices)
             return live, values
 
     pids = sorted(by_parcel)
@@ -363,7 +367,9 @@ async def zone_assessments(
     if is_whole_parcel(live):
         return {"zones": [], "isWholeParcel": True, "parcelValues": parcel_values}
 
-    await _flag_sensor_nearby(live, parcelId, tenant_id)
+    from app.services.pipeline import _list_devices
+
+    _flag_sensor_nearby(live, parcelId, await _list_devices(tenant_id))
     entities = await _fetch_zone_assessment_entities(tenant_id, parcel_id=parcelId)
     zones = _live_zone_assessments(entities, live, parcel_values)
     zones.sort(key=lambda z: z.get("zoneId", ""))

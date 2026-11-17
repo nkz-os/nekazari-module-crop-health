@@ -1040,10 +1040,12 @@ async def trigger(
     irrigation_regime = await parcel_site.parcel_regime(effective_parcel, tenant_id)
 
     now_ts = _now_ts()
+    air_sensor_ctx = await _sensor_air_ctx(redis_state, tenant_id, effective_parcel, now_ts)
+    instant_ctx = await _cwsi_sensor_ctx(redis_state, tenant_id, effective_parcel, now_ts)
     meteo = await resolve_meteo_context(
         effective_parcel, tenant_id,
-        sensor_ctx=await _sensor_air_ctx(redis_state, tenant_id, effective_parcel, now_ts),
-        instant_sensor_ctx=await _cwsi_sensor_ctx(redis_state, tenant_id, effective_parcel, now_ts),
+        sensor_ctx=air_sensor_ctx,
+        instant_sensor_ctx=instant_ctx,
         weather_map_fn=_weather_map_meteo,
         regional_fn=_regional_meteo,
     )
@@ -1105,6 +1107,9 @@ async def trigger(
     # zone (point-in-polygon) and publishing per-zone + worst-zone rollup.
     parcel_geom = await context_client._resolve_parcel_geometry(effective_parcel, tenant_id)
     zones = await resolve_zones(effective_parcel, tenant_id, parcel_geom or {})
+    if not is_whole_parcel(zones):
+        # Same zone weather as the scheduled run; a failed crossing leaves the parcel's.
+        await _cross_terrain_weather(zones, effective_parcel, tenant_id)
 
     if is_whole_parcel(zones):
         assessment = _mk_assessment(None)
@@ -1154,11 +1159,23 @@ async def trigger(
         # Everything this path does not resolve per zone is the parcel's value; written
         # explicitly because the upsert merges and would keep the daily run's labels.
         used_fidelity: dict[str, str] = {}
+        # The zone's weather source is the same as in the scheduled run (crossed terrain units).
+        from app.services.zone_inputs import zone_meteo_ctx
+        zone_ctx = zone_meteo_ctx(z, now)
+        zone_meteo = await resolve_meteo_context(
+            effective_parcel, tenant_id,
+            sensor_ctx=air_sensor_ctx,
+            instant_sensor_ctx=instant_ctx,
+            zone_ctx=zone_ctx,
+            weather_map_fn=_weather_map_meteo,
+            regional_fn=_regional_meteo,
+        )
+        zone_weather = _snapshot_from_meteo(zone_meteo)
         try:
             await _run_engines(
                 a,
                 metric_type=metric_type if is_sensor else "",
-                weather=weather,
+                weather=zone_weather,
                 phenology=phenology,
                 redis_state=redis_state if is_sensor else None,
                 entity_id=entity_id if is_sensor else effective_parcel,
@@ -1188,7 +1205,7 @@ async def trigger(
         a.input_fidelity = {
             "meteo": (
                 "iot_sensor" if is_sensor and meteo.fidelity.get("air_temp_c") == "iot_sensor"
-                else "parcel_inherited"
+                else "zone_specific" if zone_ctx else "parcel_inherited"
             ),
             "gdd": "parcel_inherited",
             "ndvi": "parcel_inherited",
@@ -2296,6 +2313,39 @@ def _is_open_field_sensor_of(device: dict, parcel_urn: str, inside: bool) -> boo
             if target:
                 return target == parcel_urn
     return inside
+
+
+async def _list_devices(tenant_id: str) -> list[dict]:
+    """The tenant's Devices (one listing); ``[]`` on any failure."""
+    try:
+        from nkz_platform_sdk.orion import OrionClient
+
+        settings = get_settings()
+        client = OrionClient(tenant_id, base_url=settings.orion_ld_url, context_url=settings.orion_ld_context)
+        try:
+            return await client.query_entities(type="Device", options="keyValues", limit=_DEVICE_LIST_LIMIT) or []
+        finally:
+            await client.close()
+    except Exception as exc:  # noqa: BLE001 -- fail-safe
+        logger.warning("_list_devices: failed for %s — []: %s", tenant_id, exc)
+        return []
+
+
+def located_parcel_sensors(devices: list[dict], parcel_id: str, zones: list[Zone]) -> list[dict]:
+    """Open-field sensors of the parcel with their position (no readings).
+
+    A device is "inside" the parcel when it falls in any of its zones (they tile it).
+    """
+    parcel_urn = parcel_id if parcel_id.startswith("urn:") else f"urn:ngsi-ld:AgriParcel:{parcel_id}"
+    out: list[dict] = []
+    for dev in devices:
+        pt = _device_point(dev)
+        if pt is None:
+            continue
+        inside = any(point_in_polygon(pt[0], pt[1], z.geometry) for z in zones)
+        if _is_open_field_sensor_of(dev, parcel_urn, inside):
+            out.append({"device_id": dev.get("id"), "lon": pt[0], "lat": pt[1]})
+    return out
 
 
 async def _gather_parcel_sensors(

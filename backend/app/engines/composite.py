@@ -47,6 +47,8 @@ def evaluate_composite_stress(
     ky_override: dict[str, float] | None = None,
     fidelity: str = "regional_proxy",
     water_not_needed: bool = False,
+    water_stress_index: float | None = None,
+    rainfed: bool = False,
 ) -> CompositeStressResult:
     """Combine all stress indicators weighted by phenological sensitivity.
 
@@ -60,6 +62,9 @@ def evaluate_composite_stress(
         ky_override: Optional per-stage Ky overrides from BioOrchestrator
         fidelity: dataFidelity level
         water_not_needed: stage needs no water; the water term is 0
+        water_stress_index: WaterStress.index (1 - Ks, FAO-56), 0-1; used only when rainfed
+        rainfed: rainfed parcel: the water term uses (1 - Ks) x 100 instead of the soil
+            depletion in mm; the index is skipped when CWSI is present (same signal)
 
     Returns:
         CompositeStressResult with weighted index and breakdown
@@ -88,7 +93,11 @@ def evaluate_composite_stress(
         mds_pct = min(100, max(0, (mds_ratio - 0.8) / 1.2 * 100))
         water_score += mds_pct
         count += 1
-    if water_balance_mm is not None:
+    if rainfed:
+        if cwsi is None and water_stress_index is not None:
+            water_score += min(100.0, max(0.0, water_stress_index * 100))
+            count += 1
+    elif water_balance_mm is not None:
         # Deficit: -15mm = 100 stress, +5mm = 0 stress
         balance_stress = max(0, min(100, (-water_balance_mm + 5) / 20 * 100))
         water_score += balance_stress

@@ -19,11 +19,12 @@ from app.api.assessment_mapper import (
     extract_zone_urn,
     map_entity_to_assessment,
     map_entity_to_zone_assessment,
+    nkz_value,
     prop_value,
 )
 from app.config import get_settings
 from app.services import worklist
-from app.services.zonation import is_whole_parcel, resolve_zones
+from app.services.zonation import is_whole_parcel, mark_sensor_nearby, resolve_zones
 from nkz_platform_sdk.orion import OrionClient
 
 router = APIRouter()
@@ -263,6 +264,18 @@ def _zone_geometry_lookup(zones: list) -> dict[str, dict]:
     return by_id
 
 
+def _flag_sensor_nearby(live: list, parcel_id: str, devices: list[dict]) -> None:
+    """Mark the zones that contain a located sensor of the parcel (positions only, no readings)."""
+    if is_whole_parcel(live):
+        return
+    from app.services.pipeline import located_parcel_sensors
+
+    try:
+        mark_sensor_nearby(live, located_parcel_sensors(devices, parcel_id, live))
+    except Exception as exc:  # noqa: BLE001 -- the flag is optional
+        logger.warning("sensorNearby: flag failed for %s: %s", parcel_id, exc)
+
+
 async def _parcel_values(tenant_id: str, parcel_id: str) -> dict:
     """Four headline values of the parcel's latest assessment ({} if none)."""
     entities = await _fetch_assessment_entities(tenant_id, parcel_id=parcel_id)
@@ -273,15 +286,26 @@ async def _parcel_values(tenant_id: str, parcel_id: str) -> dict:
 
 
 def _live_zone_assessments(entities: list[dict], live: list, parcel_values: dict) -> list[dict]:
-    """Latest assessment per live zone, mapped and flagged against the parcel.
+    """Latest assessment per live zone of the current run, mapped and flagged against the parcel.
 
-    Assessments of zones not in ``live`` are dropped before deduplicating.
+    Only assessments of a live level AND of the live zoning run are kept (before
+    deduplicating): terrain-unit assessments and the state of an older geometry
+    are never shown on the new one.
     """
-    live_keys = {z.zone_id for z in live} | {z.urn for z in live if z.urn}
-    kept = [
-        e for e in entities
-        if extract_zone_id(e) in live_keys or extract_zone_urn(e) in live_keys
-    ]
+    run_by_key: dict[str, str | None] = {}
+    for z in live:
+        run_by_key[z.zone_id] = z.zone_version
+        if z.urn:
+            run_by_key[z.urn] = z.zone_version
+
+    def _is_current(e: dict) -> bool:
+        for key in (extract_zone_id(e), extract_zone_urn(e)):
+            if key in run_by_key:
+                run = run_by_key[key]
+                return run is not None and nkz_value(e, "zoningRunId") == run
+        return False
+
+    kept = [e for e in entities if _is_current(e)]
     lookup = _zone_geometry_lookup(live)
     zones: list[dict] = []
     for entity in dedupe_latest_per_zone(kept):
@@ -294,6 +318,17 @@ def _live_zone_assessments(entities: list[dict], live: list, parcel_values: dict
         zone["differsFromParcel"] = differs_from_parcel(zone, parcel_values)
         zones.append(zone)
     return zones
+
+
+def _sort_by_rank(zones: list[dict], live: list) -> list[dict]:
+    """Order by the live zone rank (None last), then zoneId."""
+    rank = {z.zone_id: z.zone_rank for z in live}
+
+    def _key(z: dict):
+        r = rank.get(z.get("zoneId"))
+        return (r is None, r if r is not None else 0, z.get("zoneId", ""))
+
+    return sorted(zones, key=_key)
 
 
 @router.get("/assessments/zones/all")
@@ -309,12 +344,18 @@ async def all_zone_assessments(request: Request):
 
     semaphore = asyncio.Semaphore(WORKLIST_MAX_CONCURRENCY)
 
+    from app.services.pipeline import _list_devices
+
+    devices = await _list_devices(tenant_id)  # one listing for every parcel
+
     async def _resolve(pid: str):
         async with semaphore:
-            return await asyncio.gather(
+            live, values = await asyncio.gather(
                 resolve_zones(f"urn:ngsi-ld:AgriParcel:{pid}", tenant_id, {}),
                 _parcel_values(tenant_id, pid),
             )
+            _flag_sensor_nearby(live, pid, devices)
+            return live, values
 
     pids = sorted(by_parcel)
     resolved = await asyncio.gather(*(_resolve(pid) for pid in pids))
@@ -324,8 +365,8 @@ async def all_zone_assessments(request: Request):
         parcel_values[pid] = values
         if is_whole_parcel(live):
             continue
-        zones.extend(_live_zone_assessments(by_parcel[pid], live, values))
-    zones.sort(key=lambda z: (z.get("parcelId", ""), z.get("zoneId", "")))
+        zones.extend(_sort_by_rank(_live_zone_assessments(by_parcel[pid], live, values), live))
+    zones.sort(key=lambda z: z.get("parcelId", ""))  # stable: rank order kept within a parcel
     return {"zones": zones, "parcelValues": parcel_values}
 
 
@@ -349,9 +390,12 @@ async def zone_assessments(
     if is_whole_parcel(live):
         return {"zones": [], "isWholeParcel": True, "parcelValues": parcel_values}
 
+    from app.services.pipeline import _list_devices
+
+    _flag_sensor_nearby(live, parcelId, await _list_devices(tenant_id))
     entities = await _fetch_zone_assessment_entities(tenant_id, parcel_id=parcelId)
     zones = _live_zone_assessments(entities, live, parcel_values)
-    zones.sort(key=lambda z: z.get("zoneId", ""))
+    zones = _sort_by_rank(zones, live)
     return {"zones": zones, "isWholeParcel": not zones, "parcelValues": parcel_values}
 
 

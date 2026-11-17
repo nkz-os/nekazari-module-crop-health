@@ -336,10 +336,10 @@ class TestAssessmentsAPI:
     def test_zone_assessments_for_parcel(self, client):
         from app.services.zonation import Zone
 
-        live = Zone(zone_id="z1", geometry=_PARCEL_GEOM, urn=None, sensor_nearby=False)
+        live = Zone(zone_id="z1", geometry=_PARCEL_GEOM, urn=None, sensor_nearby=False, zone_version="r1")
         with patch(
             "app.api.assessments._fetch_zone_assessment_entities",
-            AsyncMock(return_value=[SAMPLE_ZONE_ENTITY]),
+            AsyncMock(return_value=[{**SAMPLE_ZONE_ENTITY, "nkz:zoningRunId": "r1"}]),
         ), patch(
             "app.api.assessments._fetch_assessment_entities",
             AsyncMock(return_value=[]),
@@ -357,10 +357,10 @@ class TestAssessmentsAPI:
     def test_zone_assessments_all(self, client):
         from app.services.zonation import Zone
 
-        live = Zone(zone_id="z1", geometry=_PARCEL_GEOM, urn=None, sensor_nearby=False)
+        live = Zone(zone_id="z1", geometry=_PARCEL_GEOM, urn=None, sensor_nearby=False, zone_version="r1")
         with patch(
             "app.api.assessments._fetch_zone_assessment_entities",
-            AsyncMock(return_value=[SAMPLE_ZONE_ENTITY]),
+            AsyncMock(return_value=[{**SAMPLE_ZONE_ENTITY, "nkz:zoningRunId": "r1"}]),
         ), patch(
             "app.api.assessments._fetch_assessment_entities",
             AsyncMock(return_value=[]),

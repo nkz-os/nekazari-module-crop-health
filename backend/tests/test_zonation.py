@@ -1,6 +1,6 @@
 import pytest
 
-from app.services.zonation import resolve_zones, is_whole_parcel, Zone
+from app.services.zonation import fetch_terrain_units, resolve_zones, is_whole_parcel, Zone
 
 _PARCEL_GEOM = {"type": "Polygon", "coordinates": [[[0, 0], [0, 1], [1, 1], [1, 0], [0, 0]]]}
 
@@ -17,7 +17,7 @@ class _FakeOrion:
 
 
 @pytest.mark.asyncio
-async def test_resolve_zones_from_agriparcelzone(monkeypatch):
+async def test_fetch_terrain_units_from_agriparcelzone(monkeypatch):
     # Real weather-map shape: nkz:-prefixed attrs, colon-separated tenant-scoped URN,
     # boolean sensorNearby, keyValues location = geometry dict.
     z = [{
@@ -28,7 +28,7 @@ async def test_resolve_zones_from_agriparcelzone(monkeypatch):
         "nkz:centroid": [0.5, 0.5],
     }]
     monkeypatch.setattr("app.services.zonation._orion", lambda t: _FakeOrion(z))
-    zones = await resolve_zones("urn:ngsi-ld:AgriParcel:p1", "t", _PARCEL_GEOM)
+    zones = await fetch_terrain_units("urn:ngsi-ld:AgriParcel:p1", "t")
     assert len(zones) == 1
     assert zones[0].zone_id == "zABC-e3-N"
     assert zones[0].urn == "urn:ngsi-ld:AgriParcelZone:t:p1:zABC-e3-N"
@@ -38,12 +38,12 @@ async def test_resolve_zones_from_agriparcelzone(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_resolve_zones_compacted_keys(monkeypatch):
+async def test_fetch_terrain_units_compacted_keys(monkeypatch):
     # If the @context compacts nkz: away, the unprefixed keys must also work,
     # and zoneId falls back to the URN's last colon segment.
     z = [{"id": "urn:ngsi-ld:AgriParcelZone:t:p1:z0", "location": _PARCEL_GEOM, "zoneType": "management"}]
     monkeypatch.setattr("app.services.zonation._orion", lambda t: _FakeOrion(z))
-    zones = await resolve_zones("urn:ngsi-ld:AgriParcel:p1", "t", _PARCEL_GEOM)
+    zones = await fetch_terrain_units("urn:ngsi-ld:AgriParcel:p1", "t")
     assert len(zones) == 1 and zones[0].zone_id == "z0"
 
 
@@ -57,11 +57,11 @@ async def test_resolve_zones_fallback_whole_parcel(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_resolve_zones_sorted_deterministic(monkeypatch):
+async def test_fetch_terrain_units_sorted_deterministic(monkeypatch):
     z = [
         {"id": "urn:ngsi-ld:AgriParcelZone:t:p1:z2", "nkz:zoneId": "z2", "nkz:zoneType": "management", "location": _PARCEL_GEOM},
         {"id": "urn:ngsi-ld:AgriParcelZone:t:p1:z1", "nkz:zoneId": "z1", "nkz:zoneType": "management", "location": _PARCEL_GEOM},
     ]
     monkeypatch.setattr("app.services.zonation._orion", lambda t: _FakeOrion(z))
-    zones = await resolve_zones("urn:ngsi-ld:AgriParcel:p1", "t", _PARCEL_GEOM)
+    zones = await fetch_terrain_units("urn:ngsi-ld:AgriParcel:p1", "t")
     assert [zn.zone_id for zn in zones] == ["z1", "z2"]

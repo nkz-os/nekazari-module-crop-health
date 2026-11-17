@@ -25,3 +25,15 @@ def _no_parcel_site_lookup(request, monkeypatch):
         return parcel_site.ParcelSite(None, None, None)
 
     monkeypatch.setattr(parcel_site, "resolve_parcel_site", _empty)
+
+
+@pytest.fixture(autouse=True)
+def _no_terrain_unit_lookup(monkeypatch):
+    """Zone weather is crossed from weather-map terrain units read from the broker; tests that
+    exercise it provide units, the others must not wait on a real connection."""
+    from app.services import pipeline
+
+    async def _none(*a, **k):
+        return []
+
+    monkeypatch.setattr(pipeline, "fetch_terrain_units", _none)

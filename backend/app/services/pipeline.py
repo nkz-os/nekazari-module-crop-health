@@ -15,6 +15,7 @@ water_stress_model.py. The risk-worker uses batch meteorological data
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import logging
 import math
@@ -86,6 +87,7 @@ from app.services.redis_state import MAX_FUTURE_SKEW_S, RedisState, StoreError
 from app.services.zonation import (
     zone_weights,
     resolve_zones,
+    fetch_terrain_units,
     is_whole_parcel,
     sensors_in_zone,
     consolidate_sensor_readings,
@@ -1038,10 +1040,12 @@ async def trigger(
     irrigation_regime = await parcel_site.parcel_regime(effective_parcel, tenant_id)
 
     now_ts = _now_ts()
+    air_sensor_ctx = await _sensor_air_ctx(redis_state, tenant_id, effective_parcel, now_ts)
+    instant_ctx = await _cwsi_sensor_ctx(redis_state, tenant_id, effective_parcel, now_ts)
     meteo = await resolve_meteo_context(
         effective_parcel, tenant_id,
-        sensor_ctx=await _sensor_air_ctx(redis_state, tenant_id, effective_parcel, now_ts),
-        instant_sensor_ctx=await _cwsi_sensor_ctx(redis_state, tenant_id, effective_parcel, now_ts),
+        sensor_ctx=air_sensor_ctx,
+        instant_sensor_ctx=instant_ctx,
         weather_map_fn=_weather_map_meteo,
         regional_fn=_regional_meteo,
     )
@@ -1073,6 +1077,7 @@ async def trigger(
             a.zone_geometry = zone.geometry
             a.zone_version = zone.zone_version
             a.zone_rank = zone.zone_rank
+            a.zone_level = zone.zone_level
         return a
 
     # ── Soil properties (benefits 1+2) ───────────────────────────────────
@@ -1103,6 +1108,9 @@ async def trigger(
     # zone (point-in-polygon) and publishing per-zone + worst-zone rollup.
     parcel_geom = await context_client._resolve_parcel_geometry(effective_parcel, tenant_id)
     zones = await resolve_zones(effective_parcel, tenant_id, parcel_geom or {})
+    if not is_whole_parcel(zones):
+        # Same zone weather as the scheduled run; a failed crossing leaves the parcel's.
+        await _cross_terrain_weather(zones, effective_parcel, tenant_id)
 
     if is_whole_parcel(zones):
         assessment = _mk_assessment(None)
@@ -1152,11 +1160,23 @@ async def trigger(
         # Everything this path does not resolve per zone is the parcel's value; written
         # explicitly because the upsert merges and would keep the daily run's labels.
         used_fidelity: dict[str, str] = {}
+        # The zone's weather source is the same as in the scheduled run (crossed terrain units).
+        from app.services.zone_inputs import zone_meteo_ctx
+        zone_ctx = zone_meteo_ctx(z, now)
+        zone_meteo = await resolve_meteo_context(
+            effective_parcel, tenant_id,
+            sensor_ctx=air_sensor_ctx,
+            instant_sensor_ctx=instant_ctx,
+            zone_ctx=zone_ctx,
+            weather_map_fn=_weather_map_meteo,
+            regional_fn=_regional_meteo,
+        )
+        zone_weather = _snapshot_from_meteo(zone_meteo)
         try:
             await _run_engines(
                 a,
                 metric_type=metric_type if is_sensor else "",
-                weather=weather,
+                weather=zone_weather,
                 phenology=phenology,
                 redis_state=redis_state if is_sensor else None,
                 entity_id=entity_id if is_sensor else effective_parcel,
@@ -1186,7 +1206,7 @@ async def trigger(
         a.input_fidelity = {
             "meteo": (
                 "iot_sensor" if is_sensor and meteo.fidelity.get("air_temp_c") == "iot_sensor"
-                else "parcel_inherited"
+                else "zone_specific" if zone_ctx else "parcel_inherited"
             ),
             "gdd": "parcel_inherited",
             "ndvi": "parcel_inherited",
@@ -2243,6 +2263,8 @@ _SENSOR_METRICS = {
 }
 _SENSOR_MAX_AGE_H = 24
 _DEVICE_LIST_LIMIT = 1000
+# Terrain units must cover at least this share of a zone for it to get zone weather.
+_MIN_TERRAIN_COVERAGE = 0.5
 
 
 def _device_point(device: dict) -> tuple[float, float] | None:
@@ -2292,6 +2314,39 @@ def _is_open_field_sensor_of(device: dict, parcel_urn: str, inside: bool) -> boo
             if target:
                 return target == parcel_urn
     return inside
+
+
+async def _list_devices(tenant_id: str) -> list[dict]:
+    """The tenant's Devices (one listing); ``[]`` on any failure."""
+    try:
+        from nkz_platform_sdk.orion import OrionClient
+
+        settings = get_settings()
+        client = OrionClient(tenant_id, base_url=settings.orion_ld_url, context_url=settings.orion_ld_context)
+        try:
+            return await client.query_entities(type="Device", options="keyValues", limit=_DEVICE_LIST_LIMIT) or []
+        finally:
+            await client.close()
+    except Exception as exc:  # noqa: BLE001 -- fail-safe
+        logger.warning("_list_devices: failed for %s — []: %s", tenant_id, exc)
+        return []
+
+
+def located_parcel_sensors(devices: list[dict], parcel_id: str, zones: list[Zone]) -> list[dict]:
+    """Open-field sensors of the parcel with their position (no readings).
+
+    A device is "inside" the parcel when it falls in any of its zones (they tile it).
+    """
+    parcel_urn = parcel_id if parcel_id.startswith("urn:") else f"urn:ngsi-ld:AgriParcel:{parcel_id}"
+    out: list[dict] = []
+    for dev in devices:
+        pt = _device_point(dev)
+        if pt is None:
+            continue
+        inside = any(point_in_polygon(pt[0], pt[1], z.geometry) for z in zones)
+        if _is_open_field_sensor_of(dev, parcel_urn, inside):
+            out.append({"device_id": dev.get("id"), "lon": pt[0], "lat": pt[1]})
+    return out
 
 
 async def _gather_parcel_sensors(
@@ -2361,6 +2416,37 @@ async def _gather_parcel_sensors(
         return []
 
 
+async def _cross_terrain_weather(
+    zones: list[Zone], parcel_id: str, tenant_id: str
+) -> dict[str, dict[str, float]]:
+    """Fill each zone's weather from the terrain units it overlaps.
+
+    Returns the terrain-unit shares of the zones with enough coverage (those get
+    crossed daily series); a zone without enough coverage keeps no zone weather.
+    Fail-safe: any error gives no zone weather.
+    """
+    from app.services.terrain_meteo import apply_terrain_meteo, overlap_fractions
+
+    try:
+        units = await fetch_terrain_units(parcel_id, tenant_id)
+        if not units:
+            return {}
+
+        def _cross() -> dict[str, dict[str, float]]:
+            out: dict[str, dict[str, float]] = {}
+            for z in zones:
+                fr, covered, ha = overlap_fractions(z.geometry, units)
+                apply_terrain_meteo(z, units, fr, covered, ha)
+                if covered >= _MIN_TERRAIN_COVERAGE and fr:
+                    out[z.zone_id] = fr
+            return out
+
+        return await asyncio.to_thread(_cross)
+    except Exception as exc:  # noqa: BLE001 -- zone weather is optional, the parcel's is used
+        logger.warning("_cross_terrain_weather: failed for %s, no zone weather: %s", parcel_id, exc)
+        return {}
+
+
 async def _assess_zone(
     zone: Zone,
     parcel_id: str,
@@ -2422,6 +2508,7 @@ async def _assess_zone(
         zone_geometry=None if whole else zone.geometry,
         zone_version=None if whole else zone.zone_version,
         zone_rank=None if whole else zone.zone_rank,
+        zone_level=None if whole else zone.zone_level,
     )
     if not whole and zone_twi:
         assessment.twi_mean = zone_twi.get("twiMean")
@@ -2633,11 +2720,15 @@ async def compute_assessment(
     zones = await resolve_zones(parcel_id, tenant_id, parcel_geom or {})
     whole = is_whole_parcel(zones)
 
+    # Zone weather is crossed from the weather-map terrain units over each zone.
+    fractions_by_zone = None if whole else await _cross_terrain_weather(zones, parcel_id, tenant_id)
+
     # Per-zone inputs: zone meteo + daily series (one request) and located sensors.
     from app.services.zone_inputs import gather_zone_inputs, zone_meteo_ctx
     inputs = await gather_zone_inputs(
         parcel_id, parcel_short, tenant_id, zones, season_start, now,
         fetch_daily=_fetch_zone_daily, gather_sensors=_gather_parcel_sensors,
+        fractions_by_zone=fractions_by_zone,
     )
 
     from app.services.zonation import zone_weights
@@ -3494,16 +3585,24 @@ async def _query_eoproducts(tenant_id: str, q: str, limit: int) -> list[dict]:
     return entities if isinstance(entities, list) else []
 
 
+def _zone_relation(zone_urn: str) -> str:
+    """Relation per-zone EOProducts carry: current-zoning zones vs legacy terrain units."""
+    if ":AgriManagementZone:" in zone_urn:
+        return "hasAgriManagementZone"
+    return "hasAgriParcelZone"
+
+
 async def _zone_eoproduct(tenant_id: str, zone_urn: str, attr: str, extra_q: str = "") -> dict | None:
     """Newest per-zone EOProduct carrying ``attr``, sensed within ZONE_PRODUCT_MAX_AGE_DAYS.
 
-    Per-zone products carry ``hasAgriParcelZone`` and no ``hasAgriParcel``, so the
-    parcel query never sees them and this one never sees parcel products.
+    Per-zone products carry ``hasAgriManagementZone`` (current zoning) or
+    ``hasAgriParcelZone`` (legacy) and no ``hasAgriParcel``, so the parcel query
+    never sees them and this one never sees parcel products.
     """
     now = datetime.now(timezone.utc)
     since = (now - timedelta(days=ZONE_PRODUCT_MAX_AGE_DAYS)).strftime("%Y-%m-%d")
     # The date term keeps old products from filling the page; the age check below stays as a guard.
-    q = f'hasAgriParcelZone=="{zone_urn}";sensingDate>="{since}"' + extra_q
+    q = f'{_zone_relation(zone_urn)}=="{zone_urn}";sensingDate>="{since}"' + extra_q
     entities = await _query_eoproducts(tenant_id, q, _ZONE_PRODUCT_LIMIT)
     fresh = []
     for e in entities:
@@ -3583,7 +3682,7 @@ async def _fetch_ndvi_series(
     """
     since_s = since.isoformat()
     if zone_urn:
-        q = f'hasAgriParcelZone=="{zone_urn}";sensingDate>="{since_s}"'
+        q = f'{_zone_relation(zone_urn)}=="{zone_urn}";sensingDate>="{since_s}"'
     else:
         urn = f"urn:ngsi-ld:AgriParcel:{parcel_id}"
         q = f'(hasAgriParcel=="{urn}"|refAgriParcel=="{urn}");sensingDate>="{since_s}"'

@@ -1,8 +1,10 @@
 """Management-zone resolution for zonal crop-health synthesis.
 
-crop-health CONSUMES zones from weather-map (``AgriParcelZone``); it never
-generates them. When no zones exist the parcel itself is treated as a single
-whole-parcel zone, preserving the legacy parcel-level behaviour exactly.
+crop-health evaluates per level of the parcel's current zoning
+(``AgriManagementZone``, one zone per level); it never generates zones. The
+weather-map terrain units (``AgriParcelZone``) are only an input for weather
+(``fetch_terrain_units``). With no usable current zoning the parcel itself is
+a single whole-parcel zone, the legacy parcel-level behaviour.
 
 See: docs/superpowers/specs/2026-06-21-crop-health-zonal-synthesis-design.md
 """
@@ -13,6 +15,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from app.config import get_settings
+from nkz_platform_sdk.gis.zones import default_zoning, group_zonings, point_in_polygon  # noqa: F401 (hole-aware; re-exported)
 from nkz_platform_sdk.orion import OrionClient
 
 logger = logging.getLogger(__name__)
@@ -38,6 +41,8 @@ class Zone:
     frost_risk: float | None = None
     observed_at: datetime | None = None
     sensor_distance_m: float | None = None
+    zone_level: str | None = None
+    t_min_coldest: float | None = None
 
 
 def _orion(tenant_id: str) -> OrionClient:
@@ -172,7 +177,7 @@ def is_management_zone(row: dict) -> bool:
         return False
     zone_type = _attr(row, "nkz:zoneType", "zoneType")
     if zone_type is not None:
-        return zone_type == "management"
+        return zone_type in ("management", "terrain")
     return _is_management_by_heuristic(row)
 
 
@@ -181,14 +186,17 @@ def select_management_zones(rows: list[dict]) -> list[dict]:
     return [r for r in rows if isinstance(r, dict) and is_management_zone(r)]
 
 
-async def resolve_zones(parcel_id: str, tenant_id: str, parcel_geometry: dict) -> list[Zone]:
-    """Return the parcel's ``AgriParcelZone`` zones, or a whole-parcel fallback.
+def _parcel_urn(parcel_id: str) -> str:
+    return parcel_id if parcel_id.startswith("urn:") else f"urn:ngsi-ld:AgriParcel:{parcel_id}"
 
-    Empty / error → exactly one whole-parcel zone (``zone_id="parcel"``) so the
-    caller's behaviour is identical to today when weather-map has not zoned the
-    parcel. Result is sorted by ``zone_id`` for deterministic iteration.
+
+async def fetch_terrain_units(parcel_id: str, tenant_id: str) -> list[Zone]:
+    """Weather-map terrain units (``AgriParcelZone``) of a parcel, by ``zone_id``.
+
+    Management/terrain units only (TWI and hydrology classes are excluded).
+    They carry the per-unit weather; no whole-parcel fallback (empty on error).
     """
-    urn = parcel_id if parcel_id.startswith("urn:") else f"urn:ngsi-ld:AgriParcel:{parcel_id}"
+    urn = _parcel_urn(parcel_id)
     client = _orion(tenant_id)
     try:
         rows = await client.query_entities(
@@ -198,7 +206,7 @@ async def resolve_zones(parcel_id: str, tenant_id: str, parcel_geometry: dict) -
             limit=100,
         ) or []
     except Exception as exc:  # fail-safe: no zones → whole-parcel mode
-        logger.warning("resolve_zones: query failed for %s — whole-parcel fallback: %s", urn, exc)
+        logger.warning("fetch_terrain_units: query failed for %s — no terrain units: %s", urn, exc)
         rows = []
     finally:
         await client.close()
@@ -208,7 +216,7 @@ async def resolve_zones(parcel_id: str, tenant_id: str, parcel_geometry: dict) -
         zid = _zone_id_from(r)
         if not zid:
             continue
-        geom = _geometry_of(r) or parcel_geometry
+        geom = _geometry_of(r) or {}
         sensor_nearby = bool(_attr(r, "nkz:sensorNearby", "sensorNearby") or False)
         zones.append(Zone(
             zone_id=zid,
@@ -230,34 +238,84 @@ async def resolve_zones(parcel_id: str, tenant_id: str, parcel_geometry: dict) -
             sensor_distance_m=_num(_attr(r, "nkz:sensorDistanceM", "sensorDistanceM")),
         ))
 
-    if not zones:
-        return [Zone(zone_id="parcel", geometry=parcel_geometry)]
     return sorted(zones, key=lambda z: z.zone_id)
 
 
-def point_in_polygon(lon: float, lat: float, geometry: dict) -> bool:
-    """Ray-casting point-in-polygon for a GeoJSON Polygon/MultiPolygon (outer ring)."""
-    def _ring(ring) -> bool:
-        inside = False
-        n = len(ring)
-        j = n - 1
-        for i in range(n):
-            xi, yi = ring[i][0], ring[i][1]
-            xj, yj = ring[j][0], ring[j][1]
-            if ((yi > lat) != (yj > lat)) and (
-                lon < (xj - xi) * (lat - yi) / (yj - yi) + xi
-            ):
-                inside = not inside
-            j = i
-        return inside
 
-    gtype = geometry.get("type")
-    coords = geometry.get("coordinates", [])
-    if gtype == "Polygon":
-        return _ring(coords[0]) if coords else False
-    if gtype == "MultiPolygon":
-        return any(poly and _ring(poly[0]) for poly in coords)
-    return False
+
+_LEVELS = ("high", "medium", "low", "critical")
+_CURRENT_METHOD = "vegetationIndexMultiDate"
+_ZONING_PAGE = 100
+_ZONING_MAX_PAGES = 10
+
+
+def _whole_parcel(parcel_geometry: dict) -> list[Zone]:
+    return [Zone(zone_id="parcel", geometry=parcel_geometry)]
+
+
+async def resolve_zones(parcel_id: str, tenant_id: str, parcel_geometry: dict) -> list[Zone]:
+    """One ``Zone`` per level of the parcel's current multidate zoning.
+
+    The current zoning is the most recent automatic one. It is used only if
+    its method is ``vegetationIndexMultiDate`` and every zone carries a
+    distinct, known ``zoneLevel``; anything else (no zoning, other method,
+    manual, missing/duplicated level, Orion error) is the whole parcel.
+    ``zone_id`` is the level code, sorted by ``zone_rank``. Current-zoning
+    zones may have many parts and holes: no part limit applies to them.
+    """
+    urn = _parcel_urn(parcel_id)
+    client = _orion(tenant_id)
+    rows: list[dict] = []
+    try:
+        for page in range(_ZONING_MAX_PAGES):
+            batch = await client.query_entities(
+                type="AgriManagementZone",
+                q=f'hasAgriParcel=="{urn}"',
+                options="keyValues",
+                limit=_ZONING_PAGE,
+                offset=page * _ZONING_PAGE,
+            ) or []
+            rows.extend(r for r in batch if isinstance(r, dict))
+            if len(batch) < _ZONING_PAGE:
+                break
+    except Exception as exc:  # fail-safe: whole-parcel mode
+        logger.warning("resolve_zones: query failed for %s — whole-parcel fallback: %s", urn, exc)
+        return _whole_parcel(parcel_geometry)
+    finally:
+        await client.close()
+
+    current = default_zoning(group_zonings(rows))
+    if current is None:
+        logger.info("resolve_zones: whole parcel for %s (reason=no_zoning)", urn)
+        return _whole_parcel(parcel_geometry)
+    if current.method != _CURRENT_METHOD:
+        logger.info("resolve_zones: whole parcel for %s (reason=method=%s)", urn, current.method)
+        return _whole_parcel(parcel_geometry)
+
+    by_id = {r.get("id"): r for r in rows}
+    zones: list[Zone] = []
+    seen: set[str] = set()
+    for ref in current.zones:
+        row = by_id.get(ref.id) or {}
+        level = _attr(row, "zoneLevel")
+        if level not in _LEVELS or level in seen or not ref.geometry:
+            logger.warning("resolve_zones: unusable current zoning for %s (level=%r) — whole parcel", urn, level)
+            return _whole_parcel(parcel_geometry)
+        seen.add(level)
+        zones.append(Zone(
+            zone_id=level,
+            geometry=ref.geometry,
+            urn=ref.id or None,
+            zone_type="management",
+            zone_version=_attr(row, "zoningRunId") or current.run_id,
+            zone_rank=_num(_attr(row, "zoneRank"), int),
+            area_ha=_num(_attr(row, "areaHa")),
+            zone_level=level,
+        ))
+    if not zones:
+        logger.info("resolve_zones: whole parcel for %s (reason=no_zones)", urn)
+        return _whole_parcel(parcel_geometry)
+    return sorted(zones, key=lambda z: (z.zone_rank is None, z.zone_rank or 0, z.zone_id))
 
 
 def sensors_in_zone(zone: Zone, sensors: list[dict]) -> list[dict]:
@@ -298,3 +356,10 @@ def consolidate_sensor_readings(sensors: list[dict]) -> dict:
             if isinstance(v, (int, float)):
                 acc.setdefault(k, []).append(float(v))
     return {k: sum(vs) / len(vs) for k, vs in acc.items() if vs}
+
+
+def mark_sensor_nearby(zones: list[Zone], sensors: list[dict]) -> None:
+    """Flag every zone that contains at least one located sensor."""
+    for z in zones:
+        if sensors_in_zone(z, sensors):
+            z.sensor_nearby = True

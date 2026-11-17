@@ -24,5 +24,8 @@ async def load_parcel_cycles(tenant_id: str, parcel_urn: str) -> tuple[dict, lis
     except CropDataUnavailable as exc:
         logger.warning("harvest source unavailable tenant=%s parcel=%s: %s", tenant_id, parcel_urn, exc)
         return None
+    except Exception:  # noqa: BLE001 -- a read endpoint still lists its rows when the cycles cannot be resolved
+        logger.exception("harvest source failed tenant=%s parcel=%s", tenant_id, parcel_urn)
+        return None
     finally:
         await client.close()

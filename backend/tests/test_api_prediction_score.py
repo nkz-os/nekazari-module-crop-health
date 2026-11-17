@@ -187,3 +187,9 @@ async def test_load_parcel_cycles(monkeypatch):
 
     monkeypatch.setattr(harvest_source, "load_crop_data", ok)
     assert await harvest_source.load_parcel_cycles("tenant-a", URN) == (parcel, [])
+
+    async def broken(client, urn):
+        raise ValueError("unexpected shape")
+
+    monkeypatch.setattr(harvest_source, "load_crop_data", broken)
+    assert await harvest_source.load_parcel_cycles("tenant-a", URN) is None

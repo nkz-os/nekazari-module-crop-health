@@ -74,3 +74,13 @@ def test_score_rows_lead_days_and_missing_estimates():
                             season_start=date(2026, 10, 20), crop="TRZAX", kind="yield", model="aquacrop",
                             model_version="v1", as_of=date(2027, 5, 1), payload={}, inputs={})
     assert ps.score_rows([bare], obs)[0]["estimates"] == []
+
+
+def test_pick_cycle_prefers_the_cycle_of_the_predicted_species():
+    cover = dict(_cycle("2026-10-20"), species="VICSA")
+    wheat = _cycle("2026-10-20")
+    assert ps.pick_cycle([cover, wheat], date(2026, 10, 20), None, "TRZAX") == (wheat, "exact")
+    assert ps.pick_cycle([cover, wheat], date(2026, 10, 20), None, "HELAN") == (cover, "exact")
+    grove = dict(_cycle("2015-03-01", lifecycle="perennial"), species="OLVEU")
+    assert ps.pick_cycle([grove, wheat], date(2026, 10, 25), date(2026, 11, 15), "TRZAX") == (wheat, "by_date")
+    assert ps.pick_cycle([grove, wheat], date(2026, 10, 25), date(2026, 11, 15)) == (grove, "by_date")

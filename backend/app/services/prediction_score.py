@@ -37,16 +37,32 @@ def _bound(cycle: dict, side: str) -> date | None:
     return _date(block.get("date")) if isinstance(block, dict) else None
 
 
-def pick_cycle(cycles: list[dict], season_start: date, last_as_of: date | None) -> tuple[dict | None, str | None]:
-    """The cycle starting on season_start ("exact"), else one covering last_as_of ("by_date")."""
-    for c in cycles:
-        if _bound(c, "start") == season_start:
-            return c, "exact"
+def _prefer(candidates: list[dict], species: str | None) -> dict:
+    if species:
+        for c in candidates:
+            if c.get("species") == species:
+                return c
+    return candidates[0]
+
+
+def pick_cycle(cycles: list[dict], season_start: date, last_as_of: date | None,
+               species: str | None = None) -> tuple[dict | None, str | None]:
+    """The cycle starting on season_start ("exact"), else one covering last_as_of ("by_date").
+
+    Several cycles can share a start date or overlap (a cover crop next to the
+    main crop, an annual under a perennial): the one of the predicted species wins.
+    """
+    exact = [c for c in cycles if _bound(c, "start") == season_start]
+    if exact:
+        return _prefer(exact, species), "exact"
     if last_as_of is not None:
+        covering = []
         for c in cycles:
             start, end = _bound(c, "start"), _bound(c, "end")
             if start is not None and start <= last_as_of and (end is None or end >= last_as_of):
-                return c, "by_date"
+                covering.append(c)
+        if covering:
+            return _prefer(covering, species), "by_date"
     return None, None
 
 

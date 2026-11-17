@@ -101,7 +101,7 @@ async def score_predictions(
             reason = "harvest_source_unavailable"
         else:
             parcel, cycles = source
-            cycle, match = pscore.pick_cycle(cycles, season, max(r.as_of for r in rows))
+            cycle, match = pscore.pick_cycle(cycles, season, max(r.as_of for r in rows), crop)
             observed, reason = pscore.observed_harvest(cycle, parcel)
     items = pscore.score_rows(rows, observed)
     if format == "csv":

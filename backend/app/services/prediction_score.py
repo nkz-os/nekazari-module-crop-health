@@ -15,6 +15,7 @@ from app.services.prediction_log import PredictionRecord
 # Same value as the SDK's lifecycle marker for perennial crops (nkz_platform_sdk.crop_cycles).
 PERENNIAL = "perennial"
 SCORED_UNIT = "t/ha"
+ASSUMPTIONS = ("weight_in_kg", "area_in_ha", "whole_parcel_harvested")
 
 
 def _num(v: Any) -> float | None:
@@ -37,37 +38,41 @@ def _bound(cycle: dict, side: str) -> date | None:
     return _date(block.get("date")) if isinstance(block, dict) else None
 
 
-def _prefer(candidates: list[dict], species: str | None) -> dict:
-    if species:
-        for c in candidates:
-            if c.get("species") == species:
-                return c
-    return candidates[0]
+# A sowing date corrected after the first prediction rarely moves further than this.
+SOWING_CORRECTION_DAYS = 45
 
 
-def pick_cycle(cycles: list[dict], season_start: date, last_as_of: date | None,
-               species: str | None = None) -> tuple[dict | None, str | None]:
-    """The cycle starting on season_start ("exact"), else one covering last_as_of ("by_date").
+def _same_crop(cycle: dict, species: str | None) -> bool:
+    return not species or cycle.get("species") in (None, species)
 
-    Several cycles can share a start date or overlap (a cover crop next to the
-    main crop, an annual under a perennial): the one of the predicted species wins.
+
+def pick_cycle(cycles: list[dict], season_start: date, species: str | None = None) -> tuple[dict | None, str | None]:
+    """The crop cycle the predictions of ``season_start`` belong to.
+
+    "exact": a cycle of the predicted species sown on that day. "by_date": no such
+    cycle (the sowing date was corrected after the predictions were logged), so the
+    cycle of that species sown closest to it, within SOWING_CORRECTION_DAYS. A cycle
+    of another species, one without a sowing date or one still pending is never
+    matched: a wrong cycle would give a confident and false error.
     """
-    exact = [c for c in cycles if _bound(c, "start") == season_start]
-    if exact:
-        return _prefer(exact, species), "exact"
-    if last_as_of is not None:
-        covering = []
-        for c in cycles:
-            start, end = _bound(c, "start"), _bound(c, "end")
-            if start is not None and start <= last_as_of and (end is None or end >= last_as_of):
-                covering.append(c)
-        if covering:
-            return _prefer(covering, species), "by_date"
+    sown = [(c, _bound(c, "start")) for c in cycles
+            if not c.get("pending") and _same_crop(c, species) and _bound(c, "start") is not None]
+    for c, start in sown:
+        if start == season_start:
+            return c, "exact"
+    near = [(abs((start - season_start).days), i, c) for i, (c, start) in enumerate(sown)
+            if abs((start - season_start).days) <= SOWING_CORRECTION_DAYS]
+    if near:
+        return min(near, key=lambda x: (x[0], x[1]))[2], "by_date"
     return None, None
 
 
 def observed_harvest(cycle: dict | None, parcel: dict | None) -> tuple[dict | None, str | None]:
-    """Observed yield in t/ha from the cycle's harvested kg and the parcel area (ha), or a reason."""
+    """Observed yield in t/ha from the cycle's harvested kg and the parcel area (ha), or a reason.
+
+    ``harvest_date`` is the day the cycle ended (its first harvest); ``weight_kg`` adds every
+    harvest of the cycle. What the data cannot tell is listed under ``assumptions``.
+    """
     if cycle is None:
         return None, "cycle_not_found"
     if cycle.get("lifecycle") == PERENNIAL:
@@ -86,6 +91,7 @@ def observed_harvest(cycle: dict | None, parcel: dict | None) -> tuple[dict | No
         "yield_t_ha": round(weight / area / 1000, 3),
         "basis": "as_delivered",
         "completeness": "unknown",
+        "assumptions": list(ASSUMPTIONS),
     }, None
 
 
@@ -110,7 +116,8 @@ def score_estimate(est: dict, observed_t_ha: float | None) -> dict:
             within_pct = p10 <= obs <= p90
         if low is not None and high is not None:
             within_rng = low <= obs <= high
-            distance = 0.0 if within_rng else (round(obs - high, 3) if obs > high else round(obs - low, 3))
+            # Same sign as error_t_ha: negative when the prediction fell short of the harvest.
+            distance = 0.0 if within_rng else (round(high - obs, 3) if obs > high else round(low - obs, 3))
     return {
         "provider_id": est.get("provider_id"), "basis": est.get("basis"),
         "validation_status": val.get("status"), "unit": unit, "moisture_pct": _num(moist.get("pct")),

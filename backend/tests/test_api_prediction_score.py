@@ -24,7 +24,7 @@ GC = {"basis": "gap_corrected", "unit": "t/ha", "range": {"low": 1.05, "high": 6
       "validation": {"status": "experimental"}}
 HEADER = ("parcel_id,season_start,crop,as_of,emitted_at,model,model_version,lead_days,provider_id,basis,"
           "validation_status,unit,moisture_pct,p10,p50,p90,low,high,observed_t_ha,error_t_ha,error_pct,"
-          "within_p10_p90,within_range,distance_to_range_t_ha")
+          "within_p10_p90,within_range,distance_to_range_t_ha,cycle_match,reason")
 
 
 def _rec(**kw):

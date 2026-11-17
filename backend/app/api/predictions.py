@@ -64,7 +64,7 @@ async def list_predictions(
 SCORE_CSV_COLUMNS = ["parcel_id", "season_start", "crop", "as_of", "emitted_at", "model", "model_version",
                      "lead_days", "provider_id", "basis", "validation_status", "unit", "moisture_pct", "p10",
                      "p50", "p90", "low", "high", "observed_t_ha", "error_t_ha", "error_pct", "within_p10_p90",
-                     "within_range", "distance_to_range_t_ha"]
+                     "within_range", "distance_to_range_t_ha", "cycle_match", "reason"]
 
 
 def _cell(v):
@@ -101,7 +101,7 @@ async def score_predictions(
             reason = "harvest_source_unavailable"
         else:
             parcel, cycles = source
-            cycle, match = pscore.pick_cycle(cycles, season, max(r.as_of for r in rows), crop)
+            cycle, match = pscore.pick_cycle(cycles, season, crop)
             observed, reason = pscore.observed_harvest(cycle, parcel)
     items = pscore.score_rows(rows, observed)
     if format == "csv":
@@ -110,10 +110,11 @@ async def score_predictions(
         writer.writerow(SCORE_CSV_COLUMNS)
         obs_yield = observed["yield_t_ha"] if observed else None
         for it in items:
-            for est in it["estimates"]:
+            # A row without estimates still gets its line: a logged prediction never vanishes from the export.
+            for est in it["estimates"] or [{}]:
                 values = {"parcel_id": urn, "season_start": season.isoformat(), "crop": crop, **it, **est,
-                          "observed_t_ha": obs_yield}
-                writer.writerow([_cell(values[c]) for c in SCORE_CSV_COLUMNS])
+                          "observed_t_ha": obs_yield, "cycle_match": match, "reason": reason}
+                writer.writerow([_cell(values.get(c)) for c in SCORE_CSV_COLUMNS])
         return Response(content=buf.getvalue(), media_type="text/csv; charset=utf-8",
                         headers={"Content-Disposition": 'attachment; filename="prediction-score.csv"'})
     return {"parcel_id": urn, "season_start": season.isoformat() if season else None, "crop": crop,

@@ -19,17 +19,33 @@ def _cycle(start, end=None, weight=None, lifecycle="annual"):
 
 def test_pick_cycle_exact_then_by_date_then_none():
     cycles = [_cycle(None), _cycle("2025-11-01", "2026-07-01"), _cycle("2026-10-20")]
-    assert ps.pick_cycle(cycles, date(2026, 10, 20), None) == (cycles[2], "exact")
-    assert ps.pick_cycle(cycles, date(2026, 10, 25), date(2026, 11, 15)) == (cycles[2], "by_date")
-    assert ps.pick_cycle(cycles, date(2024, 1, 1), date(2024, 2, 1)) == (None, None)
-    assert ps.pick_cycle([_cycle(None)], date(2026, 10, 20), date(2026, 11, 15)) == (None, None)
+    assert ps.pick_cycle(cycles, date(2026, 10, 20)) == (cycles[2], "exact")
+    assert ps.pick_cycle(cycles, date(2026, 10, 25)) == (cycles[2], "by_date")
+    assert ps.pick_cycle(cycles, date(2024, 1, 1)) == (None, None)
+    assert ps.pick_cycle([_cycle(None)], date(2026, 10, 20)) == (None, None)
+
+
+def test_pick_cycle_never_takes_the_previous_season_or_a_pending_cycle():
+    # Last season's cycle was never closed (no end date) and carries a harvest: it must not be
+    # scored against this season's predictions, whose sowing date was corrected by a few days.
+    last = _cycle("2025-10-20", None, 30000.0)
+    this = _cycle("2026-10-20")
+    assert ps.pick_cycle([last, this], date(2026, 10, 25), "TRZAX") == (this, "by_date")
+    assert ps.pick_cycle([last], date(2026, 10, 25), "TRZAX") == (None, None)
+    assert ps.pick_cycle([_cycle("2026-09-05")], date(2026, 10, 20)) == (_cycle("2026-09-05"), "by_date")   # 45 days
+    assert ps.pick_cycle([_cycle("2026-09-04")], date(2026, 10, 20)) == (None, None)                         # 46 days
+    pending = dict(_cycle("2026-10-20"), pending=True)
+    assert ps.pick_cycle([pending], date(2026, 10, 20)) == (None, None)
+    near, nearer = _cycle("2026-10-01"), _cycle("2026-10-28")
+    assert ps.pick_cycle([near, nearer], date(2026, 10, 25)) == (nearer, "by_date")
 
 
 def test_observed_harvest_reasons_and_value():
     done = _cycle("2026-10-20", "2027-07-05", 40000.0)
     assert ps.observed_harvest(done, {"area": 8.0}) == ({
         "harvest_date": "2027-07-05", "weight_kg": 40000.0, "area_ha": 8.0, "yield_t_ha": 5.0,
-        "basis": "as_delivered", "completeness": "unknown"}, None)
+        "basis": "as_delivered", "completeness": "unknown",
+        "assumptions": ["weight_in_kg", "area_in_ha", "whole_parcel_harvested"]}, None)
     assert ps.observed_harvest(None, {"area": 8.0}) == (None, "cycle_not_found")
     assert ps.observed_harvest(_cycle("2026-10-20"), {"area": 8.0}) == (None, "no_harvest_recorded")
     assert ps.observed_harvest(_cycle("2026-10-20", "2027-07-05", 0), {"area": 8.0}) == (None, "no_harvest_recorded")
@@ -47,8 +63,12 @@ def test_score_estimate_percentiles_and_range():
     gc = ps.score_estimate(GC, 5.0)
     assert (gc["low"], gc["high"], gc["within_range"], gc["distance_to_range_t_ha"]) == (1.05, 6.79, True, 0.0)
     assert gc["error_t_ha"] is None and gc["within_p10_p90"] is None
-    assert ps.score_estimate(GC, 7.5)["distance_to_range_t_ha"] == 0.71
-    assert ps.score_estimate(GC, 0.5)["distance_to_range_t_ha"] == -0.55
+    # same sign as error_t_ha (prediction minus observed): negative when the harvest beat the range
+    assert ps.score_estimate(GC, 7.5)["distance_to_range_t_ha"] == -0.71
+    assert ps.score_estimate(GC, 0.5)["distance_to_range_t_ha"] == 0.55
+    both = dict(GC, percentiles={"p10": 2.0, "p50": 4.0, "p90": 6.0})
+    over = ps.score_estimate(both, 7.5)
+    assert over["error_t_ha"] == -3.5 and over["distance_to_range_t_ha"] == -0.71
 
 
 def test_score_estimate_never_invents():
@@ -76,11 +96,25 @@ def test_score_rows_lead_days_and_missing_estimates():
     assert ps.score_rows([bare], obs)[0]["estimates"] == []
 
 
-def test_pick_cycle_prefers_the_cycle_of_the_predicted_species():
+def test_pick_cycle_only_matches_the_predicted_species():
     cover = dict(_cycle("2026-10-20"), species="VICSA")
     wheat = _cycle("2026-10-20")
-    assert ps.pick_cycle([cover, wheat], date(2026, 10, 20), None, "TRZAX") == (wheat, "exact")
-    assert ps.pick_cycle([cover, wheat], date(2026, 10, 20), None, "HELAN") == (cover, "exact")
+    unnamed = dict(_cycle("2026-10-20"), species=None)
+    assert ps.pick_cycle([cover, wheat], date(2026, 10, 20), "TRZAX") == (wheat, "exact")
+    assert ps.pick_cycle([cover], date(2026, 10, 20), "TRZAX") == (None, None)
+    assert ps.pick_cycle([unnamed], date(2026, 10, 20), "TRZAX") == (unnamed, "exact")
     grove = dict(_cycle("2015-03-01", lifecycle="perennial"), species="OLVEU")
-    assert ps.pick_cycle([grove, wheat], date(2026, 10, 25), date(2026, 11, 15), "TRZAX") == (wheat, "by_date")
-    assert ps.pick_cycle([grove, wheat], date(2026, 10, 25), date(2026, 11, 15)) == (grove, "by_date")
+    assert ps.pick_cycle([grove, wheat], date(2026, 10, 25), "TRZAX") == (wheat, "by_date")
+
+
+def test_observed_harvest_states_its_assumptions():
+    done = _cycle("2026-10-20", "2027-07-05", 40000.0)
+    observed, _ = ps.observed_harvest(done, {"area": 8.0})
+    assert observed["assumptions"] == ["weight_in_kg", "area_in_ha", "whole_parcel_harvested"]
+
+
+def test_rows_logged_after_the_harvest_have_a_negative_lead():
+    rec = PredictionRecord(tenant_id="tenant-a", parcel_id="urn:ngsi-ld:AgriParcel:p1",
+                           season_start=date(2026, 10, 20), crop="TRZAX", kind="yield", model="aquacrop",
+                           model_version="v1", as_of=date(2027, 7, 10), payload={"estimates": [WL]}, inputs={})
+    assert ps.score_rows([rec], {"harvest_date": "2027-07-05", "yield_t_ha": 5.0})[0]["lead_days"] == -5

@@ -48,6 +48,14 @@ function layerLabel(a: AssessmentData, mode: MapLayerMode): string {
   return value != null ? value.toFixed(mode === 'vigor' ? 0 : 2) : '—';
 }
 
+/** Second half of a zone's map label: the health word only in severity mode, else the value that colours the fill. */
+export function zoneSecondaryLabel(
+  a: AssessmentData, mode: MapLayerMode, t: (key: string) => string,
+): string | null {
+  if (mode === 'severity') return a.overallSeverity ? t(`severity.${a.overallSeverity}`) : null;
+  return layerLabel(a, mode);
+}
+
 export function layerColor(a: AssessmentData, mode: MapLayerMode): { fill: string; alpha: number } {
   if (mode === 'severity') {
     return SEVERITY_COLORS[a.overallSeverity] || SEVERITY_COLORS.LOW;
@@ -278,7 +286,7 @@ const CropHealthLayer: React.FC = () => {
         const style = emphasisStyle(emphasis, zoneFillAlpha(zone, colors.alpha));
         const number = numbers.get(zoneKey(zone.parcelId, zone.zoneId));
         const levelLabel = zoneLevelLabel(tRef.current, zone.zoneLevel);
-        const healthLabel = zone.overallSeverity ? tRef.current(`severity.${zone.overallSeverity}`) : null;
+        const healthLabel = zoneSecondaryLabel(zone, currentMode, tRef.current);
         const description = zoneMapLabel(number, layerLabel(zone, currentMode), levelLabel);
         const labelStyle = zoneLabelStyle(emphasis);
         const outlineStyle = zoneOutlineStyle(emphasis, colors.fill);

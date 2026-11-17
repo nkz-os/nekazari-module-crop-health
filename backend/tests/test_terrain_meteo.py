@@ -1,0 +1,115 @@
+from datetime import datetime, timezone
+
+import pytest
+
+from app.services.terrain_meteo import apply_terrain_meteo, cross_daily, overlap_fractions
+from app.services.zonation import Zone
+
+# ~100 m x 100 m square near 42 N (1e-3 deg lat ~ 111 m)
+LAT0, LON0 = 42.0, -1.6
+DLAT = 100 / 111320
+DLON = 100 / (111320 * 0.7431)  # cos(42 deg)
+
+
+def _rect(x0, y0, x1, y1):
+    """Fractions of the unit square -> Polygon ring."""
+    lo = lambda x: LON0 + x * DLON  # noqa: E731
+    la = lambda y: LAT0 + y * DLAT  # noqa: E731
+    return [[lo(x0), la(y0)], [lo(x0), la(y1)], [lo(x1), la(y1)], [lo(x1), la(y0)], [lo(x0), la(y0)]]
+
+
+def _poly(*rings):
+    return {"type": "Polygon", "coordinates": list(rings)}
+
+
+ZONE_SQ = _poly(_rect(0, 0, 1, 1))
+
+
+def _unit(zid, geom, **kw):
+    return Zone(zone_id=zid, geometry=geom, **kw)
+
+
+A = _unit("A", _poly(_rect(0, 0, 0.5, 1)))      # west half
+B = _unit("B", _poly(_rect(0.5, 0, 0.75, 1)))   # next quarter
+
+
+def test_fractions_normalised_over_covered_part():
+    fr, covered, ha = overlap_fractions(ZONE_SQ, [A, B], step_m=2.0)
+    assert covered == pytest.approx(0.75, abs=0.03)
+    assert fr["A"] == pytest.approx(2 / 3, abs=0.03) and fr["B"] == pytest.approx(1 / 3, abs=0.03)
+    assert sum(fr.values()) == pytest.approx(1.0)
+    assert ha["A"] == pytest.approx(0.5, abs=0.03)
+
+
+def test_unit_only_inside_hole_has_zero_share():
+    zone = _poly(_rect(0, 0, 1, 1), _rect(0.25, 0.25, 0.75, 0.75))  # hole in the middle
+    inner = _unit("in", _poly(_rect(0.3, 0.3, 0.7, 0.7)))
+    outer = _unit("out", _poly(_rect(0, 0, 1, 0.2)))
+    fr, covered, ha = overlap_fractions(zone, [inner, outer], step_m=2.0)
+    assert fr.get("in", 0.0) == 0.0 and ha.get("in", 0.0) == 0.0
+    assert fr["out"] == pytest.approx(1.0)
+    assert covered == pytest.approx(0.2 / 0.75, abs=0.03)
+
+
+def test_overlap_fractions_empty():
+    assert overlap_fractions(ZONE_SQ, []) == ({}, 0.0, {})
+
+
+def _u(zid, **kw):
+    return _unit(zid, ZONE_SQ, **kw)
+
+
+def test_cross_meteo_weighted_mean_and_coldest():
+    a = _u("A", t_min=2.0, t_max=14.0, eto=1.0)
+    b = _u("B", t_min=-1.5, t_max=12.0, eto=0.8)
+    z = _u("L")
+    apply_terrain_meteo(z, [a, b], {"A": .85, "B": .15}, 1.0, {"A": .85, "B": .15})
+    assert z.t_min == pytest.approx(1.475) and z.eto == pytest.approx(0.97)
+    assert z.t_max == pytest.approx(13.7)
+    assert z.t_min_coldest == -1.5
+
+
+def test_coldest_ignores_tiny_unit():
+    a = _u("A", t_min=2.0)
+    b = _u("B", t_min=-3.0)
+    z = _u("L")
+    apply_terrain_meteo(z, [a, b], {"A": .95, "B": .05}, 1.0, {"A": 0.95, "B": 0.02})
+    assert z.t_min_coldest == 2.0
+
+
+def test_coldest_falls_back_to_largest_share():
+    a = _u("A", t_min=2.0)
+    z = _u("L")
+    apply_terrain_meteo(z, [a], {"A": 0.05}, 1.0, {"A": 0.01})
+    assert z.t_min_coldest == 2.0
+
+
+def test_cross_meteo_skips_low_coverage():
+    a = _u("A", t_min=2.0, t_max=10.0, eto=1.0)
+    z = _u("L")
+    apply_terrain_meteo(z, [a], {"A": 1.0}, 0.4, {"A": 1.0})
+    assert z.t_min is None and z.t_min_coldest is None and z.eto is None and z.observed_at is None
+
+
+def test_missing_variable_renormalised_and_oldest_observed():
+    old = datetime(2026, 11, 1, tzinfo=timezone.utc)
+    new = datetime(2026, 11, 2, tzinfo=timezone.utc)
+    a = _u("A", t_min=2.0, eto=1.0, observed_at=new)
+    b = _u("B", t_min=4.0, eto=None, observed_at=old)
+    z = _u("L")
+    apply_terrain_meteo(z, [a, b], {"A": .5, "B": .5}, 1.0, {"A": 1.0, "B": 1.0})
+    assert z.t_min == pytest.approx(3.0) and z.eto == pytest.approx(1.0)
+    assert z.t_max is None and z.solar_radiation_wm2 is None
+    assert z.observed_at == old
+
+
+def test_cross_daily_renormalises_missing_unit_day():
+    daily = {
+        "A": [{"date": "2026-11-02", "tMin": 2.0, "tMax": 10.0, "eto": 1.0},
+              {"date": "2026-11-01", "tMin": 0.0, "tMax": 8.0, "eto": 0.5}],
+        "B": [{"date": "2026-11-01", "tMin": 4.0, "tMax": 12.0, "eto": 1.5}],
+    }
+    rows = cross_daily(daily, {"A": 0.75, "B": 0.25})
+    assert [r["date"] for r in rows] == ["2026-11-01", "2026-11-02"]
+    assert rows[0]["tMin"] == pytest.approx(1.0) and rows[0]["eto"] == pytest.approx(0.75)
+    assert rows[1]["tMin"] == 2.0 and rows[1]["tMax"] == 10.0

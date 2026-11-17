@@ -38,13 +38,17 @@ def overlap_fractions(
         return {}, 0.0, {}
     x0, y0, x1, y1 = box
     mid_lat = (y0 + y1) / 2.0
+    cos_lat = max(math.cos(math.radians(mid_lat)), 1e-6)
+    w_m = (x1 - x0) * _M_PER_DEG_LAT * cos_lat
+    h_m = (y1 - y0) * _M_PER_DEG_LAT
+    # step_m is the upper bound; small zones get ~40 samples per side (floor 1 m)
+    step_m = max(1.0, min(step_m, math.sqrt(w_m * h_m) / 40.0))
     dy = step_m / _M_PER_DEG_LAT
-    dx = step_m / (_M_PER_DEG_LAT * max(math.cos(math.radians(mid_lat)), 1e-6))
+    dx = step_m / (_M_PER_DEG_LAT * cos_lat)
     nx = max(1, round((x1 - x0) / dx))
     ny = max(1, round((y1 - y0) / dy))
     while nx * ny > _MAX_SAMPLES:  # very large zone: coarsen, keep determinism
         dx, dy = dx * 2, dy * 2
-        step_m *= 2
         nx = max(1, round((x1 - x0) / dx))
         ny = max(1, round((y1 - y0) / dy))
     dx, dy = (x1 - x0) / nx, (y1 - y0) / ny  # grid spans the bbox exactly
@@ -65,7 +69,7 @@ def overlap_fractions(
     hit = sum(counts.values())
     if inside == 0 or hit == 0:
         return {}, 0.0, {}
-    cell_ha = (step_m * step_m) / 10_000.0
+    cell_ha = (dx * _M_PER_DEG_LAT * cos_lat) * (dy * _M_PER_DEG_LAT) / 10_000.0  # actual refit cell
     fractions = {k: v / hit for k, v in counts.items()}
     return fractions, hit / inside, {k: v * cell_ha for k, v in counts.items()}
 
@@ -102,7 +106,7 @@ def apply_terrain_meteo(
     if with_tmin:
         sig = [u for u, w in with_tmin if w >= min_share or overlap_ha.get(u.zone_id, 0.0) >= min_ha]
         if not sig:
-            sig = [max(with_tmin, key=lambda p: p[1])[0]]
+            sig = [min(with_tmin, key=lambda p: (-p[1], p[0].zone_id))[0]]
         zone.t_min_coldest = min(u.t_min for u in sig)
     stamps: list[datetime] = [u.observed_at for u, _ in used if u.observed_at is not None]
     if stamps:

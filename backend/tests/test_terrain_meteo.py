@@ -113,3 +113,36 @@ def test_cross_daily_renormalises_missing_unit_day():
     assert [r["date"] for r in rows] == ["2026-11-01", "2026-11-02"]
     assert rows[0]["tMin"] == pytest.approx(1.0) and rows[0]["eto"] == pytest.approx(0.75)
     assert rows[1]["tMin"] == 2.0 and rows[1]["tMax"] == 10.0
+
+
+def _square_m(side_m):
+    return _poly(_rect(0, 0, side_m / 100, side_m / 100))
+
+
+def test_overlap_ha_matches_real_area_on_small_zone():
+    zone = _square_m(14)
+    unit = _unit("U", _square_m(30))
+    fr, covered, ha = overlap_fractions(zone, [unit])
+    assert covered == pytest.approx(1.0) and fr["U"] == pytest.approx(1.0)
+    assert ha["U"] == pytest.approx(0.0196, rel=0.05)
+
+
+def test_default_step_on_quarter_hectare_zone():
+    zone = _square_m(50)
+    west = _unit("W", _poly(_rect(0, 0, 0.185, 0.6)))
+    fr, covered, ha = overlap_fractions(zone, [west])  # default step_m
+    assert covered == pytest.approx(0.37, abs=0.02)
+    assert ha["W"] == pytest.approx(0.37 * 0.25, rel=0.06)
+
+
+def test_thin_zone_not_missed_at_default_step():
+    thin = _poly(_rect(0, 0, 1, 0.06))  # 6 m wide strip
+    unit = _unit("U", _poly(_rect(0, 0, 1, 1)))
+    fr, covered, ha = overlap_fractions(thin, [unit])
+    assert covered == pytest.approx(1.0) and ha["U"] == pytest.approx(0.06, rel=0.1)
+
+
+def test_coldest_fallback_tie_broken_by_zone_id():
+    z = _u("L")
+    apply_terrain_meteo(z, [_u("B", t_min=1.0), _u("A", t_min=5.0)], {"A": 0.05, "B": 0.05}, 1.0, {"A": 0.0, "B": 0.0})
+    assert z.t_min_coldest == 5.0  # A wins the tie

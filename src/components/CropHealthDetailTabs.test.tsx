@@ -192,4 +192,12 @@ describe('CropHealthDetailTabs technician water stress block', () => {
     expect(withBlock({ waterStressLevel: 'mild', waterStressMethod: 'balance', waterStressPhaseBasis: 'gdd_ndvi' })).toContain('waterStress.phaseBasis.gdd_ndvi');
     expect(withBlock({ waterStressLevel: 'mild', waterStressMethod: 'balance' })).not.toContain('waterStress.phaseBasis');
   });
+  it('rainfed: shows the level, not the millimetres; irrigated keeps the millimetres', () => {
+    const h = (extra: Record<string, unknown>) => withBlock({ waterStressLevel: 'high', waterBalanceDeficit: -22.9, ...extra });
+    const rainfed = h({ irrigationRegime: 'rainfed' });
+    expect(rainfed).not.toContain('-22.9mm');
+    expect(rainfed).not.toContain('--nkz-color-danger');
+    expect(h({ irrigationRegime: 'irrigated' })).toContain('-22.9mm');
+    expect(h({})).toContain('-22.9mm');
+  });
 });

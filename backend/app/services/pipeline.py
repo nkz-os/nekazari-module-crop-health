@@ -1635,6 +1635,8 @@ async def _run_engines(
             thermal_severity=thermal_sev, vigor_index=vigor_idx,
             stage=stage_name,
             ky_override=ky_by_stage,
+            water_stress_index=assessment.water_stress.index if assessment.water_stress else None,
+            rainfed=assessment.irrigation_regime == "rainfed",
             fidelity=assessment.cwsi.data_fidelity if assessment.cwsi else assessment.data_fidelity,
             water_not_needed=(
                 assessment.water_stress_indicator is not None

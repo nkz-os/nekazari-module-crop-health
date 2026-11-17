@@ -286,9 +286,16 @@ const CropHealthDetailTabs: React.FC<CropHealthDetailTabsProps> = ({
           <span className="text-xs text-nkz-text-secondary font-medium uppercase tracking-wider block mb-1">
             {t('contextPanel.waterBalanceLabel')}
           </span>
-          <span className="font-mono text-sm" style={{ color: assessment.waterBalanceDeficit < 0 ? 'var(--nkz-color-danger)' : 'var(--nkz-color-success)' }}>
-            {assessment.waterBalanceDeficit > 0 ? '+' : ''}{assessment.waterBalanceDeficit.toFixed(1)}mm
-          </span>
+          {assessment.irrigationRegime === 'rainfed' ? (
+            // Rainfed: the level is the signal; the millimetres are not shown.
+            <Badge intent={cwsiIntent === 'neutral' ? 'default' : cwsiIntent}>
+              {t(levelKey(assessment.waterStressLevel, assessment.irrigationRegime))}
+            </Badge>
+          ) : (
+            <span className="font-mono text-sm" style={{ color: assessment.waterBalanceDeficit < 0 ? 'var(--nkz-color-danger)' : 'var(--nkz-color-success)' }}>
+              {assessment.waterBalanceDeficit > 0 ? '+' : ''}{assessment.waterBalanceDeficit.toFixed(1)}mm
+            </span>
+          )}
         </MetricSection>
       )}
 

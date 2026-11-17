@@ -269,3 +269,20 @@ async def test_zonal_trigger_breach_from_recomputed_severity(monkeypatch):
     assert out.water_stress_indicator.level in ("moderate", "high")
     assert out.overall_severity in (Severity.HIGH, Severity.CRITICAL)
     assert "crop.stress.breach" in [e["event_type"] for e in events]
+
+
+def test_composite_rainfed_uses_ks_index_not_mm():
+    irrigated = evaluate_composite_stress(water_balance_mm=-30.0, water_stress_index=0.5, stage="vegetative")
+    rainfed = evaluate_composite_stress(water_balance_mm=-30.0, water_stress_index=0.5, stage="vegetative", rainfed=True)
+    assert irrigated.water_contribution == pytest.approx(100 * 0.45)  # mm term unchanged
+    assert rainfed.water_contribution == pytest.approx(50 * 0.45)  # (1 - Ks) x 100
+
+
+def test_composite_rainfed_skips_index_when_cwsi_present():
+    r = evaluate_composite_stress(cwsi=0.4, water_balance_mm=-30.0, water_stress_index=0.9, stage="vegetative", rainfed=True)
+    assert r.water_contribution == pytest.approx(40 * 0.45)
+
+
+def test_composite_rainfed_without_index_has_no_water_term():
+    r = evaluate_composite_stress(water_balance_mm=-30.0, stage="vegetative", rainfed=True)
+    assert r.water_contribution == 0.0

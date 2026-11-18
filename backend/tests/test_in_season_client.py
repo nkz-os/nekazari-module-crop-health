@@ -124,7 +124,7 @@ async def test_dropped_connection_is_retried_and_rejoins_the_job():
 
 
 @pytest.mark.anyio
-async def test_retry_flag_survives_the_reentry():
+async def test_retry_flag_is_not_repeated_once_the_provider_answered():
     with respx.mock as m:
         route = m.get(URL).mock(side_effect=[
             httpx.Response(200, json=_RUNNING),
@@ -133,9 +133,21 @@ async def test_retry_flag_survives_the_reentry():
         ])
         out = await fetch_in_season(URN, "tenant-a", poll_interval=0, timeout=5, retry=True)
     assert out["state"] == "done"
+    assert "retry=true" in str(route.calls[0].request.url)
     third = str(route.calls[2].request.url)
-    assert "retry=true" in third
-    assert "job_id" not in third
+    assert "retry" not in third and "job_id" not in third
+
+
+@pytest.mark.anyio
+async def test_retry_flag_is_repeated_while_no_answer_was_seen():
+    with respx.mock as m:
+        route = m.get(URL).mock(side_effect=[
+            httpx.ConnectError("boom"),
+            httpx.Response(200, json=_DONE),
+        ])
+        out = await fetch_in_season(URN, "tenant-a", poll_interval=0, timeout=5, retry=True)
+    assert out["state"] == "done"
+    assert "retry=true" in str(route.calls[1].request.url)
 
 
 @pytest.mark.anyio
@@ -143,7 +155,7 @@ async def test_gives_up_after_the_allowed_transport_errors():
     with respx.mock as m:
         route = m.get(URL).mock(side_effect=httpx.ConnectError("boom"))
         out = await fetch_in_season(URN, "tenant-a", poll_interval=0, timeout=5)
-    assert out == {"state": "failed", "unavailable": [
+    assert out == {"state": "failed", "request_lost": True, "unavailable": [
         {"provider_id": "aquacrop", "reason": "request_failed", "code": "ConnectError"}]}
     assert len(route.calls) == in_season_client.TRANSPORT_RETRIES + 1
 
@@ -156,6 +168,7 @@ async def test_an_answered_error_is_not_retried():
     assert len(route.calls) == 1
     assert out["unavailable"][0]["reason"] == "request_failed"
     assert out["unavailable"][0]["code"] == "503"
+    assert "request_lost" not in out     # an answered error is not a lost request
 
 
 @pytest.mark.anyio

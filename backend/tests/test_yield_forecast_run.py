@@ -77,13 +77,28 @@ async def test_transport_failure_keeps_previous_and_reports_request_failed():
     st = FakeState()
     key = f"yield-forecast:tenant-a:{URN}"
     st.data[key] = {"status": "done", "estimates": [1], "last_error": None}
-    lost = {"state": "failed", "unavailable": [
+    lost = {"state": "failed", "request_lost": True, "unavailable": [
         {"provider_id": "aquacrop", "reason": "request_failed", "code": "RemoteProtocolError"}]}
     with patch.object(yield_forecast, "fetch_in_season", AsyncMock(return_value=lost)):
         out = await yield_forecast.compute_and_store(st, "tenant-a", "p1")
     assert out == "request_failed"
     assert st.data[key]["estimates"] == [1]
     assert st.data[key]["last_error"]["reason"] == "request_failed"
+
+
+@pytest.mark.anyio
+async def test_an_answered_http_error_is_not_a_lost_request():
+    # The provider answered (here with a 503): running the night again would not cure a parcel that
+    # gets the same answer every time, so it must not fail the job.
+    st = FakeState()
+    key = f"yield-forecast:tenant-a:{URN}"
+    st.data[key] = {"status": "done", "estimates": [1], "last_error": None}
+    answered = {"state": "failed", "unavailable": [
+        {"provider_id": "aquacrop", "reason": "request_failed", "code": "503"}]}
+    with patch.object(yield_forecast, "fetch_in_season", AsyncMock(return_value=answered)):
+        out = await yield_forecast.compute_and_store(st, "tenant-a", "p1")
+    assert out == "written"
+    assert st.data[key]["last_error"] == {"reason": "request_failed", "code": "503", "at": st.data[key]["last_error"]["at"]}
 
 
 @pytest.mark.anyio

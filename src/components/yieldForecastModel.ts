@@ -8,19 +8,19 @@ export interface EstimateRow {
   low: number;
   high: number;
   median: number | null;
-  validation: 'validated' | 'experimental' | 'not_applicable';
+  validation: 'validated' | 'experimental' | 'not_applicable' | 'unvalidated';
 }
 
 export function toParcelUrn(id: string): string {
   return id.startsWith(URN_PREFIX) ? id : `${URN_PREFIX}${id}`;
 }
 
-/** One row per C4 estimate (never averaged); unvalidated and figure-less ones are not shown. */
+/** One row per C4 estimate (never averaged); figure-less ones are not shown. */
 export function rowsFor(record: YieldForecastRecord): EstimateRow[] {
   const rows: EstimateRow[] = [];
   for (const e of record.estimates ?? []) {
     const status = e.validation?.status;
-    if (status !== 'validated' && status !== 'experimental' && status !== 'not_applicable') continue;
+    if (status !== 'validated' && status !== 'experimental' && status !== 'not_applicable' && status !== 'unvalidated') continue;
     const low = e.range?.low ?? e.percentiles?.p10;
     const high = e.range?.high ?? e.percentiles?.p90;
     if (low == null || high == null) continue;
@@ -28,6 +28,15 @@ export function rowsFor(record: YieldForecastRecord): EstimateRow[] {
       median: e.range ? null : e.percentiles?.p50 ?? null, validation: status });
   }
   return rows;
+}
+
+/** Which notes explain the unvalidated rows: the ceiling, plus the regime and crop caveats that apply. */
+export function unvalidatedNotes(rows: EstimateRow[], season: SeasonInfo | null | undefined): string[] {
+  if (!rows.some((r) => r.validation === 'unvalidated')) return [];
+  const notes = ['ceiling'];
+  if (season?.regime === 'irrigated') notes.push('irrigated');
+  if (season?.crop === 'TRZDU') notes.push('durum');
+  return notes;
 }
 
 /** Bioorch's simulation view, pre-filled so it joins the day's in-season job (params agreed with bioorch). */

@@ -2,7 +2,9 @@ from datetime import date, datetime, timedelta, timezone
 
 from nkz_platform_sdk.crop_cycles import resolve_crop_cycles
 
-from app.services.worklist import crop_status, freshness, next_job, planned_cycle, rank, surprise
+from app.services.worklist import (
+    _unvalidated_only, crop_status, freshness, next_job, planned_cycle, rank, surprise,
+)
 
 TODAY = date(2026, 10, 26)
 NOW = datetime(2026, 10, 26, 12, 0, tzinfo=timezone.utc)
@@ -61,6 +63,36 @@ def test_unavailable_forecast_is_not_harvest():
     fc = {"status": "unavailable", "season": None}
     job = _job(timeline=_active(), assessment={}, forecast=fc)
     assert job["kind"] != "harvest"
+
+
+def _fc_with(estimates):
+    return {"status": "done", "season": {"harvest_date": "2027-07-01"}, "estimates": estimates}
+
+
+def test_unvalidated_forecast_is_not_harvest():
+    fc = _fc_with([{"basis": "water_limited", "validation": {"status": "unvalidated"}}])
+    job = _job(timeline=_active(), assessment={}, forecast=fc)
+    assert job["kind"] != "harvest"
+
+
+def test_validated_forecast_with_estimates_is_still_harvest():
+    fc = _fc_with([{"validation": {"status": "experimental"}}, {"validation": {"status": "not_applicable"}}])
+    job = _job(timeline=_active(), assessment={}, forecast=fc)
+    assert (job["kind"], job["when"]) == ("harvest", "2027-07-01")
+
+
+def test_mixed_forecast_is_still_harvest():
+    fc = _fc_with([{"validation": {"status": "unvalidated"}}, {"validation": {"status": "experimental"}}])
+    job = _job(timeline=_active(), assessment={}, forecast=fc)
+    assert (job["kind"], job["when"]) == ("harvest", "2027-07-01")
+
+
+def test_unvalidated_only_helper():
+    for fc in (None, {}, {"estimates": []}, {"estimates": "x"}, {"estimates": [{"validation": None}]}):
+        assert _unvalidated_only(fc) is False
+    one = {"validation": {"status": "unvalidated"}}
+    assert _unvalidated_only({"estimates": [one]}) is True
+    assert _unvalidated_only({"estimates": [one, dict(one)]}) is True
 
 
 def test_pending_assessment():

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { detailLink, refreshSettled, rowsFor, stopRefreshing, toParcelUrn } from './yieldForecastModel';
+import { detailLink, refreshSettled, rowsFor, stopRefreshing, toParcelUrn, unvalidatedNotes } from './yieldForecastModel';
 import type { YieldForecastRecord } from '../types/yieldForecast';
 
 const rec = (estimates: any[]): YieldForecastRecord => ({ status: 'done', estimates, refreshing: false });
@@ -14,8 +14,13 @@ describe('rowsFor', () => {
     expect(rows[0]).toMatchObject({ low: 3.1, high: 4.2, median: null, validation: 'experimental' });
     expect(rows[1]).toMatchObject({ low: 4, high: 6, median: 5 });
   });
-  it('hides unvalidated', () => {
-    expect(rowsFor(rec([{ provider_id: 'x', basis: 'potential', range: { low: 1, high: 2 }, validation: { status: 'unvalidated' } }]))).toEqual([]);
+  it('keeps an unvalidated estimate with percentiles', () => {
+    expect(rowsFor(rec([{ provider_id: 'aquacrop', basis: 'water_limited', percentiles: { p10: 3, p50: 4, p90: 5 },
+      validation: { status: 'unvalidated', scope: 's' } }]))).toEqual([
+      { providerId: 'aquacrop', basis: 'water_limited', low: 3, high: 5, median: 4, validation: 'unvalidated' }]);
+  });
+  it('drops an unvalidated estimate without range or percentiles', () => {
+    expect(rowsFor(rec([{ provider_id: 'x', basis: 'potential', validation: { status: 'unvalidated' } }]))).toEqual([]);
   });
   it('rowsFor skips an estimate without figures', () => {
     expect(rowsFor(rec([{ provider_id: 'x', basis: 'potential', validation: { status: 'validated' } }]))).toEqual([]);
@@ -46,5 +51,26 @@ describe('toParcelUrn / refreshSettled', () => {
   });
   it('a refresh that outlived the poll window stops showing as refreshing', () => {
     expect(stopRefreshing({ status: 'done', refreshing: true })).toEqual({ status: 'done', refreshing: false });
+  });
+});
+
+describe('unvalidatedNotes', () => {
+  const row = (validation: any) => ({ providerId: 'x', basis: 'b', low: 1, high: 2, median: null, validation });
+  const season = (crop: string, regime: 'rainfed' | 'irrigated') =>
+    ({ status: 'in_season', as_of: null, crop, regime, sowing: { date: '2026-01-01', source: 's', provenance: 'p' } }) as any;
+  it('is empty without an unvalidated row', () => {
+    expect(unvalidatedNotes([row('validated'), row('not_applicable')], season('TRZDU', 'irrigated'))).toEqual([]);
+  });
+  it('gives the ceiling note for a rainfed crop', () => {
+    expect(unvalidatedNotes([row('unvalidated')], season('HORVX', 'rainfed'))).toEqual(['ceiling']);
+  });
+  it('adds the irrigated note', () => {
+    expect(unvalidatedNotes([row('unvalidated')], season('TRZAX', 'irrigated'))).toEqual(['ceiling', 'irrigated']);
+  });
+  it('adds the durum note', () => {
+    expect(unvalidatedNotes([row('unvalidated')], season('TRZDU', 'irrigated'))).toEqual(['ceiling', 'irrigated', 'durum']);
+  });
+  it('still gives the ceiling note without a season', () => {
+    expect(unvalidatedNotes([row('unvalidated')], null)).toEqual(['ceiling']);
   });
 });

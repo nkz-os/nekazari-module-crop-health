@@ -113,6 +113,18 @@ def _when(iso: Optional[str], today: date) -> Optional[str]:
     return "today" if due <= today else iso
 
 
+def _unvalidated_only(forecast: Optional[dict]) -> bool:
+    """True when the forecast has estimates and every one is labelled unvalidated."""
+    estimates = (forecast or {}).get("estimates")
+    if not isinstance(estimates, list) or not estimates:
+        return False
+    for est in estimates:
+        validation = est.get("validation") if isinstance(est, dict) else None
+        if not isinstance(validation, dict) or validation.get("status") != "unvalidated":
+            return False
+    return True
+
+
 def actionable_jobs(*, assessment: Optional[dict], timeline: Optional[dict], agro: Optional[dict],
                     alerts: list[dict], forecast: Optional[dict], today: date,
                     lang: str = DEFAULT_LANG) -> list[dict]:
@@ -146,7 +158,7 @@ def actionable_jobs(*, assessment: Optional[dict], timeline: Optional[dict], agr
         jobs.append({"kind": "sow", "when": _when(planned_date, today), "detail": detail})
 
     harvest_date = ((forecast or {}).get("season") or {}).get("harvest_date")
-    if (forecast or {}).get("status") == "done" and harvest_date:
+    if (forecast or {}).get("status") == "done" and harvest_date and not _unvalidated_only(forecast):
         season_start = _cycle_date((timeline or {}).get("current"))
         if not season_start or str(harvest_date)[:10] >= season_start:
             jobs.append({"kind": "harvest", "when": _when(harvest_date, today),

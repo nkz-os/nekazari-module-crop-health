@@ -32,6 +32,25 @@ describe('YieldForecastView', () => {
     expect(h).toContain('yieldForecast.provider.generic');  // unknown provider still shown
     expect(h).toContain('yieldForecast.detail');
   });
+  it('unvalidated estimate shows its badge and each note once', () => {
+    const h = html(r({
+      estimates: [{ provider_id: 'aquacrop', basis: 'water_limited', percentiles: { p10: 3, p50: 4, p90: 5 },
+        validation: { status: 'unvalidated' } }],
+      season: { status: 'in_season', as_of: '2026-10-14', crop: 'TRZDU', regime: 'irrigated',
+        sowing: { date: '2026-03-01', source: 's', provenance: 'actual' } },
+    }));
+    expect(h).toContain('yieldForecast.validation.unvalidated');
+    for (const k of ['ceiling', 'irrigated', 'durum']) {
+      expect(h.split(`yieldForecast.unvalidatedNote.${k}`).length - 1).toBe(1);
+    }
+  });
+  it('validated and not_applicable estimates show no unvalidated badge or note', () => {
+    const h = html(r({ estimates: [
+      { provider_id: 'aquacrop', basis: 'gap_corrected', range: { low: 3, high: 4 }, validation: { status: 'experimental' } },
+      { provider_id: 'aquacrop', basis: 'water_limited', range: { low: 5, high: 6 }, validation: { status: 'not_applicable' } }] }));
+    expect(h).not.toContain('yieldForecast.validation.unvalidated');
+    expect(h).not.toContain('yieldForecast.unvalidatedNote');
+  });
   it('unavailable no_regime asks the regime', () => {
     const h = html(r({ status: 'unavailable', reason: 'no_regime' }));
     expect(h).toContain('yieldForecast.askRegime');

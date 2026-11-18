@@ -159,6 +159,9 @@ async def compute_and_store(state, tenant: str, parcel_id: str, *, hold_lock: bo
             logger.error("yield_forecast store failed tenant=%s parcel=%s", tenant, urn)
             return "store_error"
         logger.info("yield_forecast stored tenant=%s parcel=%s status=%s", tenant, urn, record["status"])
+        if answer.get("request_lost") is True:
+            # No answer at all (not an error the provider reported): worth asking again.
+            return "request_failed"
         return "written"
     finally:
         if hold_lock:

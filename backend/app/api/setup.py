@@ -280,6 +280,8 @@ async def run_yield_forecasts(request: Request, body: YieldForecastRunRequest):
             written += 1
         elif outcome == "store_error":
             errors.append({"parcel_id": parcel_id, "error": "store_error"})
+        elif outcome == "request_failed":
+            errors.append({"parcel_id": parcel_id, "error": "request_failed"})
     return {"processed": len(ids), "written": written, "errors": errors, "next_cursor": next_cursor}
 
 

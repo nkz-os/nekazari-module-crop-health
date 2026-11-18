@@ -7,7 +7,8 @@ others: one slow or broken parcel must not cost the whole night.
 Connection errors (request never reached the backend) are retried with a
 short backoff; a request that was sent is never retried.
 The backend is awaited before the first page.
-The job exits non-zero when the backend never became ready or a page was lost.
+The job exits non-zero when the backend never became ready, a page was lost,
+or a parcel's forecast request was lost (so the night is run again).
 """
 import asyncio
 import os
@@ -67,7 +68,8 @@ async def _post_once(tenant: str, cursor, base_url: str, secret: str) -> dict:
 
 
 async def run_tenant(tenant: str, base_url: str, secret: str) -> dict:
-    cursor, totals = None, {"processed": 0, "written": 0, "errors": [], "failed_pages": 0}
+    cursor, totals = None, {"processed": 0, "written": 0, "errors": [], "failed_pages": 0,
+                       "lost_parcels": 0}
     failures = 0
     while True:
         try:
@@ -85,6 +87,7 @@ async def run_tenant(tenant: str, base_url: str, secret: str) -> dict:
         totals["processed"] += page["processed"]
         totals["written"] += page["written"]
         totals["errors"].extend(page["errors"])
+        totals["lost_parcels"] += sum(1 for e in page["errors"] if e.get("error") == "request_failed")
         cursor = page["next_cursor"]
         if cursor is None:
             return totals
@@ -106,7 +109,7 @@ async def main() -> None:
             print(f"[yield-forecasts] tenant={tenant} failed: {exc!r}", file=sys.stderr)
             continue
         print(f"[yield-forecasts] tenant={tenant} {totals}")
-        if totals.get("failed_pages"):
+        if totals.get("failed_pages") or totals.get("lost_parcels"):
             failed_tenants += 1
     if failed_tenants:
         print(f"[yield-forecasts] {failed_tenants} of {len(tenants)} tenants failed", file=sys.stderr)

@@ -20,11 +20,16 @@ logger = logging.getLogger(__name__)
 
 _SETTLED = {"done", "failed", "unavailable"}
 _CONTRACT_MAJOR = "2"
+TRANSPORT_RETRIES = 3  # transport errors tolerated per call before giving up
 
 
-def _failed(code: str) -> dict:
-    return {"state": "failed",
-            "unavailable": [{"provider_id": "aquacrop", "reason": "request_failed", "code": code}]}
+def _failed(code: str, *, lost: bool = False) -> dict:
+    """lost=True: no answer was received at all, so asking again later can succeed."""
+    out = {"state": "failed",
+           "unavailable": [{"provider_id": "aquacrop", "reason": "request_failed", "code": code}]}
+    if lost:
+        out["request_lost"] = True
+    return out
 
 
 async def fetch_in_season(parcel_urn: str, tenant_id: str, *, poll_interval: float = 5.0,
@@ -36,14 +41,26 @@ async def fetch_in_season(parcel_urn: str, tenant_id: str, *, poll_interval: flo
     headers = {"X-Internal-Service-Secret": settings.internal_service_secret,
                "X-Tenant-ID": tenant_id, "X-User-ID": "crop-health-worker"}
     deadline = time.monotonic() + timeout
-    params: dict[str, str] = {"retry": "true"} if retry else {}
+    initial_params: dict[str, str] = {"retry": "true"} if retry else {}
+    params = dict(initial_params)
+    transport_errors = 0
+    answered = False
     async with httpx.AsyncClient(timeout=30.0) as client:
         while True:
             try:
                 resp = await client.get(url, headers=headers, params=params)
             except httpx.HTTPError as exc:
                 logger.warning("in_season request failed tenant=%s parcel=%s: %s", tenant_id, parcel_urn, exc)
-                return _failed(type(exc).__name__)
+                transport_errors += 1
+                if transport_errors > TRANSPORT_RETRIES or time.monotonic() >= deadline:
+                    return _failed(type(exc).__name__, lost=True)
+                # Re-enter without job_id: the same day's job is joined, never a second one. The
+                # retry flag is only repeated while no answer has been seen: once the provider
+                # answered, the job exists and must not be asked to run again.
+                params = {} if answered else dict(initial_params)
+                await asyncio.sleep(poll_interval)
+                continue
+            answered = True
             if resp.status_code != 200:
                 logger.warning("in_season http %s tenant=%s parcel=%s", resp.status_code, tenant_id, parcel_urn)
                 return _failed(str(resp.status_code))

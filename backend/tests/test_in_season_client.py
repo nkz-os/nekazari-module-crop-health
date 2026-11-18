@@ -102,3 +102,79 @@ async def test_retry_flag_sent_on_first_call_only():
         await fetch_in_season(URN, "tenant-a", poll_interval=0, timeout=5, retry=True)
     assert "retry=true" in str(route.calls[0].request.url)
     assert "retry" not in str(route.calls[1].request.url)
+
+
+_DONE = {"contract_version": "2.9", "state": "done", "estimates": [{"provider_id": "aquacrop"}]}
+_RUNNING = {"contract_version": "2.9", "state": "running", "job_id": "j1"}
+
+
+@pytest.mark.anyio
+async def test_dropped_connection_is_retried_and_rejoins_the_job():
+    with respx.mock as m:
+        route = m.get(URL).mock(side_effect=[
+            httpx.Response(200, json=_RUNNING),
+            httpx.RemoteProtocolError("Server disconnected"),
+            httpx.Response(200, json=_DONE),
+        ])
+        out = await fetch_in_season(URN, "tenant-a", poll_interval=0, timeout=5)
+    assert out["state"] == "done"
+    assert len(route.calls) == 3
+    assert "job_id=j1" in str(route.calls[1].request.url)
+    assert "job_id" not in str(route.calls[2].request.url)
+
+
+@pytest.mark.anyio
+async def test_retry_flag_is_not_repeated_once_the_provider_answered():
+    with respx.mock as m:
+        route = m.get(URL).mock(side_effect=[
+            httpx.Response(200, json=_RUNNING),
+            httpx.RemoteProtocolError("Server disconnected"),
+            httpx.Response(200, json=_DONE),
+        ])
+        out = await fetch_in_season(URN, "tenant-a", poll_interval=0, timeout=5, retry=True)
+    assert out["state"] == "done"
+    assert "retry=true" in str(route.calls[0].request.url)
+    third = str(route.calls[2].request.url)
+    assert "retry" not in third and "job_id" not in third
+
+
+@pytest.mark.anyio
+async def test_retry_flag_is_repeated_while_no_answer_was_seen():
+    with respx.mock as m:
+        route = m.get(URL).mock(side_effect=[
+            httpx.ConnectError("boom"),
+            httpx.Response(200, json=_DONE),
+        ])
+        out = await fetch_in_season(URN, "tenant-a", poll_interval=0, timeout=5, retry=True)
+    assert out["state"] == "done"
+    assert "retry=true" in str(route.calls[1].request.url)
+
+
+@pytest.mark.anyio
+async def test_gives_up_after_the_allowed_transport_errors():
+    with respx.mock as m:
+        route = m.get(URL).mock(side_effect=httpx.ConnectError("boom"))
+        out = await fetch_in_season(URN, "tenant-a", poll_interval=0, timeout=5)
+    assert out == {"state": "failed", "request_lost": True, "unavailable": [
+        {"provider_id": "aquacrop", "reason": "request_failed", "code": "ConnectError"}]}
+    assert len(route.calls) == in_season_client.TRANSPORT_RETRIES + 1
+
+
+@pytest.mark.anyio
+async def test_an_answered_error_is_not_retried():
+    with respx.mock as m:
+        route = m.get(URL).mock(return_value=httpx.Response(503, text="x"))
+        out = await fetch_in_season(URN, "tenant-a", poll_interval=0, timeout=5)
+    assert len(route.calls) == 1
+    assert out["unavailable"][0]["reason"] == "request_failed"
+    assert out["unavailable"][0]["code"] == "503"
+    assert "request_lost" not in out     # an answered error is not a lost request
+
+
+@pytest.mark.anyio
+async def test_deadline_stops_the_retries():
+    with respx.mock as m:
+        route = m.get(URL).mock(side_effect=httpx.ConnectError("boom"))
+        out = await fetch_in_season(URN, "tenant-a", poll_interval=0, timeout=0)
+    assert len(route.calls) == 1
+    assert out["state"] == "failed"

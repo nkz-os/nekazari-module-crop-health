@@ -72,6 +72,48 @@ async def test_busy_keeps_store():
     assert out == "kept" and st.data[f"yield-forecast:tenant-a:{URN}"]["estimates"] == [1]
 
 
+@pytest.mark.anyio
+async def test_transport_failure_keeps_previous_and_reports_request_failed():
+    st = FakeState()
+    key = f"yield-forecast:tenant-a:{URN}"
+    st.data[key] = {"status": "done", "estimates": [1], "last_error": None}
+    lost = {"state": "failed", "request_lost": True, "unavailable": [
+        {"provider_id": "aquacrop", "reason": "request_failed", "code": "RemoteProtocolError"}]}
+    with patch.object(yield_forecast, "fetch_in_season", AsyncMock(return_value=lost)):
+        out = await yield_forecast.compute_and_store(st, "tenant-a", "p1")
+    assert out == "request_failed"
+    assert st.data[key]["estimates"] == [1]
+    assert st.data[key]["last_error"]["reason"] == "request_failed"
+
+
+@pytest.mark.anyio
+async def test_an_answered_http_error_is_not_a_lost_request():
+    # The provider answered (here with a 503): running the night again would not cure a parcel that
+    # gets the same answer every time, so it must not fail the job.
+    st = FakeState()
+    key = f"yield-forecast:tenant-a:{URN}"
+    st.data[key] = {"status": "done", "estimates": [1], "last_error": None}
+    answered = {"state": "failed", "unavailable": [
+        {"provider_id": "aquacrop", "reason": "request_failed", "code": "503"}]}
+    with patch.object(yield_forecast, "fetch_in_season", AsyncMock(return_value=answered)):
+        out = await yield_forecast.compute_and_store(st, "tenant-a", "p1")
+    assert out == "written"
+    assert st.data[key]["last_error"] == {"reason": "request_failed", "code": "503", "at": st.data[key]["last_error"]["at"]}
+
+
+@pytest.mark.anyio
+async def test_provider_reported_failure_is_still_written():
+    st = FakeState()
+    key = f"yield-forecast:tenant-a:{URN}"
+    st.data[key] = {"status": "done", "estimates": [1], "last_error": None}
+    failed = {"state": "failed", "unavailable": [
+        {"provider_id": "aquacrop", "reason": "engine_error", "code": "weather_gaps"}]}
+    with patch.object(yield_forecast, "fetch_in_season", AsyncMock(return_value=failed)):
+        out = await yield_forecast.compute_and_store(st, "tenant-a", "p1")
+    assert out == "written"
+    assert st.data[key]["last_error"]["reason"] == "engine_error"
+
+
 def _client(monkeypatch, state, parcels):
     from app.api import setup
     monkeypatch.setattr(setup, "INTERNAL_SECRET", "real-secret")
@@ -104,6 +146,22 @@ def test_run_one_failure_does_not_abort(monkeypatch):
     body = r.json()
     assert body["processed"] == 2 and body["written"] == 1 and body["next_cursor"] == "2"
     assert body["errors"][0]["parcel_id"].endswith(":a")
+
+
+def test_run_reports_a_parcel_lost_to_a_transport_failure(monkeypatch):
+    st = FakeState()
+    c = _client(monkeypatch, st, (["urn:ngsi-ld:AgriParcel:a"], "1"))
+
+    async def fake(state, tenant, pid, **kw):
+        return "request_failed"
+
+    monkeypatch.setattr("app.api.setup.compute_and_store", fake)
+    r = c.post("/api/crop-health/internal/run-yield-forecasts",
+               json={"tenant_id": "tenant-a", "batch_size": 1},
+               headers={"X-Internal-Service-Secret": "real-secret"})
+    assert r.status_code == 200
+    assert r.json() == {"processed": 1, "written": 0, "next_cursor": "1",
+                        "errors": [{"parcel_id": "urn:ngsi-ld:AgriParcel:a", "error": "request_failed"}]}
 
 
 @pytest.mark.anyio

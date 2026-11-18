@@ -419,6 +419,8 @@ const en = {
             "reason": {
                 "generic": "No forecast ({{reason}})",
                 "not_validated": "This crop is not validated in this area yet",
+                "expected_crop_not_calibrated": "No expected harvest: this crop has no regional calibration yet",
+                "expected_irrigated": "No expected harvest: the regional calibration covers rainfed crops only",
                 "cycles_unavailable": "Could not read the parcel's crop",
                 "no_committed_crop": "The parcel has no crop assigned",
                 "not_sown": "The crop is not sown yet",
@@ -895,6 +897,8 @@ const es = {
             "reason": {
                 "generic": "No hay previsión ({{reason}})",
                 "not_validated": "Este cultivo aún no está validado en esta zona",
+                "expected_crop_not_calibrated": "Sin cosecha esperada: este cultivo aún no tiene calibración regional",
+                "expected_irrigated": "Sin cosecha esperada: la calibración regional solo cubre el secano",
                 "cycles_unavailable": "No se pudo leer el cultivo de la parcela",
                 "no_committed_crop": "La parcela no tiene cultivo asignado",
                 "not_sown": "El cultivo aún no está sembrado",
@@ -1369,6 +1373,8 @@ const ca = {
             "reason": {
                 "generic": "No hi ha previsió ({{reason}})",
                 "not_validated": "Aquest cultiu encara no està validat en aquesta zona",
+                "expected_crop_not_calibrated": "Sense collita esperada: aquest cultiu encara no té calibratge regional",
+                "expected_irrigated": "Sense collita esperada: el calibratge regional només cobreix el secà",
                 "cycles_unavailable": "No s'ha pogut llegir el cultiu de la parcel·la",
                 "no_committed_crop": "La parcel·la no té cultiu assignat",
                 "not_sown": "El cultiu encara no està sembrat",
@@ -1812,6 +1818,8 @@ const eu = {
             "reason": {
                 "generic": "Ez dago aurreikuspenik ({{reason}})",
                 "not_validated": "Labore hau ez dago oraindik balioztatuta eremu honetan",
+                "expected_crop_not_calibrated": "Espero den uztarik ez: labore honek ez du oraindik eskualdeko kalibraziorik",
+                "expected_irrigated": "Espero den uztarik ez: eskualdeko kalibrazioak lehorreko laboreak bakarrik hartzen ditu",
                 "cycles_unavailable": "Ezin izan da partzelaren laborea irakurri",
                 "no_committed_crop": "Partzelak ez du laborerik esleituta",
                 "not_sown": "Laborea oraindik ez dago ereinda",
@@ -2255,6 +2263,8 @@ const fr = {
             "reason": {
                 "generic": "Pas de prévision ({{reason}})",
                 "not_validated": "Cette culture n'est pas encore validée dans cette zone",
+                "expected_crop_not_calibrated": "Pas de récolte attendue : cette culture n'a pas encore de calibration régionale",
+                "expected_irrigated": "Pas de récolte attendue : la calibration régionale ne couvre que les cultures en sec",
                 "cycles_unavailable": "Impossible de lire la culture de la parcelle",
                 "no_committed_crop": "La parcelle n'a pas de culture assignée",
                 "not_sown": "La culture n'est pas encore semée",
@@ -2698,6 +2708,8 @@ const pt = {
             "reason": {
                 "generic": "Sem previsão ({{reason}})",
                 "not_validated": "Esta cultura ainda não está validada nesta zona",
+                "expected_crop_not_calibrated": "Sem colheita esperada: esta cultura ainda não tem calibração regional",
+                "expected_irrigated": "Sem colheita esperada: a calibração regional só cobre o sequeiro",
                 "cycles_unavailable": "Não foi possível ler a cultura da parcela",
                 "no_committed_crop": "A parcela não tem cultura atribuída",
                 "not_sown": "A cultura ainda não está semeada",

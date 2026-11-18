@@ -25,7 +25,8 @@ async def test_pages_until_cursor_null(monkeypatch):
     monkeypatch.setattr(cron, "_post_page", fake)
     totals = await cron.run_tenant("tenant-a", "http://self", "s")
     assert seen == [None, "1"]
-    assert totals == {"processed": 2, "written": 1, "errors": [{"parcel_id": "b", "error": "x"}], "failed_pages": 0}
+    assert totals == {"processed": 2, "written": 1, "errors": [{"parcel_id": "b", "error": "x"}],
+                      "failed_pages": 0, "lost_parcels": 0}
 
 
 @pytest.mark.anyio
@@ -208,3 +209,41 @@ async def test_wait_ready_polls_until_health_answers(monkeypatch, no_sleep):
 def test_connecting_times_out_fast_while_a_running_page_may_take_minutes():
     assert cron.REQUEST_TIMEOUT.connect == 10.0
     assert cron.REQUEST_TIMEOUT.read == 340.0
+
+
+def _page_with(monkeypatch, errors):
+    async def ready(base_url):
+        return True
+
+    async def fake_page(tenant, cursor, base_url, secret):
+        return {"processed": 1, "written": 0, "errors": errors, "next_cursor": None}
+
+    monkeypatch.setattr(cron, "_wait_ready", ready)
+    monkeypatch.setattr(cron, "_post_page", fake_page)
+    monkeypatch.setenv("INTERNAL_SERVICE_SECRET", "s")
+    monkeypatch.setenv("SCHEDULED_TENANTS", "tenant-a,tenant-b")
+
+
+@pytest.mark.anyio
+async def test_exit_is_one_when_a_parcel_was_lost(monkeypatch):
+    _page_with(monkeypatch, [{"parcel_id": "p", "error": "request_failed"}])
+    seen = []
+    real_run = cron.run_tenant
+
+    async def spy_run(tenant, base_url, secret):
+        seen.append(tenant)
+        return await real_run(tenant, base_url, secret)
+
+    monkeypatch.setattr(cron, "run_tenant", spy_run)
+    with pytest.raises(SystemExit) as exc:
+        await cron.main()
+    assert exc.value.code == 1
+    assert seen == ["tenant-a", "tenant-b"]   # every tenant ran
+
+
+@pytest.mark.anyio
+async def test_other_parcel_errors_do_not_fail_the_job(monkeypatch):
+    _page_with(monkeypatch, [{"parcel_id": "p", "error": "store_error"}])
+    totals = await cron.run_tenant("tenant-a", "http://self", "s")
+    assert totals["lost_parcels"] == 0
+    await cron.main()   # returns, no SystemExit

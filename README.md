@@ -101,6 +101,7 @@ i18n: 6 locales (es, en, ca, eu, fr, pt).
 | GET | `/api/crop-health/parcels/{id}/phenology-status` | Current stage and projected stage dates |
 | GET | `/api/crop-health/parcels/{id}/yield-forecast` | Stored in-season forecast (or `not_computed`), plus `refreshing` |
 | POST | `/api/crop-health/parcels/{id}/yield-forecast/refresh` | Recompute one parcel in the background (202) |
+| GET | `/api/crop-health/parcels/{id}/predictions/score` | Logged yield predictions vs the recorded harvest of the same season (`season_start`, `format=json\|csv`) |
 | POST | `/api/crop-health/internal/run-scheduled-assessments` | Nightly assessments, one page of parcels (internal secret) |
 | POST | `/api/crop-health/internal/run-yield-forecasts` | Nightly forecasts, one parcel per page (internal secret) |
 

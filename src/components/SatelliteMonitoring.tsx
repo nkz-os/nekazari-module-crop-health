@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from '@nekazari/sdk';
+import { useCanActivateMonitoring } from '../hooks/useCanActivateMonitoring';
 import { Button, Checkbox, ProgressBar } from '@nekazari/ui-kit';
 import {
   activateMany,
@@ -53,27 +54,34 @@ export const NotMonitoredRow: React.FC<NotMonitoredRowProps> = ({ t, lang, canAc
   );
 };
 
+/** The row stays while the panel holds an outcome, even after the refetch no longer says not_monitored. */
+export const showSatelliteRow = (reason: string | undefined, outcome: ActivationOutcome | null): boolean =>
+  reason === 'not_monitored' || outcome !== null;
+
+/** The outcome lives in the panel (controlled), so a refetch cannot drop the message. */
 export const SatelliteActivation: React.FC<{
   parcelUrn: string;
   periodStart: string | null;
-  canActivate: boolean;
+  activationRoles: string[];
+  outcome: ActivationOutcome | null;
+  onOutcome: (outcome: ActivationOutcome) => void;
   onDone?: () => void;
-}> = ({ parcelUrn, periodStart, canActivate, onDone }) => {
+}> = ({ parcelUrn, periodStart, activationRoles, outcome, onOutcome, onDone }) => {
   const { t, i18n } = useTranslation('crop-health');
+  const allowed = useCanActivateMonitoring(activationRoles);
   const [busy, setBusy] = useState(false);
-  const [outcome, setOutcome] = useState<ActivationOutcome | null>(null);
   const run = useCallback(async () => {
     setBusy(true);
     const result = await activateParcel(parcelUrn);
     setBusy(false);
-    setOutcome(result);
+    onOutcome(result);
     if (result === 'ok') onDone?.();
-  }, [parcelUrn, onDone]);
+  }, [parcelUrn, onOutcome, onDone]);
   return (
     <NotMonitoredRow
       t={t as TFn}
       lang={i18n?.language || 'es'}
-      canActivate={canActivate}
+      canActivate={allowed}
       periodStart={periodStart}
       outcome={outcome}
       busy={busy}

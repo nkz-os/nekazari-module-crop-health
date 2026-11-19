@@ -5,11 +5,12 @@ import { renderToStaticMarkup } from 'react-dom/server';
 const t = (k: string, o?: unknown) => (o && typeof o === 'object' ? `${k}:${JSON.stringify(o)}` : k);
 vi.mock('@nekazari/sdk', () => ({
   useTranslation: () => ({ t, i18n: { language: 'es' } }),
-  useAuth: () => ({ user: { roles: ['Farmer'] } }),
+  useAuth: () => ({ user: { roles: mockRoles.current } }),
 }));
+const mockRoles = vi.hoisted(() => ({ current: ['Farmer'] as string[] }));
 vi.mock('../api/cropHealthApi', () => ({ cropHealthFetch: vi.fn(), navigateTo: vi.fn() }));
 
-import { MonitoringBannerView, NotMonitoredRow } from './SatelliteMonitoring';
+import { MonitoringBannerView, NotMonitoredRow, SatelliteActivation, showSatelliteRow } from './SatelliteMonitoring';
 import { canActivate } from '../hooks/useCanActivateMonitoring';
 
 const cands = [
@@ -51,6 +52,7 @@ describe('MonitoringBannerView', () => {
   });
   it('adds the note when vegetation could not check every parcel', () => {
     expect(view({ partial: true })).toContain('monitoring.partial');
+    expect(view({ partial: false })).not.toContain('monitoring.partial');
   });
 });
 
@@ -83,5 +85,40 @@ describe('canActivate', () => {
     expect(canActivate(['Viewer'], ['Farmer', 'TenantAdmin'])).toBe(false);
     expect(canActivate([], ['Farmer'])).toBe(true);
     expect(canActivate(['Viewer'], [])).toBe(true);
+  });
+});
+
+
+describe('SatelliteActivation (roles from the host)', () => {
+  const html = (roles: string[], activationRoles: string[], outcome: string | null = null) => {
+    mockRoles.current = roles;
+    return renderToStaticMarkup(
+      <SatelliteActivation parcelUrn="urn:ngsi-ld:AgriParcel:p1" periodStart={null} activationRoles={activationRoles}
+        outcome={outcome as never} onOutcome={() => {}} onDone={() => {}} />);
+  };
+  it('known roles without permission: no button', () => {
+    const out = html(['Viewer'], ['Farmer', 'TenantAdmin']);
+    expect(out).toContain('monitoring.notMonitored');
+    expect(out).not.toContain('<button');
+  });
+  it('a permitted role sees the button', () => {
+    expect(html(['Farmer'], ['Farmer'])).toContain('<button');
+  });
+  it('unknown roles show the button (the 403 is explained later)', () => {
+    expect(html([], ['Farmer'])).toContain('<button');
+    expect(html(['Viewer'], [])).toContain('<button');
+  });
+  it('a lifted outcome is shown without a button', () => {
+    const out = html(['Farmer'], ['Farmer'], 'pending');
+    expect(out).toContain('monitoring.pending');
+    expect(out).not.toContain('<button');
+  });
+});
+
+describe('showSatelliteRow', () => {
+  it('stays visible after the refetch drops not_monitored, while an outcome is held', () => {
+    expect(showSatelliteRow('not_monitored', null)).toBe(true);
+    expect(showSatelliteRow(undefined, 'ok')).toBe(true);
+    expect(showSatelliteRow(undefined, null)).toBe(false);
   });
 });

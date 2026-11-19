@@ -168,7 +168,6 @@ const en = {
             cancel: 'Cancel',
             progress: 'Activating {{done}} of {{total}}',
             partial: 'Some parcels could not be checked',
-            noneSelected: 'Select at least one parcel',
             result: { ok: '{{n}} activated', pending: '{{n}} pending (will retry on its own)', forbidden: '{{n}} without permission', error: '{{n}} failed' },
         },
         worklist: {
@@ -696,7 +695,6 @@ const es = {
             cancel: 'Cancelar',
             progress: 'Activando {{done}} de {{total}}',
             partial: 'Algunas parcelas no se pudieron comprobar',
-            noneSelected: 'Elige al menos una parcela',
             result: { ok: '{{n}} activadas', pending: '{{n}} pendientes (se reintentará solo)', forbidden: '{{n}} sin permiso', error: '{{n}} con error' },
         },
         worklist: {
@@ -1194,7 +1192,6 @@ const ca = {
             cancel: 'Cancel·lar',
             progress: 'Activant {{done}} de {{total}}',
             partial: 'Algunes parcel·les no s\'han pogut comprovar',
-            noneSelected: 'Tria almenys una parcel·la',
             result: { ok: '{{n}} activades', pending: '{{n}} pendents (es tornarà a intentar sol)', forbidden: '{{n}} sense permís', error: '{{n}} amb error' },
         },
         worklist: {
@@ -1660,7 +1657,6 @@ const eu = {
             cancel: 'Utzi',
             progress: '{{done}} / {{total}} aktibatzen',
             partial: 'Partzela batzuk ezin izan dira egiaztatu',
-            noneSelected: 'Hautatu partzela bat gutxienez',
             result: { ok: '{{n}} aktibatuta', pending: '{{n}} zain (berez saiatuko da berriro)', forbidden: '{{n}} baimenik gabe', error: '{{n}} huts egin dute' },
         },
         worklist: {
@@ -2126,7 +2122,6 @@ const fr = {
             cancel: 'Annuler',
             progress: 'Activation {{done}} sur {{total}}',
             partial: 'Certaines parcelles n\'ont pas pu être vérifiées',
-            noneSelected: 'Choisissez au moins une parcelle',
             result: { ok: '{{n}} activées', pending: '{{n}} en attente (nouvelle tentative automatique)', forbidden: '{{n}} sans autorisation', error: '{{n}} en erreur' },
         },
         worklist: {
@@ -2592,7 +2587,6 @@ const pt = {
             cancel: 'Cancelar',
             progress: 'A ativar {{done}} de {{total}}',
             partial: 'Algumas parcelas não puderam ser verificadas',
-            noneSelected: 'Escolha pelo menos uma parcela',
             result: { ok: '{{n}} ativadas', pending: '{{n}} pendentes (será tentado de novo automaticamente)', forbidden: '{{n}} sem permissão', error: '{{n}} com erro' },
         },
         worklist: {

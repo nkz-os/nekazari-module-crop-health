@@ -2,9 +2,8 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { useTranslation } from '@nekazari/sdk';
 import { cropHealthFetch } from '../api/cropHealthApi';
 import { formatRelativeTime } from '../utils/relativeTime';
-import { PARCEL_URN_PREFIX } from '../services/vegetationMonitoring';
-import { useCanActivateMonitoring } from '../hooks/useCanActivateMonitoring';
-import { SatelliteActivation } from './SatelliteMonitoring';
+import { PARCEL_URN_PREFIX, type ActivationOutcome } from '../services/vegetationMonitoring';
+import { SatelliteActivation, showSatelliteRow } from './SatelliteMonitoring';
 
 interface SensorInfo {
   metric: string;
@@ -94,7 +93,8 @@ const SourceStatusPanel: React.FC<SourceStatusPanelProps> = ({ parcelId, parcelN
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
-  const canActivate = useCanActivateMonitoring(data?.sources.satellite.ndvi.monitoring?.activation_roles ?? []);
+  const [activation, setActivation] = useState<{ outcome: ActivationOutcome; periodStart: string | null } | null>(null);
+  useEffect(() => { setActivation(null); }, [parcelId]);
 
   const fetchData = useCallback(async (showSpinner = false) => {
     if (showSpinner) setRefreshing(true);
@@ -215,11 +215,13 @@ const SourceStatusPanel: React.FC<SourceStatusPanelProps> = ({ parcelId, parcelN
         <SourceRow icon="🛰️" label={t('sources.satellite.ndvi')} status={src.satellite.ndvi.status}
           freshness={src.satellite.ndvi.freshness} lastDataAt={src.satellite.ndvi.lastDataAt}
           summary={src.satellite.ndvi.lastValue != null ? `NDVI ${src.satellite.ndvi.lastValue.toFixed(2)}` : t('sources.noData')} t={t} />
-        {src.satellite.ndvi.reason === 'not_monitored' && (
+        {showSatelliteRow(src.satellite.ndvi.reason, activation?.outcome ?? null) && (
           <SatelliteActivation
             parcelUrn={PARCEL_URN_PREFIX + parcelId}
-            periodStart={src.satellite.ndvi.monitoring?.period_start ?? null}
-            canActivate={canActivate}
+            periodStart={activation?.periodStart ?? src.satellite.ndvi.monitoring?.period_start ?? null}
+            activationRoles={src.satellite.ndvi.monitoring?.activation_roles ?? []}
+            outcome={activation?.outcome ?? null}
+            onOutcome={(outcome) => setActivation({ outcome, periodStart: src.satellite.ndvi.monitoring?.period_start ?? null })}
             onDone={() => fetchData()}
           />
         )}

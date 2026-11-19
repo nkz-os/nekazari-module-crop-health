@@ -17,11 +17,14 @@ from app.config import get_settings
 
 logger = logging.getLogger(__name__)
 
-_TIMEOUT_S = 8.0
+_TIMEOUT_S = 3.0  # optional enrichment: a slow vegetation must not slow the callers down
 CANDIDATES_TTL_S = 300.0
+FAILURE_TTL_S = 60.0  # after an outage-like failure, do not ask again for a minute
 
 # tenant -> (monotonic time of the read, parcel URNs with a crop and no monitoring)
 _candidates_cache: dict[str, tuple[float, set[str]]] = {}
+# tenant -> monotonic time until which vegetation is not asked (negative cache)
+_down_until: dict[str, float] = {}
 
 
 def _monotonic() -> float:
@@ -33,6 +36,8 @@ async def _get_json(path: str, tenant_id: str, what: str) -> dict | None:
     base = (settings.vegetation_internal_url or "").rstrip("/")
     if not base:
         return None
+    if _down_until.get(tenant_id, 0.0) > _monotonic():
+        return None
     headers = {"X-Internal-Service-Secret": settings.internal_service_secret}
     try:
         async with httpx.AsyncClient(timeout=_TIMEOUT_S) as client:
@@ -40,9 +45,12 @@ async def _get_json(path: str, tenant_id: str, what: str) -> dict | None:
     except httpx.HTTPError as exc:
         logger.warning("vegetation monitoring %s request failed tenant=%s: %s", what, tenant_id,
                        type(exc).__name__)
+        _down_until[tenant_id] = _monotonic() + FAILURE_TTL_S
         return None
     if resp.status_code != 200:
         logger.warning("vegetation monitoring %s http %s tenant=%s", what, resp.status_code, tenant_id)
+        if resp.status_code >= 500:
+            _down_until[tenant_id] = _monotonic() + FAILURE_TTL_S
         return None
     try:
         body = resp.json()
@@ -63,7 +71,7 @@ async def parcel_monitoring(tenant_id: str, parcel_urn: str) -> dict | None:
 async def tenant_candidates(tenant_id: str) -> set[str] | None:
     """URNs of the tenant's parcels with a living crop and no monitoring; None when unknown.
 
-    Cached 5 minutes per tenant. Failures are not cached.
+    Cached 5 minutes per tenant; a failure is remembered for 60 s (see `_get_json`).
     """
     now = _monotonic()
     hit = _candidates_cache.get(tenant_id)

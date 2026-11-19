@@ -422,3 +422,25 @@ async def test_harvest_without_date_has_dateless_why(lang, bad):
     out = await _build([row])
     why = out["tasks"][0]["text"][lang]["why"]
     assert why and bad not in why and "{" not in why
+
+
+@pytest.mark.anyio
+async def test_unknown_kind_gets_generic_wording_and_keeps_the_row(caplog):
+    """A job kind without its own wording never drops the parcel's other tasks."""
+    rows = [_row(jobs=[
+        {"kind": "treat", "when": "today", "detail": {"disease": "roya"}},
+        {"kind": "monitor_satellite", "when": None, "detail": {}},
+    ])]
+    with caplog.at_level("WARNING"):
+        out = await _build(rows)
+    assert "no wording for kind=monitor_satellite" in caplog.text
+    assert out["complete"] is True
+    assert [t["kind"] for t in out["tasks"]] == ["treat", "monitor_satellite"]
+    generic = out["tasks"][1]["text"]
+    assert set(generic) == {"es", "eu", "en"}
+    assert generic["es"]["title"] == "Revisar la parcela"
+    assert generic["eu"]["title"] == "Partzela berrikusi"
+    assert generic["en"]["title"] == "Check the parcel"
+    for lang in generic.values():
+        for s in lang.values():
+            assert s and "_" not in s

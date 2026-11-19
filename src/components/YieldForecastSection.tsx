@@ -78,6 +78,9 @@ export function YieldForecastView({ parcelId, record, loading, onRefresh, onRegi
             {unvalidatedNotes(rows, season).map((key) => (
               <p key={`unvalidated-${key}`} className="text-xs text-nkz-text-muted">{t(`yieldForecast.unvalidatedNote.${key}`)}</p>
             ))}
+            {rows.some((row) => row.validation === 'experimental') && (
+              <p className="text-xs text-nkz-text-muted">{t('yieldForecast.experimentalNote')}</p>
+            )}
             {(record.unavailable ?? []).map((u) => (
               <p key={`${u.provider_id ?? ''}-${u.reason}`} className="text-xs text-nkz-text-muted">
                 {label('reason', u.reason, { reason: u.reason, code: u.code ?? '' })}

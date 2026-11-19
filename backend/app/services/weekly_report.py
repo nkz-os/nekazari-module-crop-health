@@ -121,6 +121,12 @@ _OTHER_TEXTS = {
         "eu": ("Uzta aurreikusita", None, "Prestatu uzta {date} inguruan."),
         "en": ("Harvest expected", None, "Get ready to harvest around {date}."),
     },
+    # A job kind with no wording of its own (a new kind): still reported, never dropping the row.
+    "_generic": {
+        "es": ("Revisar la parcela", None, "Hay una tarea pendiente en esta parcela."),
+        "eu": ("Partzela berrikusi", None, "Partzela honetan zeregin bat dago zain."),
+        "en": ("Check the parcel", None, "There is a pending task on this parcel."),
+    },
 }
 
 
@@ -149,6 +155,9 @@ def _report_text(kind: str, job: dict) -> dict:
     key = "irrigate_week" if kind == "irrigate" and not job.get("when") else kind
     if key == "harvest" and not _human_date(detail, job.get("when")):
         key = "harvest_undated"
+    if key not in _OTHER_TEXTS:
+        logger.warning("weekly_report: no wording for kind=%s, using the generic one", kind)
+        key = "_generic"
     disease = str(detail.get("disease") or "")
     # A bare code (snake_case) is not a name a farmer reads: use the nameless wording.
     named = bool(disease) and "_" not in disease

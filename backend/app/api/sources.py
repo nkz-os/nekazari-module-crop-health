@@ -10,6 +10,7 @@ from fastapi import APIRouter, Query, Request
 
 from app.api.assessments import _fetch_assessment_entities
 from app.config import get_settings
+from app.services import vegetation_monitoring
 from app.services.parcel_link import PARCEL_PREFIX, parcel_link_targets
 from nkz_platform_sdk.orion import OrionClient
 
@@ -374,6 +375,23 @@ async def _detail_sources(request: Request, parcelId: str) -> dict:
         "lastDataAt": ndvi_ts if isinstance(ndvi_ts, str) else None,
         "lastValue": ndvi_val,
     }
+
+    # Satellite monitoring state comes from vegetation; unknown (off, down, error) adds nothing.
+    try:
+        veg = await vegetation_monitoring.parcel_monitoring(tenant_id, parcel_urn)
+    except Exception as exc:  # noqa: BLE001 — optional enrichment, never fatal
+        logger.warning("vegetation monitoring state failed tenant=%s parcel=%s: %s", tenant_id, parcelId, exc)
+        veg = None
+    if veg is not None:
+        needs = bool(veg.get("needs_activation"))
+        ndvi["monitoring"] = {
+            "state": veg.get("monitoring"),
+            "needs_activation": needs,
+            "period_start": (veg.get("period") or {}).get("start"),
+            "activation_roles": veg.get("activation_roles") or [],
+        }
+        if needs:
+            ndvi["reason"] = "not_monitored"
 
     # SAR (Sentinel-1 GRD products)
     sar_val = None

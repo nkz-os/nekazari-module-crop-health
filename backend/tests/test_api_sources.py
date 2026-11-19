@@ -412,3 +412,46 @@ async def test_sources_detail_cache_is_per_tenant():
             second = await client.get("/api/crop-health/sources?parcelId=Parcela-62")
     assert first.json()["sources"]["soil"]["status"] == "ok"
     assert second.json()["sources"]["soil"]["status"] == "unavailable"
+
+
+_VEG_STATE = {"crop": {"present": True, "species": "TRZAX"}, "monitoring": "none",
+              "period": {"start": "2026-03-01", "end": None}, "needs_activation": True,
+              "continuous_by": [], "activation_roles": ["Farmer", "TenantAdmin"]}
+
+
+async def _detail(pid, veg):
+    from unittest.mock import AsyncMock, patch
+    with respx.mock as mock, patch("app.api.sources.vegetation_monitoring.parcel_monitoring", veg):
+        mock.get().respond(json=[])
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test",
+                               headers=GATEWAY_HEADERS) as client:
+            resp = await client.get(f"/api/crop-health/sources?parcelId={pid}")
+    assert resp.status_code == 200
+    return resp.json()["sources"]["satellite"]["ndvi"]
+
+
+@pytest.mark.anyio
+async def test_sources_detail_flags_a_crop_without_monitoring():
+    from unittest.mock import AsyncMock
+    ndvi = await _detail("Parcela-81", AsyncMock(return_value=_VEG_STATE))
+    assert ndvi["reason"] == "not_monitored"
+    assert ndvi["monitoring"] == {"state": "none", "needs_activation": True, "period_start": "2026-03-01",
+                                  "activation_roles": ["Farmer", "TenantAdmin"]}
+
+
+@pytest.mark.anyio
+async def test_sources_detail_active_monitoring_shows_nothing_new_as_reason():
+    from unittest.mock import AsyncMock
+    state = {**_VEG_STATE, "monitoring": "active", "needs_activation": False}
+    ndvi = await _detail("Parcela-82", AsyncMock(return_value=state))
+    assert "reason" not in ndvi
+    assert ndvi["monitoring"]["state"] == "active" and ndvi["monitoring"]["needs_activation"] is False
+
+
+@pytest.mark.anyio
+async def test_sources_detail_without_vegetation_is_as_before():
+    from unittest.mock import AsyncMock
+    ndvi = await _detail("Parcela-83", AsyncMock(return_value=None))
+    assert "monitoring" not in ndvi and "reason" not in ndvi
+    ndvi = await _detail("Parcela-84", AsyncMock(side_effect=RuntimeError("boom")))
+    assert "monitoring" not in ndvi and "reason" not in ndvi

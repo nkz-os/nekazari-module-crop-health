@@ -45,3 +45,16 @@ def test_when_mapping():
 def test_pending_and_none_until_not_tasks():
     assert actionable_jobs(**_args(timeline=_active())) == []
     assert actionable_jobs(**_args(timeline=_active(), assessment={"recommendedAction": "NONE"})) == []
+
+
+def test_monitor_satellite_is_last_undated_and_off_by_default():
+    kw = _args(assessment={"recommendedAction": "IRRIGATE_IMMEDIATE"},
+               alerts=[{"id": "a1", "disease": "roya", "risk_level": "HIGH"}])
+    jobs = actionable_jobs(**kw, monitoring_needed=True)
+    assert [j["kind"] for j in jobs] == ["treat", "irrigate", "monitor_satellite"]
+    assert jobs[-1] == {"kind": "monitor_satellite", "when": None, "detail": {}}
+    assert [j["kind"] for j in actionable_jobs(**kw)] == ["treat", "irrigate"]
+    assert job_when(jobs[-1]) == {"type": "undated", "date": None}
+    # next_job never offers it: it is the lowest priority, not a "next" task
+    assert next_job(**kw)["kind"] == "treat"
+    assert actionable_jobs(**_args(), monitoring_needed=True)[0]["kind"] == "monitor_satellite"

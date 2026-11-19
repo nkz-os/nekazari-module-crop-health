@@ -23,7 +23,8 @@ from app.api.assessment_mapper import (
     prop_value,
 )
 from app.config import get_settings
-from app.services import worklist
+from app.services import vegetation_monitoring, worklist
+from app.services.parcel_link import PARCEL_PREFIX
 from app.services.zonation import is_whole_parcel, mark_sensor_nearby, resolve_zones
 from nkz_platform_sdk.orion import OrionClient
 
@@ -126,7 +127,8 @@ def _local_today(timeline: dict | None, now: datetime) -> date:
 
 
 def _worklist_fields(*, assessment: dict | None, assessed_at: str | None, crop_name: str | None,
-                     inputs: dict, alerts: list[dict], now: datetime) -> dict:
+                     inputs: dict, alerts: list[dict], now: datetime,
+                     monitoring_needed: bool = False) -> dict:
     """Crop status, freshness, next job and surprise of one parcel (pure over its inputs)."""
     timeline = inputs.get("timeline")
     status = worklist.crop_status(timeline)
@@ -147,7 +149,7 @@ def _worklist_fields(*, assessment: dict | None, assessed_at: str | None, crop_n
         "jobs": worklist.actionable_jobs(
             assessment=live, timeline=timeline, agro=inputs.get("agro"),
             alerts=alerts, forecast=inputs.get("forecast") if active else None,
-            today=today,
+            today=today, monitoring_needed=monitoring_needed,
         ),
         "surprise": worklist.surprise(
             assessment=live, history=(inputs.get("history") or []) if active else [], alerts=alerts,
@@ -851,6 +853,12 @@ async def build_parcel_rows(request: Request | None, tenant_id: str, *,
     )
     alerts_failed = alerts is None
     alerts = alerts or []
+    # One read per tenant; None (vegetation off or unreachable) means no row gets the job.
+    try:
+        candidates = await vegetation_monitoring.tenant_candidates(tenant_id)
+    except Exception as exc:  # noqa: BLE001 — the prompt is optional, never fatal
+        logger.warning("worklist: monitoring candidates failed tenant=%s: %s", tenant_id, exc)
+        candidates = None
     for p, inputs in zip(parcels, inputs_list):
         if strict and (alerts_failed or inputs.get("_degraded")):
             p["_degraded"] = True
@@ -859,6 +867,7 @@ async def build_parcel_rows(request: Request | None, tenant_id: str, *,
                 assessment=_flat(assessment_by_parcel.get(p["parcelId"])),
                 assessed_at=p.get("assessedAt"), crop_name=p.get("cropName"), inputs=inputs,
                 alerts=[a for a in alerts if a.get("parcelId") == p["parcelId"]], now=now,
+                monitoring_needed=candidates is not None and PARCEL_PREFIX + p["parcelId"] in candidates,
             ))
         except Exception as exc:  # noqa: BLE001 — one malformed parcel degrades to defaults
             logger.warning("worklist: row degraded tenant=%s parcel=%s: %s", tenant_id, p["parcelId"], exc)

@@ -26,7 +26,7 @@ describe('worklist and fleet parity', () => {
       const ns = (res as any)['crop-health'];
       expect(keys(ns.worklist).sort()).toEqual(keys(en.worklist).sort());
       expect(keys(ns.fleet).sort()).toEqual(['jobsToday', 'noData', 'surprises']);
-      expect(keys(en.worklist).length).toBe(21);
+      expect(keys(en.worklist).length).toBe(22);
     });
   }
 });
@@ -106,4 +106,22 @@ describe('phenologyTimeline parity', () => {
     expect(es['3']).toBe('Encañado');
     expect(es['5']).toBe('Espigado');
   });
+});
+
+
+describe('satellite monitoring strings parity', () => {
+  const en = (resources.en as any)['crop-health'];
+  for (const [lang, res] of Object.entries(resources)) {
+    it(`${lang} has the monitoring keys of en, with the same placeholders`, () => {
+      const ns = (res as any)['crop-health'];
+      expect(keys(ns.monitoring).sort()).toEqual(keys(en.monitoring).sort());
+      expect(typeof ns.worklist.job.monitor_satellite).toBe('string');
+      const ph = (s: string) => (s.match(/{{\w+}}/g) ?? []).sort();
+      for (const k of keys(en.monitoring)) {
+        const get = (o: any) => k.split('.').reduce((a, p) => a[p], o.monitoring) as string;
+        expect(ph(get(ns))).toEqual(ph(get(en)));
+        if (lang !== 'en') expect(get(ns)).not.toBe('');
+      }
+    });
+  }
 });

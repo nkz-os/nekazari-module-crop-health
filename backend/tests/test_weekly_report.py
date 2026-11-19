@@ -429,13 +429,13 @@ async def test_unknown_kind_gets_generic_wording_and_keeps_the_row(caplog):
     """A job kind without its own wording never drops the parcel's other tasks."""
     rows = [_row(jobs=[
         {"kind": "treat", "when": "today", "detail": {"disease": "roya"}},
-        {"kind": "monitor_satellite", "when": None, "detail": {}},
+        {"kind": "future_kind", "when": None, "detail": {}},
     ])]
     with caplog.at_level("WARNING"):
         out = await _build(rows)
-    assert "no wording for kind=monitor_satellite" in caplog.text
+    assert "no wording for kind=future_kind" in caplog.text
     assert out["complete"] is True
-    assert [t["kind"] for t in out["tasks"]] == ["treat", "monitor_satellite"]
+    assert [t["kind"] for t in out["tasks"]] == ["treat", "future_kind"]
     generic = out["tasks"][1]["text"]
     assert set(generic) == {"es", "eu", "en"}
     assert generic["es"]["title"] == "Revisar la parcela"
@@ -444,3 +444,16 @@ async def test_unknown_kind_gets_generic_wording_and_keeps_the_row(caplog):
     for lang in generic.values():
         for s in lang.values():
             assert s and "_" not in s
+
+
+@pytest.mark.anyio
+async def test_monitor_satellite_has_its_own_wording():
+    out = await _build([_row(jobs=[{"kind": "monitor_satellite", "when": None, "detail": {}}])])
+    task = out["tasks"][0]
+    assert task["kind"] == "monitor_satellite" and task["when"] == {"type": "undated", "date": None}
+    assert task["text"]["es"]["title"] == "Activar seguimiento por satélite"
+    assert task["text"]["en"]["title"] == "Turn on satellite monitoring"
+    assert task["text"]["eu"]["title"] != "Partzela berrikusi"
+    for lang in task["text"].values():
+        assert lang["title"] and lang["why"] and "_" not in lang["title"] + lang["why"]
+    assert task["text"]["es"]["why"] != "Hay una tarea pendiente en esta parcela."

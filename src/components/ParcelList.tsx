@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useTranslation } from '@nekazari/sdk';
 import { cropHealthFetch } from '../api/cropHealthApi';
 import { formatRelativeTime } from '../utils/relativeTime';
+import { MonitoringBanner } from './SatelliteMonitoring';
 import type { ParcelSummary } from '../types/assessment';
 
 import { jobText, freshnessTone, semaphore } from '../utils/worklist';
@@ -49,6 +50,7 @@ export const ParcelRows: React.FC<ParcelRowsProps> = ({ rows, selectedParcelId, 
       const phase = p.phenologyStage ? t(`phenology.stage.${p.phenologyStage}`, { defaultValue: p.phenologyStage }) : '';
       const sem = semaphore(p);
       const job = jobLine(p, t, lang);
+      const needsMonitoring = (p.jobs ?? []).some(j => j.kind === 'monitor_satellite');
       const cropLine = p.cropStatus === 'none'
         ? t('worklist.noActiveCrop')
         : [p.cropName, phase].filter(Boolean).join(' · ');
@@ -73,6 +75,9 @@ export const ParcelRows: React.FC<ParcelRowsProps> = ({ rows, selectedParcelId, 
               <p className="text-sm font-medium text-nkz-text-primary truncate">{p.parcelName || p.parcelId}</p>
               <p className="text-xs text-nkz-text-muted truncate">{cropLine}</p>
               {job && <p className="text-xs text-nkz-text-primary mt-0.5">{job}</p>}
+              {needsMonitoring && (
+                <p className="text-xs text-nkz-text-muted mt-0.5">🛰️ {t('worklist.job.monitor_satellite')}</p>
+              )}
               {p.surprise && (
                 <p className="text-xs text-nkz-warning mt-0.5">
                   {t(`worklist.surprise.${p.surprise.code}`, p.surprise.detail as Record<string, unknown>)}
@@ -160,6 +165,8 @@ const ParcelList: React.FC<ParcelListProps> = ({ onSelectParcel, selectedParcelI
 
   return (
     <div className="h-full flex flex-col">
+      <MonitoringBanner />
+
       {/* Search */}
       <div className="p-2">
         <div className="relative">

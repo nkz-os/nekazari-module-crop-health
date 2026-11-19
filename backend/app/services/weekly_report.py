@@ -121,6 +121,14 @@ _OTHER_TEXTS = {
         "eu": ("Uzta aurreikusita", None, "Prestatu uzta {date} inguruan."),
         "en": ("Harvest expected", None, "Get ready to harvest around {date}."),
     },
+    "monitor_satellite": {
+        "es": ("Activar seguimiento por satélite", None,
+               "La parcela tiene cultivo y aún no se siguen sus imágenes de satélite."),
+        "eu": ("Satelite bidezko jarraipena aktibatu", None,
+               "Partzelak laborea du, baina oraindik ez da haren satelite-irudien jarraipenik egiten."),
+        "en": ("Turn on satellite monitoring", None,
+               "The parcel has a crop and its satellite images are not being followed yet."),
+    },
     # A job kind with no wording of its own (a new kind): still reported, never dropping the row.
     "_generic": {
         "es": ("Revisar la parcela", None, "Hay una tarea pendiente en esta parcela."),

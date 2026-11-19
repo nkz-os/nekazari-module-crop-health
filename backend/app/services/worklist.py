@@ -127,8 +127,11 @@ def _unvalidated_only(forecast: Optional[dict]) -> bool:
 
 def actionable_jobs(*, assessment: Optional[dict], timeline: Optional[dict], agro: Optional[dict],
                     alerts: list[dict], forecast: Optional[dict], today: date,
-                    lang: str = DEFAULT_LANG) -> list[dict]:
-    """Every task of the parcel, most urgent first: treat, irrigate, sow, harvest.
+                    lang: str = DEFAULT_LANG, monitoring_needed: bool = False) -> list[dict]:
+    """Every task of the parcel, most urgent first: treat, irrigate, sow, harvest, monitor_satellite.
+
+    `monitoring_needed` (the parcel has a crop and no satellite monitoring) appends an undated
+    `monitor_satellite` last; `next_job` never passes it, so it is never "the next job".
 
     `next_job` is the first of these; `pending_assessment` and `none_until` are not tasks.
     """
@@ -163,6 +166,8 @@ def actionable_jobs(*, assessment: Optional[dict], timeline: Optional[dict], agr
         if not season_start or str(harvest_date)[:10] >= season_start:
             jobs.append({"kind": "harvest", "when": _when(harvest_date, today),
                          "detail": {"date": harvest_date}})
+    if monitoring_needed:
+        jobs.append({"kind": "monitor_satellite", "when": None, "detail": {}})
     return jobs
 
 

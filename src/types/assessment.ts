@@ -249,7 +249,7 @@ export type CropStatus = 'active' | 'none';
 export type Freshness = 'none' | 'fresh' | 'aging' | 'stale';
 
 export interface NextJob {
-  kind: 'irrigate' | 'sow' | 'treat' | 'harvest' | 'pending_assessment' | 'none_until';
+  kind: 'irrigate' | 'sow' | 'treat' | 'harvest' | 'pending_assessment' | 'none_until' | 'monitor_satellite';
   when: 'today' | string | null;
   detail: Record<string, unknown>;
 }
@@ -284,6 +284,8 @@ export interface ParcelSummary {
   freshness: Freshness;
   stale: boolean;
   nextJob: NextJob | null;
+  /** Every task, most urgent first; `monitor_satellite` (lowest priority) is only here, never `nextJob`. */
+  jobs?: NextJob[];
   surprise: Surprise | null;
   plannedCrop: PlannedCrop | null;
   lastAssessment: { assessedAt: string; cropName?: string } | null;

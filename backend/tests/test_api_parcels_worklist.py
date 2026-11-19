@@ -288,3 +288,41 @@ async def test_request_deadline_bounds_many_hanging_parcels():
         resp = await asyncio.wait_for(_get("/api/crop-health/parcels"), timeout=5)
     assert resp.status_code == 200 and len(resp.json()["parcels"]) == 4
     assert loop.time() - started < 3
+
+
+@pytest.mark.anyio
+async def test_candidates_are_read_once_and_add_monitor_satellite_last():
+    tls = {"p1": _active(), "p2": _active(), "p3": _active()}
+    candidates = AsyncMock(return_value={PREFIX + "p1", PREFIX + "p3"})
+    with respx.mock as mock, patch("app.services.worklist_sources.fetch_crop_timeline", _timelines(tls)), \
+         patch("app.api.assessments.vegetation_monitoring.tenant_candidates", candidates):
+        _setup(mock, [_assessment("p1", recommendedAction="IRRIGATE_IMMEDIATE"), _assessment("p2"),
+                      _assessment("p3")], list(tls))
+        resp = await _get("/api/crop-health/parcels")
+    rows = {p["parcelId"]: p for p in resp.json()["parcels"]}
+    assert candidates.await_count == 1 and candidates.await_args.args == ("tenant-a",)
+    assert [j["kind"] for j in rows["p1"]["jobs"]] == ["irrigate", "monitor_satellite"]
+    assert rows["p1"]["nextJob"]["kind"] == "irrigate"
+    assert [j["kind"] for j in rows["p3"]["jobs"]] == ["monitor_satellite"]
+    assert rows["p2"]["jobs"] == []
+    assert rows["p3"]["nextJob"]["kind"] != "monitor_satellite"
+
+
+@pytest.mark.anyio
+async def test_vegetation_down_leaves_rows_as_before():
+    tls = {"p1": _active()}
+    with respx.mock as mock, patch("app.services.worklist_sources.fetch_crop_timeline", _timelines(tls)), \
+         patch("app.api.assessments.vegetation_monitoring.tenant_candidates", AsyncMock(return_value=None)):
+        _setup(mock, [_assessment("p1")], list(tls))
+        resp = await _get("/api/crop-health/parcels")
+    assert resp.json()["parcels"][0]["jobs"] == []
+
+
+@pytest.mark.anyio
+async def test_candidates_error_never_fails_the_endpoint():
+    tls = {"p1": _active()}
+    with respx.mock as mock, patch("app.services.worklist_sources.fetch_crop_timeline", _timelines(tls)), \
+         patch("app.api.assessments.vegetation_monitoring.tenant_candidates", AsyncMock(side_effect=RuntimeError("x"))):
+        _setup(mock, [_assessment("p1")], list(tls))
+        resp = await _get("/api/crop-health/parcels")
+    assert resp.status_code == 200 and resp.json()["parcels"][0]["jobs"] == []

@@ -105,3 +105,45 @@ async def test_get_crop_context_forwards_tenant_headers(monkeypatch):
     assert ctx is not None
     assert captured["headers"]["X-Tenant-ID"] == "test-tenant"
     assert captured["headers"]["X-User-ID"] == "crop-health-worker"
+
+
+@pytest.mark.asyncio
+async def test_get_crop_context_survives_null_variety(monkeypatch):
+    """A crop with no variety arrives as ``"variety": null``; the context must still be returned."""
+    body = {
+        "parcel_id": "urn:ngsi-ld:AgriParcel:tenant-a:p1",
+        "crop": {"eppo": "VICSA", "name": "veza"},
+        "variety": None,
+        "match_level": "species",
+    }
+
+    class _Resp:
+        status_code = 200
+
+        def json(self):
+            return body
+
+    class _Client:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def get(self, *a, **kwargs):
+            return _Resp()
+
+    context_client._crop_context_cache.clear()
+    monkeypatch.setattr(context_client.httpx, "AsyncClient", _Client)
+    monkeypatch.setattr(
+        context_client.get_settings(), "bioorchestrator_url", "http://bio", raising=False
+    )
+
+    ctx = await context_client.get_crop_context(
+        "urn:ngsi-ld:AgriParcel:tenant-a:p1", tenant_id="tenant-a"
+    )
+    assert ctx is not None
+    assert ctx.match_level == "species"

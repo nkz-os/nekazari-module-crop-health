@@ -662,8 +662,8 @@ async def get_crop_context(
                 logger.info(
                     "Crop context for parcel %s: species=%s variety=%s match=%s",
                     parcel_id,
-                    data.get("crop", {}).get("eppo"),
-                    data.get("variety", {}).get("name"),
+                    (data.get("crop") or {}).get("eppo"),
+                    (data.get("variety") or {}).get("name"),
                     data.get("match_level"),
                 )
                 return ctx

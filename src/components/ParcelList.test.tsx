@@ -118,3 +118,25 @@ describe('FleetOverview', () => {
     expect(html).toMatch(/>2<[\s\S]*>5<[\s\S]*>1</);
   });
 });
+
+
+describe('monitor_satellite job', () => {
+  const withJobs = (jobs: unknown[]) => ({ ...(calm as object), jobs }) as never;
+  it('adds a lowest-priority line without replacing the next job', () => {
+    const html = render([{ ...(busy as object), jobs: [
+      { kind: 'irrigate', when: 'today', detail: {} },
+      { kind: 'monitor_satellite', when: null, detail: {} }] } as never]);
+    expect(html).toContain('worklist.job.irrigate');
+    expect(html).toContain('worklist.job.monitor_satellite');
+    expect(html.indexOf('worklist.job.irrigate')).toBeLessThan(html.indexOf('worklist.job.monitor_satellite'));
+  });
+  it('a parcel without the job shows nothing new', () => {
+    expect(render([withJobs([])])).not.toContain('monitor_satellite');
+    expect(render([calm])).not.toContain('monitor_satellite');
+  });
+  it('a calm parcel with the job shows it, undated', () => {
+    const html = render([withJobs([{ kind: 'monitor_satellite', when: null, detail: {} }])]);
+    expect(html).toContain('worklist.job.monitor_satellite');
+    expect(html).not.toContain('worklist.when');
+  });
+});

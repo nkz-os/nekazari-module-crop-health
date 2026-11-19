@@ -2,6 +2,9 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { useTranslation } from '@nekazari/sdk';
 import { cropHealthFetch } from '../api/cropHealthApi';
 import { formatRelativeTime } from '../utils/relativeTime';
+import { PARCEL_URN_PREFIX } from '../services/vegetationMonitoring';
+import { useCanActivateMonitoring } from '../hooks/useCanActivateMonitoring';
+import { SatelliteActivation } from './SatelliteMonitoring';
 
 interface SensorInfo {
   metric: string;
@@ -19,6 +22,7 @@ interface SourceBlock {
   sensors?: SensorInfo[];
   lastValue?: number;
   reason?: string;
+  monitoring?: { state: string; needs_activation: boolean; period_start: string | null; activation_roles: string[] };
   species?: string;
   eppoCode?: string;
   variety?: string;
@@ -90,6 +94,7 @@ const SourceStatusPanel: React.FC<SourceStatusPanelProps> = ({ parcelId, parcelN
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const canActivate = useCanActivateMonitoring(data?.sources.satellite.ndvi.monitoring?.activation_roles ?? []);
 
   const fetchData = useCallback(async (showSpinner = false) => {
     if (showSpinner) setRefreshing(true);
@@ -210,6 +215,14 @@ const SourceStatusPanel: React.FC<SourceStatusPanelProps> = ({ parcelId, parcelN
         <SourceRow icon="🛰️" label={t('sources.satellite.ndvi')} status={src.satellite.ndvi.status}
           freshness={src.satellite.ndvi.freshness} lastDataAt={src.satellite.ndvi.lastDataAt}
           summary={src.satellite.ndvi.lastValue != null ? `NDVI ${src.satellite.ndvi.lastValue.toFixed(2)}` : t('sources.noData')} t={t} />
+        {src.satellite.ndvi.reason === 'not_monitored' && (
+          <SatelliteActivation
+            parcelUrn={PARCEL_URN_PREFIX + parcelId}
+            periodStart={src.satellite.ndvi.monitoring?.period_start ?? null}
+            canActivate={canActivate}
+            onDone={() => fetchData()}
+          />
+        )}
         <SourceRow icon="📡" label={t('sources.satellite.sar')} status={src.satellite.sar.status}
           freshness={src.satellite.sar.freshness} lastDataAt={src.satellite.sar.lastDataAt}
           summary={src.satellite.sar.reason ? `— ${src.satellite.sar.reason}` : t('sources.noData')} t={t} />

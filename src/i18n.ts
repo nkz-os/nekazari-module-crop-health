@@ -397,6 +397,7 @@ const en = {
                 "not_applicable": "Ceiling",
                 "unvalidated": "Not validated"
             },
+            "experimentalNote": "Measured on provincial statistics: until May this figure reflects what is normal for the area, not how this season is going; by June it reflects almost as much as at the end of the season.",
             "unvalidatedNote": {
                 "ceiling": "Model ceiling with the water available, not an expected harvest. This crop is not validated yet.",
                 "irrigated": "Computed with full irrigation and no regional calibration.",
@@ -875,6 +876,7 @@ const es = {
                 "not_applicable": "Techo",
                 "unvalidated": "Sin validar"
             },
+            "experimentalNote": "Medido con estadísticas provinciales: hasta mayo esta cifra refleja lo normal de la zona, no cómo viene esta campaña; en junio ya refleja casi tanto como al final.",
             "unvalidatedNote": {
                 "ceiling": "Techo del modelo con el agua disponible, no una cosecha esperada. Este cultivo aún no está validado.",
                 "irrigated": "Calculado con riego pleno y sin calibración regional.",
@@ -1351,6 +1353,7 @@ const ca = {
                 "not_applicable": "Sostre",
                 "unvalidated": "Sense validar"
             },
+            "experimentalNote": "Mesurat amb estadístiques provincials: fins al maig aquesta xifra reflecteix el que és normal a la zona, no com va aquesta campanya; al juny ja reflecteix gairebé tant com al final.",
             "unvalidatedNote": {
                 "ceiling": "Sostre del model amb l'aigua disponible, no una collita esperada. Aquest cultiu encara no està validat.",
                 "irrigated": "Calculat amb reg ple i sense calibratge regional.",
@@ -1796,6 +1799,7 @@ const eu = {
                 "not_applicable": "Sabaia",
                 "unvalidated": "Balioztatu gabe"
             },
+            "experimentalNote": "Probintziako estatistikekin neurtua: maiatzera arte zifra honek eremuko ohikoa islatzen du, ez kanpaina hau nola doan; ekainean ia amaieran bezainbeste islatzen du.",
             "unvalidatedNote": {
                 "ceiling": "Ereduaren sabaia eskuragarri dagoen urarekin, ez espero den uzta. Labore hau oraindik ez dago balioztatuta.",
                 "irrigated": "Ureztatze osoarekin eta eskualdeko kalibraziorik gabe kalkulatua.",
@@ -2241,6 +2245,7 @@ const fr = {
                 "not_applicable": "Plafond",
                 "unvalidated": "Non validé"
             },
+            "experimentalNote": "Mesuré sur des statistiques provinciales : jusqu'en mai ce chiffre reflète la normale de la zone, pas le déroulement de cette campagne ; en juin il en reflète presque autant qu'en fin de campagne.",
             "unvalidatedNote": {
                 "ceiling": "Plafond du modèle avec l'eau disponible, pas une récolte attendue. Cette culture n'est pas encore validée.",
                 "irrigated": "Calculé avec irrigation complète et sans calibration régionale.",
@@ -2686,6 +2691,7 @@ const pt = {
                 "not_applicable": "Teto",
                 "unvalidated": "Não validado"
             },
+            "experimentalNote": "Medido com estatísticas provinciais: até maio este valor reflete o normal da zona, não como corre esta campanha; em junho já reflete quase tanto como no final.",
             "unvalidatedNote": {
                 "ceiling": "Teto do modelo com a água disponível, não uma colheita esperada. Esta cultura ainda não está validada.",
                 "irrigated": "Calculado com rega plena e sem calibração regional.",

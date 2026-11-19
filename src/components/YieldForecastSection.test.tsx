@@ -44,6 +44,20 @@ describe('YieldForecastView', () => {
       expect(h.split(`yieldForecast.unvalidatedNote.${k}`).length - 1).toBe(1);
     }
   });
+  it('an experimental estimate carries the measured-skill note, once', () => {
+    const h = html(r({ estimates: [
+      { provider_id: 'aquacrop', basis: 'gap_corrected', range: { low: 3, high: 4 }, validation: { status: 'experimental' } },
+      { provider_id: 'aquacrop', basis: 'water_limited', percentiles: { p10: 5, p50: 6, p90: 7 }, validation: { status: 'not_applicable' } }] }));
+    expect(h.split('yieldForecast.experimentalNote').length - 1).toBe(1);
+  });
+  it('validated, ceiling-only and unvalidated estimates carry no measured-skill note', () => {
+    const validated = html(r({ estimates: [
+      { provider_id: 'aquacrop', basis: 'gap_corrected', range: { low: 3, high: 4 }, validation: { status: 'validated' } }] }));
+    const unvalidated = html(r({ estimates: [
+      { provider_id: 'aquacrop', basis: 'water_limited', percentiles: { p10: 5, p50: 6, p90: 7 }, validation: { status: 'unvalidated' } }] }));
+    expect(validated).not.toContain('yieldForecast.experimentalNote');
+    expect(unvalidated).not.toContain('yieldForecast.experimentalNote');
+  });
   it('validated and not_applicable estimates show no unvalidated badge or note', () => {
     const h = html(r({ estimates: [
       { provider_id: 'aquacrop', basis: 'gap_corrected', range: { low: 3, high: 4 }, validation: { status: 'experimental' } },

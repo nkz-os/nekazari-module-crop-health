@@ -149,6 +149,7 @@ async def test_sources_detail_returns_source_status():
             {
                 "id": "urn:ngsi-ld:Device:test-tenant:sensor1",
                 "controlledAsset": "urn:ngsi-ld:AgriParcel:Parcela-4",
+                "observationContext": {"medium": "plant"},
             }
         ])
         mock.get(url__regex=r".*type=DeviceMeasurement.*").respond(json=[
@@ -455,3 +456,39 @@ async def test_sources_detail_without_vegetation_is_as_before():
     assert "monitoring" not in ndvi and "reason" not in ndvi
     ndvi = await _detail("Parcela-84", AsyncMock(side_effect=RuntimeError("boom")))
     assert "monitoring" not in ndvi and "reason" not in ndvi
+
+
+@pytest.mark.anyio
+async def test_sources_detail_ignores_readings_of_the_wrong_medium():
+    """A leaf reading from a soil-medium device, and from one with no medium, is not a source."""
+    with respx.mock as mock:
+        mock.get(url__regex=r".*type=CropHealthAssessment.*").respond(json=[])
+        mock.get(url__regex=r".*type=Device(&|%).*").respond(json=[
+            {"id": "urn:ngsi-ld:Device:acme:soil1", "controlledAsset": "urn:ngsi-ld:AgriParcel:p1",
+             "observationContext": {"medium": "soil"}},
+            {"id": "urn:ngsi-ld:Device:acme:unset1", "controlledAsset": "urn:ngsi-ld:AgriParcel:p1"},
+            {"id": "urn:ngsi-ld:Device:acme:leaf1", "controlledAsset": "urn:ngsi-ld:AgriParcel:p1",
+             "observationContext": {"medium": "soil"},
+             "channelOverrides": {"leafTemperature": {"observationContext": {"medium": "plant"}}}},
+        ])
+
+        def _m(device, metric, value):
+            return {"id": f"urn:ngsi-ld:DeviceMeasurement:acme:{device}:{metric}",
+                    "refDevice": f"urn:ngsi-ld:Device:acme:{device}",
+                    "controlledProperty": metric, "numValue": value,
+                    "dateObserved": "2026-06-07T10:25:00Z"}
+
+        mock.get(url__regex=r".*type=DeviceMeasurement.*").respond(json=[
+            _m("soil1", "leafTemperature", 99.0),
+            _m("unset1", "soilMoisture", 20.0),
+            _m("soil1", "soilMoisture", 31.0),
+            _m("leaf1", "leafTemperature", 27.0),
+        ])
+        mock.get().respond(json=[])
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test", headers=GATEWAY_HEADERS) as client:
+            resp = await client.get("/api/crop-health/sources?parcelId=p1")
+        assert resp.status_code == 200
+        got = sorted((s["metric"], s["lastValue"]) for s in resp.json()["sources"]["iot"]["sensors"])
+        assert got == [("leafTemperature", 27.0), ("soilMoisture", 31.0)]

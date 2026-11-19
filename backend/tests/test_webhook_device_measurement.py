@@ -19,6 +19,17 @@ os.environ.setdefault("KEYCLOAK_URL", "http://keycloak:8080/auth")
 
 DEVICE_URN = "urn:ngsi-ld:Device:acme:probe-01"
 
+@pytest.fixture(autouse=True)
+def medium_gate_open(monkeypatch):
+    """These tests are about delivery, not media: every device passes the medium gate."""
+    from app.api import webhooks
+
+    async def _allows(tenant_id, device_id, attribute):
+        return True
+
+    monkeypatch.setattr(webhooks._medium_gate, "allows", _allows)
+
+
 
 class _FakeRedis:
     def __init__(self):
@@ -259,3 +270,48 @@ def test_record_runs_before_trigger_for_engine_metric(fake_redis, triggers, reco
     _post({"data": [soil]})
     assert order == ["record", "trigger"]
     assert records[0]["unit_code"] == "P1"
+
+
+# ---- medium gate (the autouse fixture above opens it; these close it again) ----
+
+def _real_gate(monkeypatch, device, fetched=None):
+    from app.api import webhooks
+    from app.services.observation_medium import DeviceMediumGate
+
+    async def _fetch(tenant_id, device_id):
+        if fetched is not None:
+            fetched.append((tenant_id, device_id))
+        if isinstance(device, Exception):
+            raise device
+        return device
+
+    monkeypatch.setattr(webhooks, "_medium_gate", DeviceMediumGate(_fetch, clock=lambda: 0.0))
+
+
+def test_reading_of_other_medium_is_dropped_but_acked(fake_redis, triggers, records, monkeypatch):
+    _real_gate(monkeypatch, {"id": DEVICE_URN, "observationContext": {"medium": "soil"}})
+    resp = _post({"data": [_measurement()]})  # leafTemperature needs a plant sensor
+    assert resp.status_code == 204
+    assert fake_redis.readings == [] and triggers == [] and records == []
+
+
+def test_reading_of_required_medium_is_used_and_device_fetched_with_tenant(
+    fake_redis, triggers, records, monkeypatch
+):
+    fetched = []
+    _real_gate(monkeypatch, {"id": DEVICE_URN, "observationContext": {"medium": "plant"}}, fetched)
+    assert _post({"data": [_measurement()]}).status_code == 204
+    assert fetched == [("acme", DEVICE_URN)]
+    assert len(fake_redis.readings) == 1 and len(triggers) == 1 and len(records) == 1
+
+
+def test_device_without_medium_is_dropped(fake_redis, triggers, records, monkeypatch):
+    _real_gate(monkeypatch, {"id": DEVICE_URN})
+    assert _post({"data": [_measurement()]}).status_code == 204
+    assert fake_redis.readings == [] and triggers == []
+
+
+def test_broker_failure_drops_reading_and_still_acks(fake_redis, triggers, records, monkeypatch):
+    _real_gate(monkeypatch, RuntimeError("broker down"))
+    assert _post({"data": [_measurement()]}).status_code == 204
+    assert fake_redis.readings == [] and triggers == [] and records == []

@@ -23,6 +23,7 @@ from nkz_platform_sdk.notify_auth import accept_master_from_env, verify_notifica
 
 from app.schemas import MetricType
 from app.services import pipeline
+from app.services.observation_medium import DeviceMediumGate
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +62,13 @@ def _reject_unauthenticated_notify(headers) -> HTTPException | None:
     ):
         return HTTPException(status_code=401, detail="missing or invalid notification credentials")
     return None
+
+async def _fetch_device(tenant_id: str, device_id: str) -> dict | None:
+    return await pipeline._read_entity(device_id, tenant_id, "device")
+
+
+# Devices are looked up in the background task, with a short in-process cache.
+_medium_gate = DeviceMediumGate(_fetch_device, ttl_s=300.0)
 
 _PIPELINE_METRICS = frozenset(
     {MetricType.LEAF_TEMPERATURE, MetricType.TRUNK_DIAMETER, MetricType.SOIL_MOISTURE}
@@ -125,46 +133,70 @@ async def receive_sensor_data(
         if metric_type is None:
             continue
 
-        # Redis sliding window, keyed by device — stable across readings
-        await redis_state.store_reading(
-            device_id=device_id,
-            metric=metric_type.value,
-            timestamp=observed_ts if observed_ts is not None else now_ts,
-            value=value,
-        )
-
-        # Before trigger: background tasks run in order, so the engine sees it.
         background_tasks.add_task(
-            pipeline.record_parcel_reading,
+            _ingest_reading,
             device_id=device_id,
-            metric=metric_type.value,
-            ts=observed_ts if observed_ts is not None else now_ts,
+            metric_name=metric_name,
+            metric_type=metric_type,
             value=value,
+            ts=observed_ts if observed_ts is not None else now_ts,
             unit_code=unit_code,
             tenant_id=tenant_id,
             redis_state=redis_state,
         )
 
-        if metric_type not in _PIPELINE_METRICS:
-            continue
-
-        # The parcel is not on the measurement: it hangs off the device's
-        # controlledAsset, one hop away, so the pipeline resolves it rather
-        # than the request path.
-        background_tasks.add_task(
-            pipeline.trigger,
-            entity_id=device_id,
-            metric_type=metric_type.value,
-            redis_state=redis_state,
-            parcel_id=None,
-            tenant_id=tenant_id,
-        )
-
-        logger.info(
-            "Webhook: %s.%s=%.2f -> pipeline queued", device_id, metric_name, value
-        )
-
     return Response(status_code=204)
+
+
+async def _ingest_reading(
+    *,
+    device_id: str,
+    metric_name: str,
+    metric_type: MetricType,
+    value: float,
+    ts: float,
+    unit_code: str | None,
+    tenant_id: str,
+    redis_state,
+) -> None:
+    """Store one reading and queue its pipeline run, if the sensor measures the right medium.
+
+    Runs in the background so the webhook still answers 204 at once. A reading whose
+    medium does not match, or whose Device cannot be read, is dropped.
+    """
+    if not await _medium_gate.allows(tenant_id, device_id, metric_name):
+        return
+
+    # Redis sliding window, keyed by device — stable across readings
+    await redis_state.store_reading(
+        device_id=device_id, metric=metric_type.value, timestamp=ts, value=value,
+    )
+
+    # Before trigger: the engine sees the recorded parcel reading.
+    await pipeline.record_parcel_reading(
+        device_id=device_id,
+        metric=metric_type.value,
+        ts=ts,
+        value=value,
+        unit_code=unit_code,
+        tenant_id=tenant_id,
+        redis_state=redis_state,
+    )
+
+    if metric_type not in _PIPELINE_METRICS:
+        return
+
+    # The parcel is not on the measurement: it hangs off the device's
+    # controlledAsset, one hop away, so the pipeline resolves it rather
+    # than the request path.
+    await pipeline.trigger(
+        entity_id=device_id,
+        metric_type=metric_type.value,
+        redis_state=redis_state,
+        parcel_id=None,
+        tenant_id=tenant_id,
+    )
+    logger.info("Webhook: %s.%s=%.2f -> pipeline run", device_id, metric_name, value)
 
 
 def _read_measurement(

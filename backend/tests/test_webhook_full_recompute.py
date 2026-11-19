@@ -19,6 +19,17 @@ os.environ.setdefault("INTERNAL_SERVICE_SECRET", "test-secret")
 os.environ.setdefault("API_PREFIX", "/api/crop-health")
 os.environ.setdefault("KEYCLOAK_URL", "http://keycloak:8080/auth")
 
+@pytest.fixture(autouse=True)
+def medium_gate_open(monkeypatch):
+    """These tests are about delivery, not media: every device passes the medium gate."""
+    from app.api import webhooks
+
+    async def _allows(tenant_id, device_id, attribute):
+        return True
+
+    monkeypatch.setattr(webhooks._medium_gate, "allows", _allows)
+
+
 
 class _FakeRedis:
     async def store_reading(self, *a, **k):

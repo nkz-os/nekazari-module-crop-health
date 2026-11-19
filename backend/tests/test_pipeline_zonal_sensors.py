@@ -8,6 +8,7 @@ from app.services.zonation import Zone, consolidate_sensor_readings, sensors_in_
 
 _PARCEL = {"type": "Polygon", "coordinates": [[[0, 0], [0, 10], [10, 10], [10, 0], [0, 0]]]}
 _URN = "urn:ngsi-ld:AgriParcel:p1"
+_AIR = {"observationContext": {"medium": "ambientAir"}}
 
 
 class _Pt:
@@ -50,9 +51,9 @@ def fake_orion(monkeypatch):
 @pytest.mark.asyncio
 async def test_gathers_inside_device_only_and_consolidates(fake_orion):
     fake_orion += [
-        {"id": "urn:Device:in1", "location": _point(2, 2)},
-        {"id": "urn:Device:in2", "location": _point(3, 3)},
-        {"id": "urn:Device:out", "location": _point(50, 50)},
+        {"id": "urn:Device:in1", **_AIR, "location": _point(2, 2)},
+        {"id": "urn:Device:in2", **_AIR, "location": _point(3, 3)},
+        {"id": "urn:Device:out", **_AIR, "location": _point(50, 50)},
     ]
     redis = _FakeRedis({
         ("urn:Device:in1", "airTemperature"): [20.0, 22.0],
@@ -71,7 +72,7 @@ async def test_gathers_inside_device_only_and_consolidates(fake_orion):
 @pytest.mark.asyncio
 async def test_controlled_asset_without_location_included_unattributed(fake_orion):
     fake_orion += [
-        {"id": "urn:Device:c1", "controlledAsset": [_URN]},
+        {"id": "urn:Device:c1", "observationContext": {"medium": "soil"}, "controlledAsset": [_URN]},
         {"id": "urn:Device:c2", "controlledAsset": "urn:ngsi-ld:AgriParcel:other"},
     ]
     redis = _FakeRedis({("urn:Device:c1", "soilMoisture"): [30.0]})
@@ -193,3 +194,24 @@ async def test_fetch_zone_daily_errors_give_empty(monkeypatch):
     assert await pipeline._fetch_zone_daily("p1", "acme", date(2026, 7, 1), date(2026, 7, 2)) == {}
     _fake_httpx(monkeypatch, exc=RuntimeError("down"))
     assert await pipeline._fetch_zone_daily("p1", "acme", date(2026, 7, 1), date(2026, 7, 2)) == {}
+
+
+@pytest.mark.asyncio
+async def test_readings_of_other_media_are_not_gathered(fake_orion):
+    fake_orion += [
+        {"id": "urn:Device:ok", **_AIR, "location": _point(2, 2)},
+        {"id": "urn:Device:enclosed", "observationContext": {"medium": "enclosedAir"}, "location": _point(3, 3)},
+        {"id": "urn:Device:unset", "location": _point(4, 4)},
+        {"id": "urn:Device:mixed", **_AIR, "location": _point(5, 5),
+         "channelOverrides": {"relativeHumidity": {"observationContext": {"medium": "equipment"}}}},
+    ]
+    redis = _FakeRedis({
+        (d, m): [10.0] for d in ("urn:Device:ok", "urn:Device:enclosed", "urn:Device:unset", "urn:Device:mixed")
+        for m in ("airTemperature", "relativeHumidity")
+    })
+    sensors = {s["device_id"]: s["readings"] for s in await pipeline._gather_parcel_sensors(
+        _URN, "acme", redis_state=redis, parcel_geometry=_PARCEL
+    )}
+    assert sensors["urn:Device:ok"] == {"air_temp_c": 10.0, "rh_pct": 10.0}
+    assert sensors["urn:Device:enclosed"] == {} and sensors["urn:Device:unset"] == {}
+    assert sensors["urn:Device:mixed"] == {"air_temp_c": 10.0}

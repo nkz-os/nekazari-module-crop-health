@@ -57,12 +57,13 @@ def next_record(previous: dict | None, answer: dict, now: datetime) -> dict | No
                     "attempted_at": at, "last_error": None}
         reason, code = _first_reason(answer)
         return {"status": "unavailable", "reason": reason, "code": code, "season": answer.get("season"),
-                "estimates": [], "computed_at": at, "attempted_at": at, "last_error": None}
+                "estimates": answer.get("estimates") or [], "computed_at": at, "attempted_at": at, "last_error": None}
     if state == "failed":
         reason, code = _first_reason(answer)
         if previous:
             return {**previous, "last_error": {"reason": reason, "code": code, "at": at}}
-        return {"status": "failed", "reason": reason, "code": code, "estimates": [], "season": None,
+        return {"status": "failed", "reason": reason, "code": code, "estimates": answer.get("estimates") or [],
+                "season": None,
                 "attempted_at": at, "last_error": None}
     return None
 
@@ -87,7 +88,8 @@ def build_prediction_record(tenant: str, urn: str, answer: dict) -> plog.Predict
     """
     estimates = answer.get("estimates") or []
     season = answer.get("season") or {}
-    first = estimates[0] if estimates else {}
+    # The provincial normal can come first; the series is named after the simulation model, not the normal.
+    first = next((e for e in estimates if isinstance(e, dict) and e.get("provider_id") == "aquacrop"), {})
     model = first.get("provider_id") or answer.get("provider_id")
     model_version = season.get("provider_version") or first.get("provider_version")
     season_start = _iso_date((season.get("sowing") or {}).get("date"))

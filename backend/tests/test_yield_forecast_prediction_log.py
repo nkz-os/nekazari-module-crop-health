@@ -114,3 +114,15 @@ async def test_log_off_does_not_change_outcome(monkeypatch):
     monkeypatch.setattr(plog, "get_prediction_log", lambda: None)
     out, st = await _run(DONE)
     assert out == "written"
+
+
+@pytest.mark.anyio
+async def test_normal_first_does_not_change_model(log):
+    normal = {"provider_id": "provincial_normal", "provider_version": "2026-11-20", "basis": "provincial_normal",
+              "unit": "t/ha", "percentiles": {"p10": 3.0, "p50": 4.0, "p90": 5.0},
+              "validation": {"status": "validated"}}
+    out, _ = await _run({**DONE, "estimates": [normal, EST]})
+    assert out == "written"
+    r = (await log.list("tenant-a", URN))[0]
+    assert (r.model, r.model_version) == ("aquacrop", "0.9.1")
+    assert r.payload["estimates"] == [normal, EST]

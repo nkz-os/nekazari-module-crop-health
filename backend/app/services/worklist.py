@@ -121,6 +121,7 @@ def _unvalidated_only(forecast: Optional[dict]) -> bool:
     estimates = (forecast or {}).get("estimates")
     if not isinstance(estimates, list):
         return False
+    # A future model provider in in-season must be added to this filter.
     crop_rows = [e for e in estimates if isinstance(e, dict) and e.get("provider_id") == "aquacrop"]
     if not crop_rows:
         return False

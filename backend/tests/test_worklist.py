@@ -76,7 +76,16 @@ def test_unvalidated_forecast_is_not_harvest():
 
 
 def test_validated_forecast_with_estimates_is_still_harvest():
-    fc = _fc_with([{"validation": {"status": "experimental"}}, {"validation": {"status": "not_applicable"}}])
+    fc = _fc_with([{"provider_id": "aquacrop", "validation": {"status": "experimental"}},
+                    {"provider_id": "aquacrop", "validation": {"status": "not_applicable"}}])
+    job = _job(timeline=_active(), assessment={}, forecast=fc)
+    assert (job["kind"], job["when"]) == ("harvest", "2027-07-01")
+
+
+def test_wheat_shape_normal_validated_with_aquacrop_variants_is_harvest():
+    fc = _fc_with([{"provider_id": "provincial_normal", "validation": {"status": "validated"}},
+                   {"provider_id": "aquacrop", "basis": "gap_corrected", "validation": {"status": "experimental"}},
+                   {"provider_id": "aquacrop", "basis": "water_limited", "validation": {"status": "not_applicable"}}])
     job = _job(timeline=_active(), assessment={}, forecast=fc)
     assert (job["kind"], job["when"]) == ("harvest", "2027-07-01")
 

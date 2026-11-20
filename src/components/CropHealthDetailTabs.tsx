@@ -5,6 +5,7 @@ import { Sparkline } from './shared/Sparkline';
 import { SeverityBadge, SEVERITY_STYLES } from './shared/SeverityBadge';
 import { Badge, MetricSection, ProgressBar } from './detail/MetricPrimitives';
 import YieldForecastSection from './YieldForecastSection';
+import WaterLossSection from './WaterLossSection';
 import ZoneHealthPanel from './ZoneHealthPanel';
 import CropHealthRisksPanel from './CropHealthRisksPanel';
 import { formatRelativeTime } from '../utils/relativeTime';
@@ -207,6 +208,7 @@ const CropHealthDetailTabs: React.FC<CropHealthDetailTabsProps> = ({
         </div>
         {diseases.length > 0 && <CropHealthRisksPanel diseases={diseases} assessment={null} />}
         <YieldForecastSection parcelId={parcelId} />
+        <WaterLossSection parcelId={parcelId} />
       </>
     );
   }
@@ -366,6 +368,7 @@ const CropHealthDetailTabs: React.FC<CropHealthDetailTabsProps> = ({
           </p>
         </MetricSection>
       )}
+      <WaterLossSection parcelId={parcelId} />
         </>
       )}
 

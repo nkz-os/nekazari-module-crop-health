@@ -6,6 +6,7 @@ vi.mock('@nekazari/sdk', () => ({
   useTranslation: () => ({ t: (k: string) => k }),
 }));
 vi.mock('./YieldForecastSection', () => ({ default: () => null }));
+vi.mock('./WaterLossSection', () => ({ default: () => <i>water-loss</i> }));
 vi.mock('./CropHealthRisksPanel', () => ({ default: () => <i>risks-panel</i> }));
 vi.mock('./ZoneHealthPanel', () => ({ default: () => null }));
 

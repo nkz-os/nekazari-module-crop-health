@@ -37,6 +37,21 @@ _CONTEXT_KEYS = ("observationContext", "https://nkz-os.org/ns/observationContext
 _OVERRIDE_KEYS = ("channelOverrides", "https://nkz-os.org/ns/channelOverrides")
 
 
+_DERIVED_SUFFIXES = ("Min", "Max", "StdDev")
+
+
+def base_attribute(name: str) -> str:
+    """Base attribute of a window-statistic name (``airTemperatureMin`` -> ``airTemperature``).
+
+    Strips one trailing ``Min``/``Max``/``StdDev`` when something non-empty remains;
+    otherwise returns the name unchanged.
+    """
+    for suffix in _DERIVED_SUFFIXES:
+        if name.endswith(suffix) and len(name) > len(suffix):
+            return name[: -len(suffix)]
+    return name
+
+
 def _property_value(entity: dict, keys) -> object:
     """Value of the first key present, normalized or keyValues form."""
     for key in keys:
@@ -50,6 +65,7 @@ def _property_value(entity: dict, keys) -> object:
 
 def effective_medium(device: dict, attribute: str) -> str | None:
     """Medium of one attribute of a Device entity; None when none is declared."""
+    attribute = base_attribute(attribute)
     channels = _property_value(device, _OVERRIDE_KEYS)
     if isinstance(channels, dict):
         override = channels.get(attribute)
@@ -72,6 +88,7 @@ def reading_allowed(device: dict, attribute: str) -> bool:
 
     Attributes crop-health does not gate by medium are not governed here.
     """
+    attribute = base_attribute(attribute)
     required = REQUIRED_MEDIUM.get(attribute)
     if required is None:
         return True
@@ -86,7 +103,7 @@ def reading_allowed(device: dict, attribute: str) -> bool:
 def log_ignored(tenant_id: str, device_id: str, attribute: str, medium: str | None) -> None:
     logger.debug(
         "reading ignored (medium mismatch): tenant=%s device=%s attribute=%s medium=%s required=%s",
-        tenant_id, device_id, attribute, medium, REQUIRED_MEDIUM.get(attribute),
+        tenant_id, device_id, attribute, medium, REQUIRED_MEDIUM.get(base_attribute(attribute)),
     )
 
 
@@ -103,7 +120,7 @@ class DeviceMediumGate:
         self._cache: dict[tuple[str, str], tuple[float, dict]] = {}
 
     async def allows(self, tenant_id: str, device_id: str, attribute: str) -> bool:
-        if attribute not in REQUIRED_MEDIUM:
+        if base_attribute(attribute) not in REQUIRED_MEDIUM:
             return True
         key = (tenant_id, device_id)
         now = self._clock()

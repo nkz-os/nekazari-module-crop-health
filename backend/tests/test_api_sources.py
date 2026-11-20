@@ -1,6 +1,7 @@
 """Tests for GET /api/crop-health/sources endpoint."""
 import pytest
 from httpx import ASGITransport, AsyncClient
+import httpx
 import respx
 
 from app.main import app
@@ -492,3 +493,42 @@ async def test_sources_detail_ignores_readings_of_the_wrong_medium():
         assert resp.status_code == 200
         got = sorted((s["metric"], s["lastValue"]) for s in resp.json()["sources"]["iot"]["sensors"])
         assert got == [("leafTemperature", 27.0), ("soilMoisture", 31.0)]
+
+
+@pytest.mark.anyio
+async def test_sources_detail_pages_measurements_and_hides_derived_series():
+    """60 readings over two pages: every base appears once, no window-statistic series."""
+    dev_urn = "urn:ngsi-ld:Device:acme:d1"
+
+    def _m(metric, value):
+        return {"id": f"urn:ngsi-ld:DeviceMeasurement:acme:d1:{metric}", "refDevice": dev_urn,
+                "controlledProperty": metric, "numValue": value,
+                "dateObserved": "2026-06-07T10:25:00Z"}
+
+    page1 = [_m("airTemperatureMin", 1.0)] + [_m(f"filler{i}", float(i)) for i in range(49)]
+    page2 = [_m("airTemperature", 15.0), _m("airTemperatureMax", 20.0), _m("lonelyMax", 3.0)] + [
+        _m(f"extra{i}", float(i)) for i in range(7)]
+    with respx.mock as mock:
+        mock.get(url__regex=r".*type=CropHealthAssessment.*").respond(json=[])
+        mock.get(url__regex=r".*type=Device(&|%).*").respond(json=[
+            {"id": dev_urn, "controlledAsset": "urn:ngsi-ld:AgriParcel:p-paged",
+             "observationContext": {"medium": "ambientAir"}},
+        ])
+
+        def _measurements(request):
+            offset = int(request.url.params.get("offset", "0"))
+            return httpx.Response(200, json=page1 if offset == 0 else page2 if offset == 50 else [])
+
+        mock.get(url__regex=r".*type=DeviceMeasurement.*").mock(side_effect=_measurements)
+        mock.get().respond(json=[])
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test", headers=GATEWAY_HEADERS) as client:
+            resp = await client.get("/api/crop-health/sources?parcelId=p-paged")
+        assert resp.status_code == 200
+        metrics = [s["metric"] for s in resp.json()["sources"]["iot"]["sensors"]]
+        assert "airTemperature" in metrics
+        assert "airTemperatureMin" not in metrics and "airTemperatureMax" not in metrics
+        assert "lonelyMax" in metrics  # base absent on the device: kept
+        assert sum(m.startswith("filler") for m in metrics) == 49
+        assert sum(m.startswith("extra") for m in metrics) == 7

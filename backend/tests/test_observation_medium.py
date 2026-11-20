@@ -145,3 +145,30 @@ async def test_gate_untracked_attribute_needs_no_lookup():
     gate = om.DeviceMediumGate(fetch, clock=lambda: 0.0)
     assert await gate.allows("acme", "d1", "precipitation") is True
     assert fetch.calls == 0
+
+
+@pytest.mark.parametrize("name,base", [
+    ("airTemperatureMin", "airTemperature"), ("airTemperatureMax", "airTemperature"),
+    ("airTemperatureStdDev", "airTemperature"), ("airTemperature", "airTemperature"),
+    ("Max", "Max"), ("Min", "Min"), ("StdDev", "StdDev"), ("", ""),
+    ("fooMinMax", "fooMin"),
+])
+def test_base_attribute(name, base):
+    assert om.base_attribute(name) == base
+
+
+def test_derived_attribute_follows_base_override():
+    dev = _dev("ambientAir", overrides={"equipmentTemperature": {"observationContext": {"medium": "equipment"}}})
+    assert om.effective_medium(dev, "equipmentTemperatureMin") == om.effective_medium(dev, "equipmentTemperature") == "equipment"
+    assert om.reading_allowed(dev, "equipmentTemperatureMin") == om.reading_allowed(dev, "equipmentTemperature")
+
+
+def test_derived_air_attribute_is_governed_like_its_base():
+    assert om.reading_allowed(_dev("ambientAir"), "airTemperatureMax") is True
+    assert om.reading_allowed(_dev("soil"), "airTemperatureMax") is False
+    assert om.reading_allowed(_dev(), "soilMoistureStdDev") is False
+
+
+async def test_gate_resolves_derived_attribute():
+    gate = om.DeviceMediumGate(_Fetch(_dev("soil")), ttl_s=300, clock=lambda: 0.0)
+    assert await gate.allows("acme", "d1", "airTemperatureMin") is False

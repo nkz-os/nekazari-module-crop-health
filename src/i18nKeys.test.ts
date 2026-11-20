@@ -42,6 +42,7 @@ describe('detail strings parity', () => {
       expect(typeof ns.sources.toggle).toBe('string');
       expect(typeof ns.yieldForecast.none).toBe('string');
       expect(typeof ns.yieldForecast.normalNote).toBe('string');
+      expect(typeof ns.yieldForecast.normalNoteBarley).toBe('string');
       expect(typeof ns.yieldForecast.provider.provincial_normal).toBe('string');
       expect(typeof ns.yieldForecast.basis.provincial_normal).toBe('string');
     });

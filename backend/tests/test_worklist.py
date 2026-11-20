@@ -70,7 +70,7 @@ def _fc_with(estimates):
 
 
 def test_unvalidated_forecast_is_not_harvest():
-    fc = _fc_with([{"basis": "water_limited", "validation": {"status": "unvalidated"}}])
+    fc = _fc_with([{"provider_id": "aquacrop", "basis": "water_limited", "validation": {"status": "unvalidated"}}])
     job = _job(timeline=_active(), assessment={}, forecast=fc)
     assert job["kind"] != "harvest"
 
@@ -82,7 +82,8 @@ def test_validated_forecast_with_estimates_is_still_harvest():
 
 
 def test_mixed_forecast_is_still_harvest():
-    fc = _fc_with([{"validation": {"status": "unvalidated"}}, {"validation": {"status": "experimental"}}])
+    fc = _fc_with([{"provider_id": "aquacrop", "validation": {"status": "unvalidated"}},
+                   {"provider_id": "aquacrop", "validation": {"status": "experimental"}}])
     job = _job(timeline=_active(), assessment={}, forecast=fc)
     assert (job["kind"], job["when"]) == ("harvest", "2027-07-01")
 
@@ -90,9 +91,19 @@ def test_mixed_forecast_is_still_harvest():
 def test_unvalidated_only_helper():
     for fc in (None, {}, {"estimates": []}, {"estimates": "x"}, {"estimates": [{"validation": None}]}):
         assert _unvalidated_only(fc) is False
-    one = {"validation": {"status": "unvalidated"}}
+    one = {"provider_id": "aquacrop", "validation": {"status": "unvalidated"}}
     assert _unvalidated_only({"estimates": [one]}) is True
     assert _unvalidated_only({"estimates": [one, dict(one)]}) is True
+    normal = {"provider_id": "provincial_normal", "validation": {"status": "validated"}}
+    assert _unvalidated_only({"estimates": [normal]}) is False
+    assert _unvalidated_only({"estimates": [normal, one]}) is True
+
+
+def test_validated_normal_plus_unvalidated_aquacrop_is_not_harvest():
+    fc = _fc_with([{"provider_id": "provincial_normal", "validation": {"status": "validated"}},
+                   {"provider_id": "aquacrop", "basis": "water_limited", "validation": {"status": "unvalidated"}}])
+    job = _job(timeline=_active(), assessment={}, forecast=fc)
+    assert job["kind"] != "harvest"
 
 
 def test_pending_assessment():

@@ -50,8 +50,10 @@ export function YieldForecastView({ parcelId, record, loading, onRefresh, onRegi
       </Badge>
     </div>
   ));
-  const normalNote = rows.some((row) => row.basis === 'provincial_normal')
-    ? <p className="text-xs text-nkz-text-muted">{t('yieldForecast.normalNote')}</p>
+  const normalNoteKey = season?.crop === 'TRZAX' ? 'yieldForecast.normalNote'
+    : season?.crop === 'HORVX' ? 'yieldForecast.normalNoteBarley' : null;
+  const normalNote = normalNoteKey && rows.some((row) => row.basis === 'provincial_normal')
+    ? <p className="text-xs text-nkz-text-muted">{t(normalNoteKey)}</p>
     : null;
   const body = (() => {
     switch (record.status) {

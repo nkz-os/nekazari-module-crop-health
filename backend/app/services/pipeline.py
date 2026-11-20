@@ -75,6 +75,7 @@ from app.services.daily_balance import (
 )
 from app.services.fiware_publisher import publish_assessment
 from app.services.meteo_context import resolve_meteo_context
+from app.services.observation_medium import effective_medium, log_ignored, reading_allowed
 from app.services.parcel_link import (
     OPEN_FIELD,
     PARCEL_PREFIX,
@@ -2395,6 +2396,9 @@ async def _gather_parcel_sensors(
                 continue
             readings: dict[str, float] = {}
             for metric, name in _SENSOR_METRICS.items():
+                if not reading_allowed(dev, metric):
+                    log_ignored(tenant_id, dev_id, metric, effective_medium(dev, metric))
+                    continue
                 try:
                     pts = await redis_state.get_window(dev_id, metric, hours=_SENSOR_MAX_AGE_H)
                 except Exception as exc:  # noqa: BLE001 — one metric must not sink the rest

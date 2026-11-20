@@ -32,6 +32,17 @@ def _post_with(headers):
     }]}
     return TestClient(app).post("/api/crop-health/webhooks/fiware-sensors", json=payload, headers=headers)
 
+@pytest.fixture(autouse=True)
+def medium_gate_open(monkeypatch):
+    """These tests are about delivery, not media: every device passes the medium gate."""
+    from app.api import webhooks
+
+    async def _allows(tenant_id, device_id, attribute):
+        return True
+
+    monkeypatch.setattr(webhooks._medium_gate, "allows", _allows)
+
+
 
 @pytest.mark.parametrize(
     "headers,expected",

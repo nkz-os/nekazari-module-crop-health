@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Query, Request
 
 from app.api.assessments import _fetch_assessment_entities
+from app.services.observation_medium import effective_medium, log_ignored, reading_allowed
 from app.config import get_settings
 from app.services import vegetation_monitoring
 from app.services.parcel_link import PARCEL_PREFIX, parcel_link_targets
@@ -293,9 +294,18 @@ async def _detail_sources(request: Request, parcelId: str) -> dict:
             "|".join(f'refDevice=="{urn}"' for urn in device_urns),
             50,
         )
+    devices_by_urn = {d.get("id"): d for d in parcel_devices if d.get("id")}
     for m in measurements:
         metric = m.get("controlledProperty")
         if not isinstance(metric, str) or not metric:
+            continue
+        # Only sensors measuring the right medium count as a source for this metric.
+        ref = m.get("refDevice")
+        ref = ref.get("object", ref.get("value")) if isinstance(ref, dict) else ref
+        device = devices_by_urn.get(ref)
+        if device is None or not reading_allowed(device, metric):
+            if device is not None:
+                log_ignored(tenant_id, ref, metric, effective_medium(device, metric))
             continue
         val = m.get("numValue")
         if val is None:

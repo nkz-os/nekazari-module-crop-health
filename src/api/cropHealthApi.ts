@@ -1,5 +1,6 @@
 import { API_ORIGIN } from './apiOrigin';
 import type { YieldForecastRecord } from '../types/yieldForecast';
+import type { WaterLossResponse } from '../types/waterLoss';
 
 const API_BASE = `${API_ORIGIN}/api/crop-health`;
 
@@ -75,6 +76,12 @@ export const PHENOLOGY_PARAMS_URL = `${PLATFORM_API_BASE}/api/graph/phenology-pa
 
 export function getYieldForecast(parcelId: string): Promise<YieldForecastRecord | null> {
   return cropHealthFetch<YieldForecastRecord>(`/parcels/${encodeURIComponent(parcelId)}/yield-forecast`);
+}
+
+/** Water loss by growth stage; `retry` is true only when the user asks to recompute a failed job. */
+export function getWaterLoss(parcelId: string, retry = false): Promise<WaterLossResponse | null> {
+  return cropHealthFetch<WaterLossResponse>(
+    `/parcels/${encodeURIComponent(parcelId)}/water-loss-by-stage?retry=${retry ? 'true' : 'false'}`);
 }
 
 export async function refreshYieldForecast(parcelId: string): Promise<boolean> {

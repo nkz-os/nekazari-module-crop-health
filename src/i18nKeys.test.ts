@@ -125,3 +125,11 @@ describe('satellite monitoring strings parity', () => {
     });
   }
 });
+
+describe('waterLoss parity', () => {
+  const en = (resources.en as any)['crop-health'];
+  it('es has the waterLoss keys of en', () => {
+    const es = (resources['es'] as any)['crop-health'];
+    expect(keys(es.waterLoss).sort()).toEqual(keys(en.waterLoss).sort());
+  });
+});

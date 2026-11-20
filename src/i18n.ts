@@ -417,6 +417,7 @@ const en = {
                 "unvalidated": "Not validated"
             },
             "experimentalNote": "Measured on provincial statistics: until May this figure reflects what is normal for the area, not how this season is going; by June it reflects almost as much as at the end of the season.",
+            "normalNote": "Provincial normal: actual average of the published years; not this season's forecast.",
             "unvalidatedNote": {
                 "ceiling": "Model ceiling with the water available, not an expected harvest. This crop is not validated yet.",
                 "irrigated": "Computed with full irrigation and no regional calibration.",
@@ -427,6 +428,7 @@ const en = {
                 "wofost": "WOFOST",
                 "trial_evidence": "Trials",
                 "fao33": "FAO-33",
+                "provincial_normal": "Provincial statistics",
                 "generic": "Model {{id}}"
             },
             "basis": {
@@ -434,6 +436,7 @@ const en = {
                 "water_limited": "water-limited ceiling",
                 "potential": "potential",
                 "trial_evidence": "trial evidence",
+                "provincial_normal": "provincial normal",
                 "generic": "{{basis}}"
             },
             "reason": {
@@ -915,6 +918,7 @@ const es = {
                 "unvalidated": "Sin validar"
             },
             "experimentalNote": "Medido con estadísticas provinciales: hasta mayo esta cifra refleja lo normal de la zona, no cómo viene esta campaña; en junio ya refleja casi tanto como al final.",
+            "normalNote": "Normal de la provincia: media real de los años publicados; no es la previsión de esta campaña.",
             "unvalidatedNote": {
                 "ceiling": "Techo del modelo con el agua disponible, no una cosecha esperada. Este cultivo aún no está validado.",
                 "irrigated": "Calculado con riego pleno y sin calibración regional.",
@@ -925,6 +929,7 @@ const es = {
                 "wofost": "WOFOST",
                 "trial_evidence": "Ensayos",
                 "fao33": "FAO-33",
+                "provincial_normal": "Estadística MAPA",
                 "generic": "Modelo {{id}}"
             },
             "basis": {
@@ -932,6 +937,7 @@ const es = {
                 "water_limited": "techo hídrico",
                 "potential": "potencial",
                 "trial_evidence": "evidencia de ensayos",
+                "provincial_normal": "normal de la provincia",
                 "generic": "{{basis}}"
             },
             "reason": {
@@ -1411,6 +1417,7 @@ const ca = {
                 "unvalidated": "Sense validar"
             },
             "experimentalNote": "Mesurat amb estadístiques provincials: fins al maig aquesta xifra reflecteix el que és normal a la zona, no com va aquesta campanya; al juny ja reflecteix gairebé tant com al final.",
+            "normalNote": "Normal de la província: mitjana real dels anys publicats; no és la previsió d'aquesta campanya.",
             "unvalidatedNote": {
                 "ceiling": "Sostre del model amb l'aigua disponible, no una collita esperada. Aquest cultiu encara no està validat.",
                 "irrigated": "Calculat amb reg ple i sense calibratge regional.",
@@ -1421,6 +1428,7 @@ const ca = {
                 "wofost": "WOFOST",
                 "trial_evidence": "Assaigs",
                 "fao33": "FAO-33",
+                "provincial_normal": "Estadística MAPA",
                 "generic": "Model {{id}}"
             },
             "basis": {
@@ -1428,6 +1436,7 @@ const ca = {
                 "water_limited": "sostre hídric",
                 "potential": "potencial",
                 "trial_evidence": "evidència d'assaigs",
+                "provincial_normal": "normal de la província",
                 "generic": "{{basis}}"
             },
             "reason": {
@@ -1876,6 +1885,7 @@ const eu = {
                 "unvalidated": "Balioztatu gabe"
             },
             "experimentalNote": "Probintziako estatistikekin neurtua: maiatzera arte zifra honek eremuko ohikoa islatzen du, ez kanpaina hau nola doan; ekainean ia amaieran bezainbeste islatzen du.",
+            "normalNote": "Probintziako ohikoa: argitaratutako urteen benetako batez bestekoa; ez da kanpaina honen aurreikuspena.",
             "unvalidatedNote": {
                 "ceiling": "Ereduaren sabaia eskuragarri dagoen urarekin, ez espero den uzta. Labore hau oraindik ez dago balioztatuta.",
                 "irrigated": "Ureztatze osoarekin eta eskualdeko kalibraziorik gabe kalkulatua.",
@@ -1886,6 +1896,7 @@ const eu = {
                 "wofost": "WOFOST",
                 "trial_evidence": "Saiakuntzak",
                 "fao33": "FAO-33",
+                "provincial_normal": "MAPAren estatistika",
                 "generic": "{{id}} eredua"
             },
             "basis": {
@@ -1893,6 +1904,7 @@ const eu = {
                 "water_limited": "ur-sabaia",
                 "potential": "potentziala",
                 "trial_evidence": "saiakuntzen ebidentzia",
+                "provincial_normal": "probintziako ohikoa",
                 "generic": "{{basis}}"
             },
             "reason": {
@@ -2341,6 +2353,7 @@ const fr = {
                 "unvalidated": "Non validé"
             },
             "experimentalNote": "Mesuré sur des statistiques provinciales : jusqu'en mai ce chiffre reflète la normale de la zone, pas le déroulement de cette campagne ; en juin il en reflète presque autant qu'en fin de campagne.",
+            "normalNote": "Normale de la province : moyenne réelle des années publiées ; ce n'est pas la prévision de cette campagne.",
             "unvalidatedNote": {
                 "ceiling": "Plafond du modèle avec l'eau disponible, pas une récolte attendue. Cette culture n'est pas encore validée.",
                 "irrigated": "Calculé avec irrigation complète et sans calibration régionale.",
@@ -2351,6 +2364,7 @@ const fr = {
                 "wofost": "WOFOST",
                 "trial_evidence": "Essais",
                 "fao33": "FAO-33",
+                "provincial_normal": "Statistique MAPA",
                 "generic": "Modèle {{id}}"
             },
             "basis": {
@@ -2358,6 +2372,7 @@ const fr = {
                 "water_limited": "plafond hydrique",
                 "potential": "potentiel",
                 "trial_evidence": "données d'essais",
+                "provincial_normal": "normale de la province",
                 "generic": "{{basis}}"
             },
             "reason": {
@@ -2806,6 +2821,7 @@ const pt = {
                 "unvalidated": "Não validado"
             },
             "experimentalNote": "Medido com estatísticas provinciais: até maio este valor reflete o normal da zona, não como corre esta campanha; em junho já reflete quase tanto como no final.",
+            "normalNote": "Normal da província: média real dos anos publicados; não é a previsão desta campanha.",
             "unvalidatedNote": {
                 "ceiling": "Teto do modelo com a água disponível, não uma colheita esperada. Esta cultura ainda não está validada.",
                 "irrigated": "Calculado com rega plena e sem calibração regional.",
@@ -2816,6 +2832,7 @@ const pt = {
                 "wofost": "WOFOST",
                 "trial_evidence": "Ensaios",
                 "fao33": "FAO-33",
+                "provincial_normal": "Estatística MAPA",
                 "generic": "Modelo {{id}}"
             },
             "basis": {
@@ -2823,6 +2840,7 @@ const pt = {
                 "water_limited": "teto hídrico",
                 "potential": "potencial",
                 "trial_evidence": "evidência de ensaios",
+                "provincial_normal": "normal da província",
                 "generic": "{{basis}}"
             },
             "reason": {

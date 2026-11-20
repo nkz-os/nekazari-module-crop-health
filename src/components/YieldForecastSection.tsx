@@ -36,15 +36,40 @@ export function YieldForecastView({ parcelId, record, loading, onRefresh, onRegi
   const refresh = <button type="button" className={BTN} onClick={onRefresh}>{t('yieldForecast.refresh')}</button>;
   const rows = rowsFor(record);
   const season = record.season;
+  const rowList = rows.map((row) => (
+    <div key={`${row.providerId}-${row.basis}`} className="flex items-center justify-between gap-2">
+      <span className="text-xs text-nkz-text-primary">
+        {label('provider', row.providerId, { id: row.providerId })} · {label('basis', row.basis, { basis: row.basis })}
+      </span>
+      <span className="text-sm font-mono text-nkz-text-primary">
+        {t('yieldForecast.range', { low: num(row.low), high: num(row.high) })}
+        {row.median != null && ` · ${t('yieldForecast.median', { value: num(row.median) })}`}
+      </span>
+      <Badge intent={row.validation === 'validated' ? 'positive' : row.validation === 'experimental' ? 'warning' : row.validation === 'unvalidated' ? 'negative' : 'default'}>
+        {t(`yieldForecast.validation.${row.validation}`)}
+      </Badge>
+    </div>
+  ));
+  const normalNote = rows.some((row) => row.basis === 'provincial_normal')
+    ? <p className="text-xs text-nkz-text-muted">{t('yieldForecast.normalNote')}</p>
+    : null;
   const body = (() => {
     switch (record.status) {
       case 'not_computed':
         return <p className="text-xs text-nkz-text-muted">{t('yieldForecast.notComputed')} · {refresh}</p>;
       case 'failed':
-        return <p className="text-xs text-nkz-text-muted">{t('yieldForecast.failed', { code: record.code ?? '' })} · {refresh}</p>;
+        return (
+          <div className="space-y-1">
+            {rowList}
+            {normalNote}
+            <p className="text-xs text-nkz-text-muted">{t('yieldForecast.failed', { code: record.code ?? '' })} · {refresh}</p>
+          </div>
+        );
       case 'unavailable':
         return (
           <div className="space-y-1">
+            {rowList}
+            {normalNote}
             <p className="text-xs text-nkz-text-muted">
               {t('yieldForecast.none', { reason: label('reason', record.reason ?? 'generic', { reason: record.reason ?? '', code: record.code ?? '' }) })}
             </p>
@@ -61,23 +86,11 @@ export function YieldForecastView({ parcelId, record, loading, onRefresh, onRegi
         return (
           <div className="space-y-1">
             {record.status === 'season_ended' && <Badge intent="info">{t('yieldForecast.seasonEnded')}</Badge>}
-            {rows.map((row) => (
-              <div key={`${row.providerId}-${row.basis}`} className="flex items-center justify-between gap-2">
-                <span className="text-xs text-nkz-text-primary">
-                  {label('provider', row.providerId, { id: row.providerId })} · {label('basis', row.basis, { basis: row.basis })}
-                </span>
-                <span className="text-sm font-mono text-nkz-text-primary">
-                  {t('yieldForecast.range', { low: num(row.low), high: num(row.high) })}
-                  {row.median != null && ` · ${t('yieldForecast.median', { value: num(row.median) })}`}
-                </span>
-                <Badge intent={row.validation === 'validated' ? 'positive' : row.validation === 'experimental' ? 'warning' : row.validation === 'unvalidated' ? 'negative' : 'default'}>
-                  {t(`yieldForecast.validation.${row.validation}`)}
-                </Badge>
-              </div>
-            ))}
+            {rowList}
             {unvalidatedNotes(rows, season).map((key) => (
               <p key={`unvalidated-${key}`} className="text-xs text-nkz-text-muted">{t(`yieldForecast.unvalidatedNote.${key}`)}</p>
             ))}
+            {normalNote}
             {rows.some((row) => row.validation === 'experimental') && (
               <p className="text-xs text-nkz-text-muted">{t('yieldForecast.experimentalNote')}</p>
             )}

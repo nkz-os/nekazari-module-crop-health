@@ -45,10 +45,13 @@ async def fetch_water_loss(parcel_urn: str, tenant_id: str, *, retry: bool = Fal
     try:
         answer = resp.json()
     except ValueError:
+        logger.warning("water_loss invalid json tenant=%s parcel=%s", tenant_id, parcel_urn)
         return _failed("invalid_json")
     if not isinstance(answer, dict):
+        logger.warning("water_loss non-object json tenant=%s parcel=%s", tenant_id, parcel_urn)
         return _failed("invalid_json")
     if str(answer.get("contract_version", "")).split(".")[0] != _CONTRACT_MAJOR:
-        logger.warning("water_loss contract mismatch %s", answer.get("contract_version"))
+        logger.warning("water_loss contract mismatch %s tenant=%s parcel=%s",
+                       answer.get("contract_version"), tenant_id, parcel_urn)
         return _failed("contract_mismatch")
     return answer

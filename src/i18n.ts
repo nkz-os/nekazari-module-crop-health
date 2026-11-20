@@ -405,6 +405,7 @@ const en = {
             "cycle": {
                 "in_season": "Current season (up to {{asOf}})",
                 "complete": "Finished season (harvest {{harvest}})",
+                "completeNoHarvest": "Finished season",
             },
             "stage": {
                 "establishment": "Establishment",
@@ -961,6 +962,7 @@ const es = {
             "cycle": {
                 "in_season": "Campaña en curso (hasta {{asOf}})",
                 "complete": "Campaña terminada (cosecha {{harvest}})",
+                "completeNoHarvest": "Campaña terminada",
             },
             "stage": {
                 "establishment": "Establecimiento",

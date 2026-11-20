@@ -19,7 +19,7 @@ export function WaterLossView({ snap, onRetry, onRecheck }: ViewProps) {
   const { t, i18n } = useTranslation('crop-health');
   const lang = i18n?.language || 'es';
   const num = (v: number) => new Intl.NumberFormat(lang, { maximumFractionDigits: 0 }).format(v);
-  const date = (iso?: string | null) => (iso ? new Intl.DateTimeFormat(lang, { dateStyle: 'medium' }).format(new Date(iso)) : '');
+  const date = (iso?: string | null) => (iso ? new Intl.DateTimeFormat(lang, { dateStyle: 'medium', timeZone: 'UTC' }).format(new Date(iso)) : '');
 
   const header = (
     <span className="text-xs text-nkz-text-secondary font-medium uppercase tracking-wider block mb-1">
@@ -32,9 +32,10 @@ export function WaterLossView({ snap, onRetry, onRecheck }: ViewProps) {
   if (snap.phase === 'loading' || (snap.phase === 'polling')) {
     return wrap(<p className={NOTE}>{t('waterLoss.computing')}</p>);
   }
-  if (snap.phase === 'timeout') {
+  const busy = data?.state === 'unavailable' && data.unavailable?.[0]?.reason === 'busy';
+  if (snap.phase === 'timeout' || busy) {
     return wrap(
-      <p className={NOTE}>{t('waterLoss.stillComputing')} · <button type="button" className={BTN} onClick={onRecheck}>{t('waterLoss.checkAgain')}</button></p>,
+      <p className={NOTE}>{busy ? t(reasonKey('busy')) : t('waterLoss.stillComputing')} · <button type="button" className={BTN} onClick={onRecheck}>{t('waterLoss.checkAgain')}</button></p>,
     );
   }
   if (snap.phase === 'error' || data?.state === 'failed') {
@@ -61,7 +62,9 @@ export function WaterLossView({ snap, onRetry, onRecheck }: ViewProps) {
         <p className="text-xs text-nkz-text-primary">
           {inSeason
             ? t('waterLoss.cycle.in_season', { asOf: date(season.as_of) })
-            : t('waterLoss.cycle.complete', { harvest: date(season.harvest_recorded) })}
+            : season.harvest_recorded
+              ? t('waterLoss.cycle.complete', { harvest: date(season.harvest_recorded) })
+              : t('waterLoss.cycle.completeNoHarvest')}
         </p>
       )}
       {total && (
@@ -83,7 +86,7 @@ export function WaterLossView({ snap, onRetry, onRecheck }: ViewProps) {
               {dates && <p className={NOTE}>{dates}</p>}
               {st.state === 'complete' && gain && (
                 <div>
-                  <ProgressBar value={gain.p50} intent="warning" />
+                  <ProgressBar value={Math.max(0, gain.p50)} intent="warning" />
                   {range(gain) && <p className={NOTE}>{t('waterLoss.rangeLabel')}{range(gain)}</p>}
                 </div>
               )}
@@ -98,7 +101,7 @@ export function WaterLossView({ snap, onRetry, onRecheck }: ViewProps) {
       {result.sources.length > 0 && (
         <details>
           <summary className={`${NOTE} cursor-pointer`}>{t('waterLoss.sourcesTitle')}</summary>
-          <ul className="list-disc pl-4">
+          <ul className="list-disc pl-5">
             {result.sources.map((s) => (
               <li key={s.short} className={NOTE}>{s.short}{s.detail ? ` — ${s.detail}` : ''}</li>
             ))}

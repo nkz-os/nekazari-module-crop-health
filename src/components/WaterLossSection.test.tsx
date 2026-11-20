@@ -35,6 +35,8 @@ const done = (o: Partial<WaterLossResponse> = {}, status: 'in_season' | 'complet
 });
 const html = (snap: PollSnapshot) => renderToStaticMarkup(<WaterLossView snap={snap} onRetry={() => {}} onRecheck={() => {}} />);
 
+const fmt = (iso: string) => new Intl.DateTimeFormat('es', { dateStyle: 'medium', timeZone: 'UTC' }).format(new Date(iso));
+
 describe('WaterLossView', () => {
   it('loading and polling show the computing text', () => {
     expect(html({ phase: 'loading', data: null })).toContain('waterLoss.computing');
@@ -52,7 +54,7 @@ describe('WaterLossView', () => {
   it('previous-cycle header shows the harvest date', () => {
     const h = html({ phase: 'settled', data: done() });
     expect(h).toContain('waterLoss.cycle.complete');
-    expect(h).toContain('harvest');
+    expect(h).toContain(fmt('2026-07-10'));
     expect(h).not.toContain('waterLoss.notes.changesUntilHarvest');
   });
   it('in-season header shows as_of, bands and the changes-until-harvest note', () => {
@@ -61,7 +63,7 @@ describe('WaterLossView', () => {
     d.result!.stages[0].gain_pct_of_potential = { p10: 5, p50: 8, p90: 11 };
     const h = html({ phase: 'settled', data: d });
     expect(h).toContain('waterLoss.cycle.in_season');
-    expect(h).toContain('asOf');
+    expect(h).toContain(fmt('2026-05-01'));
     expect(h).toContain('waterLoss.notes.changesUntilHarvest');
     expect(h).toContain('&quot;low&quot;:&quot;10&quot;');
     expect(h).toContain('&quot;high&quot;:&quot;11&quot;');
@@ -99,5 +101,24 @@ describe('WaterLossView', () => {
   it('never shows t/ha', () => {
     const h = html({ phase: 'settled', data: done() });
     expect(h).not.toMatch(/t\/ha|t_ha|0\.987|5\.5|7\.1/);
+  });
+  it('finished season without a harvest date uses the plain header', () => {
+    const d = done();
+    d.season!.harvest_recorded = null;
+    const h = html({ phase: 'settled', data: d });
+    expect(h).toContain('waterLoss.cycle.completeNoHarvest');
+    expect(h).not.toContain('waterLoss.cycle.complete:');
+  });
+  it('a negative gain draws an empty bar', () => {
+    const d = done();
+    d.result!.stages[0].gain_pct_of_potential = -3;
+    const h = html({ phase: 'settled', data: d });
+    expect(h).toContain('width:0%');
+    expect(h).not.toContain('width:-');
+  });
+  it('unavailable busy offers check-again like the timeout state', () => {
+    const h = html({ phase: 'settled', data: { ...done(), state: 'unavailable', result: null, season: null, unavailable: [{ provider_id: 'aquacrop', reason: 'busy' }] } });
+    expect(h).toContain('waterLoss.reason.busy');
+    expect(h).toContain('waterLoss.checkAgain');
   });
 });

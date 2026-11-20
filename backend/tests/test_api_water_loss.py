@@ -97,6 +97,28 @@ async def test_bad_json_failed(monkeypatch):
     assert out["state"] == "failed" and out["unavailable"][0]["code"] == "invalid_json"
 
 
+async def test_bad_json_is_logged(monkeypatch, caplog):
+    _patch_transport(monkeypatch, lambda request: httpx.Response(200, content=b"<html>"))
+    with caplog.at_level("WARNING"):
+        await water_loss_client.fetch_water_loss(URN, "tenant-a")
+    assert "tenant-a" in caplog.text and URN in caplog.text
+
+
+async def test_non_dict_json_failed_and_logged(monkeypatch, caplog):
+    _patch_transport(monkeypatch, lambda request: httpx.Response(200, json=[]))
+    with caplog.at_level("WARNING"):
+        out = await water_loss_client.fetch_water_loss(URN, "tenant-a")
+    assert out["state"] == "failed" and out["unavailable"][0]["code"] == "invalid_json"
+    assert "tenant-a" in caplog.text and URN in caplog.text
+
+
+async def test_missing_contract_version_failed(monkeypatch):
+    body = {k: v for k, v in ANSWER.items() if k != "contract_version"}
+    _patch_transport(monkeypatch, lambda request: httpx.Response(200, json=body))
+    out = await water_loss_client.fetch_water_loss(URN, "tenant-a")
+    assert out["state"] == "failed" and out["unavailable"][0]["code"] == "contract_mismatch"
+
+
 async def test_contract_3_failed(monkeypatch):
     _patch_transport(monkeypatch, lambda request: httpx.Response(200, json={**ANSWER, "contract_version": "3.0"}))
     out = await water_loss_client.fetch_water_loss(URN, "tenant-a")

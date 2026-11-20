@@ -478,6 +478,7 @@ const en = {
             "experimentalNote": "What the model sees this year. Measured on provincial statistics, today it does not improve on the province's normal: it misses by 1.6 t/ha on average against 0.76 for the normal.",
             "normalNote": "Provincial normal: actual average of rainfed wheat (soft and durum together) over the published years; not this season's forecast.",
             "normalNoteBarley": "Provincial normal: actual average of rainfed barley over the published years; not this season's forecast.",
+            "normalNoteGeneric": "Provincial normal: actual average over the published years; not this season's forecast.",
             "unvalidatedNote": {
                 "ceiling": "Model ceiling with the water available, not an expected harvest. This crop is not validated yet.",
                 "irrigated": "Computed with full irrigation and no regional calibration.",
@@ -1039,6 +1040,7 @@ const es = {
             "experimentalNote": "Lo que ve el modelo este año. Medido con estadísticas provinciales, hoy no mejora a la normal de la provincia: falla de media 1,6 t/ha frente a 0,76 de la normal.",
             "normalNote": "Normal de la provincia: media real del trigo de secano (blando y duro juntos) en los años publicados; no es la previsión de esta campaña.",
             "normalNoteBarley": "Normal de la provincia: media real de la cebada de secano en los años publicados; no es la previsión de esta campaña.",
+            "normalNoteGeneric": "Normal de la provincia: media real de los años publicados; no es la previsión de esta campaña.",
             "unvalidatedNote": {
                 "ceiling": "Techo del modelo con el agua disponible, no una cosecha esperada. Este cultivo aún no está validado.",
                 "irrigated": "Calculado con riego pleno y sin calibración regional.",
@@ -1598,6 +1600,7 @@ const ca = {
             "experimentalNote": "El que veu el model aquest any. Mesurat amb estadístiques provincials, avui no millora la normal de la província: falla de mitjana 1,6 t/ha davant de 0,76 de la normal.",
             "normalNote": "Normal de la província: mitjana real del blat de secà (tou i dur junts) en els anys publicats; no és la previsió d'aquesta campanya.",
             "normalNoteBarley": "Normal de la província: mitjana real de l'ordi de secà en els anys publicats; no és la previsió d'aquesta campanya.",
+            "normalNoteGeneric": "Normal de la província: mitjana real dels anys publicats; no és la previsió d'aquesta campanya.",
             "unvalidatedNote": {
                 "ceiling": "Sostre del model amb l'aigua disponible, no una collita esperada. Aquest cultiu encara no està validat.",
                 "irrigated": "Calculat amb reg ple i sense calibratge regional.",
@@ -2126,6 +2129,7 @@ const eu = {
             "experimentalNote": "Ereduak aurten ikusten duena. Probintziako estatistikekin neurtuta, gaur egun ez du probintziako normala hobetzen: batez beste 1,6 t/ha huts egiten du, normalak 0,76 t/ha.",
             "normalNote": "Probintziako normala: lehorreko gariaren benetako batez bestekoa (gari biguna eta gogorra batera) argitaratutako urteetan; ez da kanpaina honen aurreikuspena.",
             "normalNoteBarley": "Probintziako normala: lehorreko garagarraren benetako batez bestekoa argitaratutako urteetan; ez da kanpaina honen aurreikuspena.",
+            "normalNoteGeneric": "Probintziako normala: argitaratutako urteetako benetako batez bestekoa; ez da kanpaina honen aurreikuspena.",
             "unvalidatedNote": {
                 "ceiling": "Ereduaren sabaia eskuragarri dagoen urarekin, ez espero den uzta. Labore hau oraindik ez dago balioztatuta.",
                 "irrigated": "Ureztatze osoarekin eta eskualdeko kalibraziorik gabe kalkulatua.",
@@ -2654,6 +2658,7 @@ const fr = {
             "experimentalNote": "Ce que voit le modèle cette année. Mesuré sur des statistiques provinciales, il n'améliore pas aujourd'hui la normale de la province : il se trompe en moyenne de 1,6 t/ha contre 0,76 pour la normale.",
             "normalNote": "Normale de la province : moyenne réelle du blé pluvial (tendre et dur confondus) sur les années publiées ; ce n'est pas la prévision de cette campagne.",
             "normalNoteBarley": "Normale de la province : moyenne réelle de l'orge pluviale sur les années publiées ; ce n'est pas la prévision de cette campagne.",
+            "normalNoteGeneric": "Normale de la province : moyenne réelle des années publiées ; ce n'est pas la prévision de cette campagne.",
             "unvalidatedNote": {
                 "ceiling": "Plafond du modèle avec l'eau disponible, pas une récolte attendue. Cette culture n'est pas encore validée.",
                 "irrigated": "Calculé avec irrigation complète et sans calibration régionale.",
@@ -3182,6 +3187,7 @@ const pt = {
             "experimentalNote": "O que o modelo vê este ano. Medido com estatísticas provinciais, hoje não melhora o normal da província: falha em média 1,6 t/ha contra 0,76 do normal.",
             "normalNote": "Normal da província: média real do trigo de sequeiro (mole e duro em conjunto) nos anos publicados; não é a previsão desta campanha.",
             "normalNoteBarley": "Normal da província: média real da cevada de sequeiro nos anos publicados; não é a previsão desta campanha.",
+            "normalNoteGeneric": "Normal da província: média real dos anos publicados; não é a previsão desta campanha.",
             "unvalidatedNote": {
                 "ceiling": "Teto do modelo com a água disponível, não uma colheita esperada. Esta cultura ainda não está validada.",
                 "irrigated": "Calculado com rega plena e sem calibração regional.",

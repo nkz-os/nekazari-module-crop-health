@@ -125,6 +125,7 @@ describe('YieldForecastView', () => {
     expect(h.indexOf('yieldForecast.basis.provincial_normal')).toBeLessThan(h.indexOf('yieldForecast.basis.gap_corrected'));
     expect(h.split('yieldForecast.normalNote').length - 1).toBe(1);
     expect(h).not.toContain('normalNoteBarley');
+    expect(h).not.toContain('normalNoteGeneric');
   });
   it('no normal note without a normal row', () => {
     const h = html(r({ estimates: [{ provider_id: 'aquacrop', basis: 'gap_corrected', range: { low: 3, high: 4 }, validation: { status: 'experimental' } }] }));
@@ -134,13 +135,15 @@ describe('YieldForecastView', () => {
     const h = html(r({ estimates: [normal], season: seasonOf('HORVX') }));
     expect(h).toContain('yieldForecast.normalNoteBarley');
     expect(h.split('yieldForecast.normalNote').length - 1).toBe(1);
+    expect(h).not.toContain('normalNoteGeneric');
   });
-  it('other crop, or no season, shows the normal row but no note', () => {
+  it('no season or unknown crop shows the normal row with the generic note', () => {
     for (const rec of [r({ estimates: [normal], season: seasonOf('TRZDU') }),
       r({ status: 'failed', code: 'x', estimates: [normal] })]) {
       const h = html(rec);
       expect(h).toContain('yieldForecast.basis.provincial_normal');
-      expect(h).not.toContain('yieldForecast.normalNote');
+      expect(h).toContain('yieldForecast.normalNoteGeneric');
+      expect(h).not.toContain('yieldForecast.normalNoteBarley');
     }
   });
 });

@@ -416,7 +416,7 @@ const en = {
                 "not_applicable": "Ceiling",
                 "unvalidated": "Not validated"
             },
-            "experimentalNote": "Measured on provincial statistics: until May this figure reflects what is normal for the area, not how this season is going; by June it reflects almost as much as at the end of the season.",
+            "experimentalNote": "What the model sees this year. Measured on provincial statistics, today it does not improve on the province's normal: it misses by 1.6 t/ha on average against 0.76 for the normal.",
             "normalNote": "Provincial normal: actual average of the published years; not this season's forecast.",
             "unvalidatedNote": {
                 "ceiling": "Model ceiling with the water available, not an expected harvest. This crop is not validated yet.",
@@ -432,7 +432,7 @@ const en = {
                 "generic": "Model {{id}}"
             },
             "basis": {
-                "gap_corrected": "expected harvest",
+                "gap_corrected": "what the model sees this year",
                 "water_limited": "water-limited ceiling",
                 "potential": "potential",
                 "trial_evidence": "trial evidence",
@@ -917,7 +917,7 @@ const es = {
                 "not_applicable": "Techo",
                 "unvalidated": "Sin validar"
             },
-            "experimentalNote": "Medido con estadísticas provinciales: hasta mayo esta cifra refleja lo normal de la zona, no cómo viene esta campaña; en junio ya refleja casi tanto como al final.",
+            "experimentalNote": "Lo que ve el modelo este año. Medido con estadísticas provinciales, hoy no mejora a la normal de la provincia: falla de media 1,6 t/ha frente a 0,76 de la normal.",
             "normalNote": "Normal de la provincia: media real de los años publicados; no es la previsión de esta campaña.",
             "unvalidatedNote": {
                 "ceiling": "Techo del modelo con el agua disponible, no una cosecha esperada. Este cultivo aún no está validado.",
@@ -933,7 +933,7 @@ const es = {
                 "generic": "Modelo {{id}}"
             },
             "basis": {
-                "gap_corrected": "cosecha esperada",
+                "gap_corrected": "lo que ve el modelo este año",
                 "water_limited": "techo hídrico",
                 "potential": "potencial",
                 "trial_evidence": "evidencia de ensayos",
@@ -1416,7 +1416,7 @@ const ca = {
                 "not_applicable": "Sostre",
                 "unvalidated": "Sense validar"
             },
-            "experimentalNote": "Mesurat amb estadístiques provincials: fins al maig aquesta xifra reflecteix el que és normal a la zona, no com va aquesta campanya; al juny ja reflecteix gairebé tant com al final.",
+            "experimentalNote": "El que veu el model aquest any. Mesurat amb estadístiques provincials, avui no millora la normal de la província: falla de mitjana 1,6 t/ha davant de 0,76 de la normal.",
             "normalNote": "Normal de la província: mitjana real dels anys publicats; no és la previsió d'aquesta campanya.",
             "unvalidatedNote": {
                 "ceiling": "Sostre del model amb l'aigua disponible, no una collita esperada. Aquest cultiu encara no està validat.",
@@ -1432,7 +1432,7 @@ const ca = {
                 "generic": "Model {{id}}"
             },
             "basis": {
-                "gap_corrected": "collita esperada",
+                "gap_corrected": "el que veu el model aquest any",
                 "water_limited": "sostre hídric",
                 "potential": "potencial",
                 "trial_evidence": "evidència d'assaigs",
@@ -1884,8 +1884,8 @@ const eu = {
                 "not_applicable": "Sabaia",
                 "unvalidated": "Balioztatu gabe"
             },
-            "experimentalNote": "Probintziako estatistikekin neurtua: maiatzera arte zifra honek eremuko ohikoa islatzen du, ez kanpaina hau nola doan; ekainean ia amaieran bezainbeste islatzen du.",
-            "normalNote": "Probintziako ohikoa: argitaratutako urteen benetako batez bestekoa; ez da kanpaina honen aurreikuspena.",
+            "experimentalNote": "Ereduak aurten ikusten duena. Probintziako estatistikekin neurtuta, gaur egun ez du probintziako normala hobetzen: batez beste 1,6 t/ha huts egiten du, normalak 0,76 t/ha.",
+            "normalNote": "Probintziako normala: argitaratutako urteen benetako batez bestekoa; ez da kanpaina honen aurreikuspena.",
             "unvalidatedNote": {
                 "ceiling": "Ereduaren sabaia eskuragarri dagoen urarekin, ez espero den uzta. Labore hau oraindik ez dago balioztatuta.",
                 "irrigated": "Ureztatze osoarekin eta eskualdeko kalibraziorik gabe kalkulatua.",
@@ -1900,11 +1900,11 @@ const eu = {
                 "generic": "{{id}} eredua"
             },
             "basis": {
-                "gap_corrected": "espero den uzta",
+                "gap_corrected": "ereduak aurten ikusten duena",
                 "water_limited": "ur-sabaia",
                 "potential": "potentziala",
                 "trial_evidence": "saiakuntzen ebidentzia",
-                "provincial_normal": "probintziako ohikoa",
+                "provincial_normal": "probintziako normala",
                 "generic": "{{basis}}"
             },
             "reason": {
@@ -2352,7 +2352,7 @@ const fr = {
                 "not_applicable": "Plafond",
                 "unvalidated": "Non validé"
             },
-            "experimentalNote": "Mesuré sur des statistiques provinciales : jusqu'en mai ce chiffre reflète la normale de la zone, pas le déroulement de cette campagne ; en juin il en reflète presque autant qu'en fin de campagne.",
+            "experimentalNote": "Ce que voit le modèle cette année. Mesuré sur des statistiques provinciales, il n'améliore pas aujourd'hui la normale de la province : il se trompe en moyenne de 1,6 t/ha contre 0,76 pour la normale.",
             "normalNote": "Normale de la province : moyenne réelle des années publiées ; ce n'est pas la prévision de cette campagne.",
             "unvalidatedNote": {
                 "ceiling": "Plafond du modèle avec l'eau disponible, pas une récolte attendue. Cette culture n'est pas encore validée.",
@@ -2368,7 +2368,7 @@ const fr = {
                 "generic": "Modèle {{id}}"
             },
             "basis": {
-                "gap_corrected": "récolte attendue",
+                "gap_corrected": "ce que voit le modèle cette année",
                 "water_limited": "plafond hydrique",
                 "potential": "potentiel",
                 "trial_evidence": "données d'essais",
@@ -2820,7 +2820,7 @@ const pt = {
                 "not_applicable": "Teto",
                 "unvalidated": "Não validado"
             },
-            "experimentalNote": "Medido com estatísticas provinciais: até maio este valor reflete o normal da zona, não como corre esta campanha; em junho já reflete quase tanto como no final.",
+            "experimentalNote": "O que o modelo vê este ano. Medido com estatísticas provinciais, hoje não melhora o normal da província: falha em média 1,6 t/ha contra 0,76 do normal.",
             "normalNote": "Normal da província: média real dos anos publicados; não é a previsão desta campanha.",
             "unvalidatedNote": {
                 "ceiling": "Teto do modelo com a água disponível, não uma colheita esperada. Esta cultura ainda não está validada.",
@@ -2836,7 +2836,7 @@ const pt = {
                 "generic": "Modelo {{id}}"
             },
             "basis": {
-                "gap_corrected": "colheita esperada",
+                "gap_corrected": "o que o modelo vê este ano",
                 "water_limited": "teto hídrico",
                 "potential": "potencial",
                 "trial_evidence": "evidência de ensaios",

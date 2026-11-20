@@ -131,8 +131,15 @@ describe('satellite monitoring strings parity', () => {
 
 describe('waterLoss parity', () => {
   const en = (resources.en as any)['crop-health'];
-  it('es has the waterLoss keys of en', () => {
-    const es = (resources['es'] as any)['crop-health'];
-    expect(keys(es.waterLoss).sort()).toEqual(keys(en.waterLoss).sort());
-  });
+  for (const [lang, res] of Object.entries(resources)) {
+    it(`${lang} has the waterLoss keys of en, with the same placeholders`, () => {
+      const ns = (res as any)['crop-health'];
+      expect(keys(ns.waterLoss).sort()).toEqual(keys(en.waterLoss).sort());
+      const ph = (s: string) => (s.match(/{{\w+}}/g) ?? []).sort();
+      for (const k of keys(en.waterLoss)) {
+        const get = (o: any) => k.split('.').reduce((a, p) => a[p], o.waterLoss) as string;
+        expect(ph(get(ns))).toEqual(ph(get(en)));
+      }
+    });
+  }
 });

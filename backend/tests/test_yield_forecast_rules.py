@@ -70,3 +70,28 @@ def test_failed_without_reason_list():
 ])
 def test_parcel_urn(raw, urn):
     assert parcel_urn(raw) == urn
+
+
+NORMAL = {"provider_id": "provincial_normal", "basis": "provincial_normal", "validation": {"status": "validated"}}
+
+
+def test_unavailable_keeps_normal_estimate():
+    ans = {**_unav("not_sown"), "estimates": [NORMAL]}
+    assert next_record(None, ans, NOW)["estimates"] == [NORMAL]
+
+
+def test_failed_without_previous_keeps_normal_estimate():
+    ans = {"state": "failed", "estimates": [NORMAL], "unavailable": [{"reason": "request_failed", "code": "503"}]}
+    rec = next_record(None, ans, NOW)
+    assert rec["status"] == "failed" and rec["estimates"] == [NORMAL]
+
+
+def test_failed_with_previous_keeps_previous_not_normal():
+    prev = {**DONE_PREV, "estimates": [NORMAL, *EST]}
+    ans = {"state": "failed", "estimates": [NORMAL], "unavailable": [{"reason": "engine_error", "code": "x"}]}
+    rec = next_record(prev, ans, NOW)
+    assert rec["status"] == "done" and rec["estimates"] == [NORMAL, *EST]
+
+
+def test_unavailable_without_estimates_field_is_empty():
+    assert next_record(None, _unav("not_sown"), NOW)["estimates"] == []

@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Query, Request
 
 from app.api.assessments import _fetch_assessment_entities
-from app.services.observation_medium import effective_medium, log_ignored, reading_allowed
+from app.services.observation_medium import base_attribute, effective_medium, log_ignored, reading_allowed
 from app.config import get_settings
 from app.services import vegetation_monitoring
 from app.services.parcel_link import PARCEL_PREFIX, parcel_link_targets
@@ -22,6 +22,8 @@ router = APIRouter(prefix="/sources", tags=["sources"])
 # Cache for detail responses: key=parcelId, value=(timestamp, data)
 _detail_cache: dict[tuple[str, str], tuple[float, dict]] = {}  # (tenant, parcel)
 _DETAIL_CACHE_TTL = 45  # seconds
+_MEASUREMENT_PAGE = 50  # DeviceMeasurement page size
+_MEASUREMENT_MAX_PAGES = 20  # hard cap on pages per request
 
 
 
@@ -201,10 +203,10 @@ async def _detail_sources(request: Request, parcelId: str) -> dict:
     now = datetime.now(timezone.utc)
     parcel_urn = f"urn:ngsi-ld:AgriParcel:{parcelId}"
 
-    async def _query(type_: str, q: str = "", limit: int = 1) -> list:
+    async def _query(type_: str, q: str = "", limit: int = 1, offset: int = 0) -> list:
         orion = OrionClient(tenant_id, base_url=settings.orion_ld_url, context_url=settings.orion_ld_context)
         try:
-            result = await orion.query_entities(type=type_, q=q or None, limit=limit, options="keyValues")
+            result = await orion.query_entities(type=type_, q=q or None, limit=limit, offset=offset, options="keyValues")
             if not isinstance(result, list):
                 return []
             # Exclude activation scaffolding placeholders (provenance == "placeholder"):
@@ -289,19 +291,39 @@ async def _detail_sources(request: Request, parcelId: str) -> dict:
     device_urns = [d.get("id", "") for d in parcel_devices if d.get("id")]
     measurements = []
     if device_urns:
-        measurements = await _query(
-            "DeviceMeasurement",
-            "|".join(f'refDevice=="{urn}"' for urn in device_urns),
-            50,
-        )
+        measurement_q = "|".join(f'refDevice=="{urn}"' for urn in device_urns)
+        for page_no in range(_MEASUREMENT_MAX_PAGES):
+            page = await _query("DeviceMeasurement", measurement_q, _MEASUREMENT_PAGE, page_no * _MEASUREMENT_PAGE)
+            measurements.extend(page)
+            if len(page) < _MEASUREMENT_PAGE:
+                break
+        else:
+            logger.warning(
+                "Source query for DeviceMeasurement hit the %d-page cap; remaining readings ignored",
+                _MEASUREMENT_MAX_PAGES,
+            )
     devices_by_urn = {d.get("id"): d for d in parcel_devices if d.get("id")}
+
+    def _device_ref(m: dict):
+        ref = m.get("refDevice")
+        return ref.get("object", ref.get("value")) if isinstance(ref, dict) else ref
+
+    # Window-statistic series (airTemperatureMin...) are not sources of their own: drop
+    # one only when the base series of the same device is present.
+    present = {
+        (_device_ref(m), m["controlledProperty"])
+        for m in measurements
+        if isinstance(m.get("controlledProperty"), str)
+    }
     for m in measurements:
         metric = m.get("controlledProperty")
         if not isinstance(metric, str) or not metric:
             continue
         # Only sensors measuring the right medium count as a source for this metric.
-        ref = m.get("refDevice")
-        ref = ref.get("object", ref.get("value")) if isinstance(ref, dict) else ref
+        ref = _device_ref(m)
+        base = base_attribute(metric)
+        if base != metric and (ref, base) in present:
+            continue
         device = devices_by_urn.get(ref)
         if device is None or not reading_allowed(device, metric):
             if device is not None:

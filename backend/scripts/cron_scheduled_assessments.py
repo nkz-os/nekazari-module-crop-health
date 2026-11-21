@@ -17,9 +17,12 @@ import httpx
 
 BATCH = 200
 MAX_CONSECUTIVE_FAILURES = 3  # the backend itself is down: stop this tenant
+# A fresh job pod can try to connect before its network is ready. A connect error
+# means the request never reached the backend, so it is safe to retry after a wait.
+CONNECT_RETRY_DELAYS_S = (2, 5, 10, 20)
 
 
-async def _post_page(tenant: str, cursor, base_url: str, secret: str) -> dict:
+async def _post_once(tenant: str, cursor, base_url: str, secret: str) -> dict:
     async with httpx.AsyncClient(timeout=120.0) as client:
         resp = await client.post(
             f"{base_url}/api/crop-health/internal/run-scheduled-assessments",
@@ -28,6 +31,18 @@ async def _post_page(tenant: str, cursor, base_url: str, secret: str) -> dict:
         )
         resp.raise_for_status()
         return resp.json()
+
+
+async def _post_page(tenant: str, cursor, base_url: str, secret: str) -> dict:
+    """One page; connect errors are retried with CONNECT_RETRY_DELAYS_S, anything else raises."""
+    for delay in CONNECT_RETRY_DELAYS_S:
+        try:
+            return await _post_once(tenant, cursor, base_url, secret)
+        except httpx.ConnectError as exc:
+            print(f"[scheduled] tenant={tenant} cursor={cursor} connect failed, retry in {delay}s: {exc!r}",
+                  file=sys.stderr)
+            await asyncio.sleep(delay)
+    return await _post_once(tenant, cursor, base_url, secret)
 
 
 async def run_tenant(tenant: str, base_url: str, secret: str) -> dict:

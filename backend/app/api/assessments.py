@@ -253,7 +253,7 @@ async def _fetch_zone_assessment_entities(tenant_id: str, parcel_id: str = "") -
 
 
 def _zone_geometry_lookup(zones: list) -> dict[str, dict]:
-    """Map zoneId and zone URN to AgriParcelZone geometry metadata."""
+    """Map zoneId and zone URN to the zone's geometry metadata."""
     by_id: dict[str, dict] = {}
     for z in zones:
         entry = {
@@ -291,8 +291,7 @@ def _live_zone_assessments(entities: list[dict], live: list, parcel_values: dict
     """Latest assessment per live zone of the current run, mapped and flagged against the parcel.
 
     Only assessments of a live level AND of the live zoning run are kept (before
-    deduplicating): terrain-unit assessments and the state of an older geometry
-    are never shown on the new one.
+    deduplicating): the state of an older geometry is never shown on the new one.
     """
     run_by_key: dict[str, str | None] = {}
     for z in live:

@@ -146,7 +146,8 @@ def test_the_regime_is_written_only_when_known():
     known = CropHealthAssessment(parcel_id="p-1", assessed_at=NOW, irrigation_regime="rainfed")
     assert known.to_ngsi_ld()["irrigationRegime"] == {"type": "Property", "value": "rainfed"}
     assert "irrigationRegime" not in CropHealthAssessment(parcel_id="p-1", assessed_at=NOW).to_ngsi_ld()
-    zone = CropHealthAssessment(parcel_id="p-1", assessed_at=NOW, irrigation_regime="rainfed", zone_id="z1")
+    zone = CropHealthAssessment(parcel_id="p-1", assessed_at=NOW, irrigation_regime="rainfed", zone_id="z1",
+                                zone_urn="urn:ngsi-ld:AgriManagementZone:t:p1:z1")
     assert zone.to_zone_ngsi_ld()["irrigationRegime"]["value"] == "rainfed"
 
 
@@ -175,7 +176,8 @@ async def test_parcel_regime_reads_the_site_and_never_raises(monkeypatch):
 def test_the_zone_api_returns_the_regime():
     from app.api.assessment_mapper import map_entity_to_zone_assessment
 
-    zone = CropHealthAssessment(parcel_id="p-1", assessed_at=NOW, irrigation_regime="rainfed", zone_id="z1")
+    zone = CropHealthAssessment(parcel_id="p-1", assessed_at=NOW, irrigation_regime="rainfed", zone_id="z1",
+                                zone_urn="urn:ngsi-ld:AgriManagementZone:t:p1:z1")
     assert map_entity_to_zone_assessment(zone.to_zone_ngsi_ld())["irrigationRegime"] == "rainfed"
 
 

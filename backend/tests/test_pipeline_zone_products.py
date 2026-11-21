@@ -8,7 +8,7 @@ from app.services import pipeline
 
 PARCEL = "p1"
 PARCEL_URN = "urn:ngsi-ld:AgriParcel:p1"
-ZONE_URN = "urn:ngsi-ld:AgriParcelZone:acme:p1:z1"
+ZONE_URN = "urn:ngsi-ld:AgriManagementZone:acme:p1:z1"
 
 
 def _day(days_ago: int) -> str:
@@ -60,16 +60,16 @@ def _parcel_eo(days_ago, ndvi):
 
 def _zone_eo(days_ago, ndvi, **extra):
     return {"id": f"urn:ngsi-ld:EOProduct:acme:zone:p1:z1:{_day(days_ago)}", "type": "EOProduct",
-            "hasAgriParcelZone": ZONE_URN, "sensingDate": _day(days_ago), "ndvi": ndvi, **extra}
+            "hasAgriManagementZone": ZONE_URN, "sensingDate": _day(days_ago), "ndvi": ndvi, **extra}
 
 
 def test_fake_orion_parcel_query_ignores_zone_only_products():
-    """A hasAgriParcel query must not return products that only carry hasAgriParcelZone."""
+    """A hasAgriParcel query must not return products that only carry hasAgriManagementZone."""
     import asyncio
     fo = FakeOrion([_parcel_eo(3, 0.5), _zone_eo(3, 0.9)])
     got = asyncio.run(fo.query_entities(type="EOProduct", q=f'hasAgriParcel=="{PARCEL_URN}"'))
     assert [e["ndvi"] for e in got] == [0.5]
-    got = asyncio.run(fo.query_entities(type="EOProduct", q=f'hasAgriParcelZone=="{ZONE_URN}"'))
+    got = asyncio.run(fo.query_entities(type="EOProduct", q=f'hasAgriManagementZone=="{ZONE_URN}"'))
     assert [e["ndvi"] for e in got] == [0.9]
 
 
@@ -83,7 +83,7 @@ async def test_zone_product_5_days_old_is_zone_specific():
     fo = FakeOrion([_parcel_eo(2, 0.40), _zone_eo(5, 0.61)])
     assert await _ndvi(fo, ZONE_URN) == (0.61, "zone_specific")
     since = (datetime.now(timezone.utc) - timedelta(days=20)).strftime("%Y-%m-%d")
-    assert fo.queries[0] == f'hasAgriParcelZone=="{ZONE_URN}";sensingDate>="{since}"'
+    assert fo.queries[0] == f'hasAgriManagementZone=="{ZONE_URN}";sensingDate>="{since}"'
 
 
 @pytest.mark.asyncio
@@ -111,7 +111,7 @@ async def test_nothing_is_unavailable():
 
 @pytest.mark.asyncio
 async def test_sar_zone_specific_and_fallback():
-    zone_grd = {"id": "g", "type": "EOProduct", "hasAgriParcelZone": ZONE_URN, "productType": "GRD",
+    zone_grd = {"id": "g", "type": "EOProduct", "hasAgriManagementZone": ZONE_URN, "productType": "GRD",
                 "sensingDate": _day(3), "backscatterVV": -11.0, "backscatterVH": -18.0}
     parcel_grd = {"id": "h", "type": "EOProduct", "hasAgriParcel": PARCEL_URN, "productType": "GRD",
                   "sensingDate": _day(3), "backscatterVV": -9.0, "backscatterVH": -15.0}

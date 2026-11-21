@@ -355,7 +355,7 @@ async def test_soil_without_data_gives_regional_proxy(monkeypatch):
 @pytest.mark.asyncio
 async def test_zonal_rollup_carries_stress_zones_do_not(monkeypatch):
     published, _ = _setup(
-        monkeypatch, zones=[Zone("z0", _Z0), Zone("z1", _Z1)])
+        monkeypatch, zones=[Zone("z0", _Z0, urn="urn:ngsi-ld:AgriManagementZone:t:p1:z0"), Zone("z1", _Z1, urn="urn:ngsi-ld:AgriManagementZone:t:p1:z1")])
 
     async def _nocoords(*a, **k):
         return None
@@ -446,7 +446,7 @@ async def test_delete_error_does_not_fail_trigger(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_zonal_rollup_clears_stale_attributes(monkeypatch):
-    published, _ = _setup(monkeypatch, zones=[Zone("z0", _Z0), Zone("z1", _Z1)], wm={}, regional={})
+    published, _ = _setup(monkeypatch, zones=[Zone("z0", _Z0, urn="urn:ngsi-ld:AgriManagementZone:t:p1:z0"), Zone("z1", _Z1, urn="urn:ngsi-ld:AgriManagementZone:t:p1:z1")], wm={}, regional={})
 
     async def _nocoords(*a, **k):
         return None

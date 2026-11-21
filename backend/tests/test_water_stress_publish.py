@@ -86,7 +86,7 @@ def test_mapper_reference_sources_always_a_list(stored, expected):
 # ── I6: zones take the parcel balance with their own stage flags ─────────────
 
 def _zone(zid, flags=None, *, method="none", sev=Severity.LOW):
-    z = _a(zone_id=zid, overall_severity=sev,
+    z = _a(zone_id=zid, zone_urn=f"urn:ngsi-ld:AgriManagementZone:t:p1:{zid}", overall_severity=sev,
            water_stress_indicator=resolve_indicator(None, None, flags))
     if method == "cwsi_sensor":
         z.cwsi = CWSIResult(cwsi=0.1, vpd_kpa=3.0, temp_canopy=30.0, temp_air=31.0, d1=-1.0, d2=1.0)
@@ -131,7 +131,7 @@ async def test_zonal_trigger_zone_entities_show_the_parcel_balance(monkeypatch):
     from app.services.zonation import Zone
     from tests.test_pipeline_under_panel_stress import _Z0, _Z1, FakeRedis, _setup, _trigger, soil_reading
 
-    published, _ = _setup(monkeypatch, zones=[Zone("z0", _Z0), Zone("z1", _Z1)])
+    published, _ = _setup(monkeypatch, zones=[Zone("z0", _Z0, urn="urn:ngsi-ld:AgriManagementZone:t:p1:z0"), Zone("z1", _Z1, urn="urn:ngsi-ld:AgriManagementZone:t:p1:z1")])
 
     async def _nocoords(*a, **k):
         return None

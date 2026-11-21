@@ -216,8 +216,8 @@ def _eo(owner_attr, owner, day, ndvi):
 @pytest.mark.asyncio
 async def test_series_query_zone_and_parcel():
     fo = FakeOrion([
-        _eo("hasAgriParcelZone", ZONE_URN, 20, 0.5), _eo("hasAgriParcelZone", ZONE_URN, 0, 0.2),
-        _eo("hasAgriParcelZone", ZONE_URN, 40, None),
+        _eo("hasAgriManagementZone", ZONE_URN, 20, 0.5), _eo("hasAgriManagementZone", ZONE_URN, 0, 0.2),
+        _eo("hasAgriManagementZone", ZONE_URN, 40, None),
         _eo("hasAgriParcel", PARCEL_URN, 10, 0.9), _eo("hasAgriParcel", PARCEL_URN, 30, "bad"),
     ])
     with patch("nkz_platform_sdk.orion.OrionClient", return_value=fo):
@@ -225,8 +225,8 @@ async def test_series_query_zone_and_parcel():
         parcel = await _REAL_SERIES("acme", PARCEL, None, START)
     assert zone == [(START, 0.2), (START + timedelta(days=20), 0.5)]
     assert parcel == [(START + timedelta(days=10), 0.9)]
-    assert f'sensingDate>="{START.isoformat()}"' in fo.queries[0] and "hasAgriParcelZone" in fo.queries[0]
-    assert "hasAgriParcelZone" not in fo.queries[1]
+    assert f'sensingDate>="{START.isoformat()}"' in fo.queries[0] and "hasAgriManagementZone" in fo.queries[0]
+    assert "hasAgriManagementZone" not in fo.queries[1]
 
 
 @pytest.mark.asyncio

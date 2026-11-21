@@ -1100,11 +1100,10 @@ async def trigger(
     # The model index comes from the daily balance (daily weather-api inputs), not live ET0.
     model_fidelity = "parcel_weather" if parcel_balance else "unavailable"
 
-    # ── Resolve management zones (weather-map AgriParcelZone) ─────────────
-    # Whole-parcel mode (current production reality — no zones exist until
-    # weather-map zoning is enabled) is byte-identical to the legacy behaviour:
-    # one parcel-level CropHealthAssessment, sensor engines + side-effects via
-    # _run_engines(publish=True). The zonal branch only activates once zones
+    # ── Resolve zones (levels of the current AgriManagementZone zoning) ──────
+    # Whole-parcel mode (no usable current zoning) is byte-identical to the legacy
+    # behaviour: one parcel-level CropHealthAssessment, sensor engines + side-effects
+    # via _run_engines(publish=True). The zonal branch only activates once zones
     # exist, attributing the device's window-engines (CWSI/MDS) to the device's
     # zone (point-in-polygon) and publishing per-zone + worst-zone rollup.
     parcel_geom = await context_client._resolve_parcel_geometry(effective_parcel, tenant_id)
@@ -2642,8 +2641,9 @@ async def compute_assessment(
 ) -> CropHealthAssessment | None:
     """Parcel assessment, synthesised per management ZONE — sensor-optional.
 
-    Reads the parcel's assigned crop (parcel-level), resolves zones from
-    weather-map's ``AgriParcelZone`` (fallback: one whole-parcel zone), and for
+    Reads the parcel's assigned crop (parcel-level), resolves zones from the
+    levels of its current ``AgriManagementZone`` zoning (fallback: one
+    whole-parcel zone), and for
     each zone runs the engine core with that zone's (consolidated) meteo. Each
     zone publishes a ``CropHealthZoneAssessment``; the parcel rollup
     (worst zone) publishes the legacy ``CropHealthAssessment`` so existing
@@ -2719,7 +2719,7 @@ async def compute_assessment(
         "irrigation_regime": await parcel_site.parcel_regime(parcel_short, tenant_id),
     }
 
-    # Resolve management zones (weather-map AgriParcelZone) or whole-parcel.
+    # Resolve zones (levels of the current AgriManagementZone zoning) or whole-parcel.
     parcel_geom = await context_client._resolve_parcel_geometry(parcel_short, tenant_id)
     zones = await resolve_zones(parcel_id, tenant_id, parcel_geom or {})
     whole = is_whole_parcel(zones)
@@ -3589,24 +3589,16 @@ async def _query_eoproducts(tenant_id: str, q: str, limit: int) -> list[dict]:
     return entities if isinstance(entities, list) else []
 
 
-def _zone_relation(zone_urn: str) -> str:
-    """Relation per-zone EOProducts carry: current-zoning zones vs legacy terrain units."""
-    if ":AgriManagementZone:" in zone_urn:
-        return "hasAgriManagementZone"
-    return "hasAgriParcelZone"
-
-
 async def _zone_eoproduct(tenant_id: str, zone_urn: str, attr: str, extra_q: str = "") -> dict | None:
     """Newest per-zone EOProduct carrying ``attr``, sensed within ZONE_PRODUCT_MAX_AGE_DAYS.
 
-    Per-zone products carry ``hasAgriManagementZone`` (current zoning) or
-    ``hasAgriParcelZone`` (legacy) and no ``hasAgriParcel``, so the parcel query
-    never sees them and this one never sees parcel products.
+    Per-zone products carry ``hasAgriManagementZone`` and no ``hasAgriParcel``,
+    so the parcel query never sees them and this one never sees parcel products.
     """
     now = datetime.now(timezone.utc)
     since = (now - timedelta(days=ZONE_PRODUCT_MAX_AGE_DAYS)).strftime("%Y-%m-%d")
     # The date term keeps old products from filling the page; the age check below stays as a guard.
-    q = f'{_zone_relation(zone_urn)}=="{zone_urn}";sensingDate>="{since}"' + extra_q
+    q = f'hasAgriManagementZone=="{zone_urn}";sensingDate>="{since}"' + extra_q
     entities = await _query_eoproducts(tenant_id, q, _ZONE_PRODUCT_LIMIT)
     fresh = []
     for e in entities:
@@ -3686,7 +3678,7 @@ async def _fetch_ndvi_series(
     """
     since_s = since.isoformat()
     if zone_urn:
-        q = f'{_zone_relation(zone_urn)}=="{zone_urn}";sensingDate>="{since_s}"'
+        q = f'hasAgriManagementZone=="{zone_urn}";sensingDate>="{since_s}"'
     else:
         urn = f"urn:ngsi-ld:AgriParcel:{parcel_id}"
         q = f'(hasAgriParcel=="{urn}"|refAgriParcel=="{urn}");sensingDate>="{since_s}"'

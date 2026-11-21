@@ -80,7 +80,8 @@ async def test_under_panel_not_assimilated(monkeypatch):
 async def test_zone_entity_has_no_under_panel(monkeypatch):
     published, _ = _setup2(monkeypatch)
     await _trigger(CtxRedis({(UNDER_PANEL, "soilMoisture"): [soil_reading(16.0)]}))
-    z = published["assessments"][-1].to_zone_ngsi_ld()
+    a = published["assessments"][-1].model_copy(update={"zone_urn": "urn:ngsi-ld:AgriManagementZone:t:p1:z0"})
+    z = a.to_zone_ngsi_ld()
     assert not any(a in z for a in UP_ATTRS)
 
 

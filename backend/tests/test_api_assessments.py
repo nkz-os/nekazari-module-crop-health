@@ -37,9 +37,9 @@ SAMPLE_ZONE_ENTITY = {
     "id": "urn:ngsi-ld:CropHealthZoneAssessment:parcel-a-z1-20260628",
     "type": "CropHealthZoneAssessment",
     "zoneId": "z1",
-    "hasAgriParcelZone": {
+    "hasAgriManagementZone": {
         "type": "Relationship",
-        "object": "urn:ngsi-ld:AgriParcelZone:t:parcel-a:z1",
+        "object": "urn:ngsi-ld:AgriManagementZone:t:parcel-a:z1",
     },
 }
 
@@ -129,7 +129,7 @@ class TestAssessmentMapper:
             **SAMPLE_ZONE_ENTITY,
             "id": "urn:ngsi-ld:CropHealthZoneAssessment:parcel-a-z2-20260628",
             "zoneId": "z2",
-            "hasAgriParcelZone": {"object": "urn:ngsi-ld:AgriParcelZone:t:parcel-a:z2"},
+            "hasAgriManagementZone": {"object": "urn:ngsi-ld:AgriManagementZone:t:parcel-a:z2"},
         }
         result = dedupe_latest_per_zone([older, newer, other])
         assert len(result) == 2
@@ -143,7 +143,7 @@ class TestAssessmentMapper:
             sensor_nearby=True,
         )
         assert result["zoneId"] == "z1"
-        assert result["zoneUrn"] == "urn:ngsi-ld:AgriParcelZone:t:parcel-a:z1"
+        assert result["zoneUrn"] == "urn:ngsi-ld:AgriManagementZone:t:parcel-a:z1"
         assert result["geometry"]["type"] == "Polygon"
         assert result["sensorNearby"] is True
 

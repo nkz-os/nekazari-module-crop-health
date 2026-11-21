@@ -162,17 +162,35 @@ async def test_sources_detail_returns_source_status():
                 "dateObserved": "2026-06-07T10:25:00Z",
             }
         ])
-        # Canonical EOProduct (vegetation-health CONTRACT.md): one per
-        # acquisition, NDVI as the named `ndvi` Property (value = mean), no
-        # productType discriminator. SAR (productType=GRD) is a separate family.
-        mock.get(url__regex=r".*type=EOProduct.*productType.*GRD.*").respond(json=[])
+        # Satellite products in the earlier stored shape (EOProduct): an optical one with
+        # `ndvi`, and a newer and an older Sentinel-1 GRD one; none in the SDM shape.
+        mock.get(url__regex=r".*type=EOSatelliteImagery.*").respond(json=[])
         mock.get(url__regex=r".*type=EOProduct.*").respond(json=[
             {
                 "id": "urn:ngsi-ld:EOProduct:test-tenant:Parcela-4:2026-06-05",
+                "type": "EOProduct",
                 "hasAgriParcel": "urn:ngsi-ld:AgriParcel:Parcela-4",
                 "sensingDate": "2026-06-05",
                 "ndvi": 0.72,
-            }
+            },
+            {
+                "id": "urn:ngsi-ld:EOProduct:test-tenant:Parcela-4:grd:2026-06-06",
+                "type": "EOProduct",
+                "hasAgriParcel": "urn:ngsi-ld:AgriParcel:Parcela-4",
+                "productType": "GRD",
+                "sensingDate": "2026-06-06",
+                "backscatterVV": -9.5,
+                "backscatterVH": -16.0,
+            },
+            {
+                "id": "urn:ngsi-ld:EOProduct:test-tenant:Parcela-4:grd:2026-05-01",
+                "type": "EOProduct",
+                "hasAgriParcel": "urn:ngsi-ld:AgriParcel:Parcela-4",
+                "productType": "GRD",
+                "sensingDate": "2026-05-01",
+                "backscatterVV": -8.0,
+                "backscatterVH": -14.0,
+            },
         ])
         mock.get(url__regex=r".*type=AgriCrop.*hasAgriParcel.*").respond(json=[
             {
@@ -203,6 +221,12 @@ async def test_sources_detail_returns_source_status():
             assert sensor["lastValue"] == 28.4
             assert src["satellite"]["ndvi"]["status"] == "ok"
             assert src["satellite"]["ndvi"]["lastValue"] == 0.72
+            # A satellite product has a day, not a time: none is invented.
+            assert src["satellite"]["ndvi"]["lastDataAt"] == "2026-06-05"
+            assert src["satellite"]["ndvi"]["freshness"] == "none"  # old day, parsed without error
+            # The newest GRD, not whichever the broker listed first.
+            assert src["satellite"]["sar"]["lastValue"] == -16.0
+            assert src["satellite"]["sar"]["lastDataAt"] == "2026-06-06"
             assert src["crop"]["status"] == "ok"
             assert src["crop"]["plantingDate"] == "2025-10-02"
 
@@ -564,3 +588,14 @@ async def test_sources_sdm_shape_keys_by_channel_and_hides_derived_series():
         assert resp.status_code == 200
         got = [(s["metric"], s["lastValue"]) for s in resp.json()["sources"]["iot"]["sensors"]]
         assert got == [("airTemperature", 15.0)]
+
+
+def test_freshness_of_a_bare_day():
+    from datetime import datetime, timedelta, timezone
+
+    from app.api.sources import _freshness
+
+    today = datetime.now(timezone.utc).date()
+    assert _freshness(today.isoformat()) == "fresh"
+    assert _freshness((today - timedelta(days=3)).isoformat()) == "stale"
+    assert _freshness((today - timedelta(days=30)).isoformat()) == "none"

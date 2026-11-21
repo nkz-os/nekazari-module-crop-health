@@ -28,7 +28,7 @@ def _make_orion_client_cls(entities):
 
 @pytest.mark.asyncio
 async def test_fetch_sar_queries_eo_product_type():
-    """_fetch_parcel_sar() uses type=EOProduct in Orion-LD query."""
+    """_fetch_parcel_sar() reads the parcel's products in both stored shapes."""
     from app.services.pipeline import _fetch_parcel_sar
 
     mock_cls, mock_instance = _make_orion_client_cls([])
@@ -38,11 +38,9 @@ async def test_fetch_sar_queries_eo_product_type():
          patch("nkz_platform_sdk.orion.OrionClient", mock_cls):
         await _fetch_parcel_sar("parcel-4", "test-tenant")
 
-    call_kwargs = mock_instance.query_entities.call_args
-    assert call_kwargs.kwargs["type"] == "EOProduct"
-    assert "hasAgriParcel" in call_kwargs.kwargs["q"]
-    assert "productType" in call_kwargs.kwargs["q"]
-    assert "GRD" in call_kwargs.kwargs["q"]
+    calls = [c.kwargs for c in mock_instance.query_entities.call_args_list]
+    assert {c["type"] for c in calls} == {"EOProduct", "EOSatelliteImagery"}
+    assert all('hasAgriParcel=="urn:ngsi-ld:AgriParcel:parcel-4"' in c["q"] for c in calls)
 
 
 @pytest.mark.asyncio

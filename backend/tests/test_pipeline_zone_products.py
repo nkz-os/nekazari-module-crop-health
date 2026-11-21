@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from app.services import pipeline
+from app.services import eo_reader, pipeline
 
 PARCEL = "p1"
 PARCEL_URN = "urn:ngsi-ld:AgriParcel:p1"
@@ -16,12 +16,17 @@ def _day(days_ago: int) -> str:
 
 
 def _match(entity: dict, q: str) -> bool:
-    """Tiny NGSI-LD q evaluator: ``a=="v"`` terms joined by ``|`` (or) and ``;`` (and)."""
+    """Tiny NGSI-LD q evaluator: ``a=="v"``, ``a>="v"``, ``a<"v"``, ``!a``; ``|`` (or), ``;`` (and)."""
     def term(t: str) -> bool:
         t = t.strip().strip("()")
+        if t.startswith("!"):
+            return entity.get(t[1:]) is None
         if ">=" in t:
             attr, _, val = t.partition(">=")
             return str(entity.get(attr, "")) >= val.strip('"')
+        if "<" in t:
+            attr, _, val = t.partition("<")
+            return str(entity.get(attr, "")) < val.strip('"')
         attr, _, val = t.partition("==")
         val = val.strip('"')
         got = entity.get(attr)
@@ -42,12 +47,12 @@ class FakeOrion:
         self.entities = entities
         self.queries: list[str] = []
 
-    async def query_entities(self, type=None, q=None, limit=100, **kw):
+    async def query_entities(self, type=None, q=None, limit=100, offset=0, **kw):
         self.queries.append(q)
         out = [e for e in self.entities if e.get("type") == type]
         if q:
             out = [e for e in out if _match(e, q)]
-        return out[:limit]
+        return out[offset:offset + limit]
 
     async def close(self):
         pass
@@ -82,8 +87,7 @@ async def _ndvi(fo, zone_urn):
 async def test_zone_product_5_days_old_is_zone_specific():
     fo = FakeOrion([_parcel_eo(2, 0.40), _zone_eo(5, 0.61)])
     assert await _ndvi(fo, ZONE_URN) == (0.61, "zone_specific")
-    since = (datetime.now(timezone.utc) - timedelta(days=20)).strftime("%Y-%m-%d")
-    assert fo.queries[0] == f'hasAgriManagementZone=="{ZONE_URN}";sensingDate>="{since}"'
+    assert f'hasAgriManagementZone=="{ZONE_URN}"' in fo.queries
 
 
 @pytest.mark.asyncio
@@ -117,8 +121,10 @@ async def test_sar_zone_specific_and_fallback():
                   "sensingDate": _day(3), "backscatterVV": -9.0, "backscatterVH": -15.0}
     with patch("nkz_platform_sdk.orion.OrionClient", return_value=FakeOrion([zone_grd, parcel_grd])):
         assert await pipeline._fetch_parcel_sar(PARCEL, "acme", ZONE_URN) == ((-11.0, -18.0), "zone_specific")
+    eo_reader.clear_cache()  # each case is a different broker
     with patch("nkz_platform_sdk.orion.OrionClient", return_value=FakeOrion([parcel_grd])):
         assert await pipeline._fetch_parcel_sar(PARCEL, "acme", ZONE_URN) == ((-9.0, -15.0), "parcel_inherited")
+    eo_reader.clear_cache()
     with patch("nkz_platform_sdk.orion.OrionClient", return_value=FakeOrion([])):
         assert await pipeline._fetch_parcel_sar(PARCEL, "acme", ZONE_URN) == (None, "unavailable")
 

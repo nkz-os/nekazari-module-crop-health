@@ -80,17 +80,18 @@ async def test_ndvi_climatology_reads_eoproduct_history():
     # 4 acquisitions in June (month 6) for the parcel
     ents = [_eoproduct(f"2025-06-0{d}", 0.60 + d * 0.01) for d in range(1, 5)]
     client = AsyncMock()
-    client.query_entities = AsyncMock(return_value=ents)
+    client.query_entities = AsyncMock(side_effect=lambda **kw: ents if kw["type"] == "EOProduct" else [])
     client.close = AsyncMock()
 
-    with patch("app.services.context_client.OrionClient", return_value=client):
+    with patch("nkz_platform_sdk.orion.OrionClient", return_value=client):
         result = await context_client.get_ndvi_climatology(
-            "da36ccd2-unique-clim", "test-tenant", target_month=6, eppo_code=None
+            "da36ccd2-85d2-4c76-b552-c5c835a987c1", "clim-tenant", target_month=6, eppo_code=None
         )
 
-    assert client.query_entities.call_args.kwargs.get("type") == "EOProduct"
+    # Both stored shapes are read.
+    assert {c.kwargs.get("type") for c in client.query_entities.call_args_list} == {"EOProduct", "EOSatelliteImagery"}
     assert result["is_reliable"] is True
-    assert result["sample_count"] >= 2
+    assert result["sample_count"] == 4
 
 
 @pytest.mark.asyncio
@@ -99,10 +100,10 @@ async def test_ndvi_cwsi_correlation_reads_eoproduct():
     from types import SimpleNamespace
     from app.api import assessments
 
+    stored = [{"id": "urn:ngsi-ld:EOProduct:test-tenant:p:2026-06-05", "type": "EOProduct",
+               "hasAgriParcel": "urn:ngsi-ld:AgriParcel:p", "sensingDate": "2026-06-05", "ndvi": 0.72}]
     orion = AsyncMock()
-    orion.query_entities = AsyncMock(return_value=[
-        {"id": "urn:ngsi-ld:EOProduct:test-tenant:p:2026-06-05", "sensingDate": "2026-06-05", "ndvi": 0.72},
-    ])
+    orion.query_entities = AsyncMock(side_effect=lambda **kw: stored if kw["type"] == "EOProduct" else [])
     orion.close = AsyncMock()
 
     # Mock the timeseries-reader HTTP call (replaces asyncpg.connect)
@@ -118,7 +119,7 @@ async def test_ndvi_cwsi_correlation_reads_eoproduct():
         weather_api_url="http://timeseries-reader:5000",
     )
 
-    with patch("app.api.assessments.OrionClient", return_value=orion), \
+    with patch("nkz_platform_sdk.orion.OrionClient", return_value=orion), \
          patch("app.api.assessments.get_settings", return_value=fake_settings), \
          patch("httpx.AsyncClient") as mock_client:
         mock_client.return_value.__aenter__ = AsyncMock(return_value=AsyncMock(

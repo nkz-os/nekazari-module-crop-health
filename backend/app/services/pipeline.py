@@ -60,7 +60,7 @@ from app.schemas import (
     VigorResult as VigorResultSchema,
     WeatherSnapshot,
 )
-from app.services import context_client, parcel_site
+from app.services import context_client, eo_reader, parcel_site
 from app.services.context_client import get_phenology_params
 from app.services.daily_balance import (
     DAY_FLOWS,
@@ -372,8 +372,6 @@ def _determine_overall_severity(assessment: CropHealthAssessment) -> Severity:
 POST_MATURITY_STAGE = "post_maturity"
 # ASSUMPTION: with no known season start the NDVI window looks back 240 days.
 _NDVI_SEASON_FALLBACK_DAYS = 240
-# Orion page for one season of per-parcel/zone EOProducts (one per sensing date).
-_NDVI_SERIES_LIMIT = 500
 
 
 def _stage_at_or_after(stage_table, stage: str | None, gate: str) -> bool:
@@ -3504,24 +3502,8 @@ async def _fetch_irrigation(
     return out
 
 
-def _extract_eoproduct_scalar(entity: dict, attr: str) -> float | None:
-    """Read a scalar from a keyValues EOProduct attribute (scalar or Property dict)."""
-    raw = entity.get(attr)
-    if raw is None:
-        return None
-    if isinstance(raw, dict):
-        raw = raw.get("value")
-    if raw is None:
-        return None
-    return float(raw)
-
-
 async def _fetch_parcel_lst(parcel_id: str, tenant_id: str) -> float | None:
-    """Fetch latest LST (°C) for a parcel from EOProduct.lst (vegetation-health).
-
-    Canonical contract: one EOProduct per (parcel, sensingDate); LST is the
-    lowercased `lst` Property with unitCode CEL. Newest by sensingDate wins.
-    """
+    """Latest land surface temperature (°C) of the parcel, from Landsat or CLMS."""
     result = await _fetch_parcel_lst_with_date(parcel_id, tenant_id)
     return result[0] if result else None
 
@@ -3529,87 +3511,29 @@ async def _fetch_parcel_lst(parcel_id: str, tenant_id: str) -> float | None:
 async def _fetch_parcel_lst_with_date(
     parcel_id: str, tenant_id: str,
 ) -> tuple[float, str] | None:
-    """Fetch latest LST (°C) and sensing_date (YYYY-MM-DD) for a parcel."""
+    """Latest LST (°C) and its sensing day (YYYY-MM-DD); the newer of the two LST families."""
     try:
-        from app.config import get_settings
-        from nkz_platform_sdk.orion import OrionClient
-        settings = get_settings()
-        client = OrionClient(tenant_id, base_url=settings.orion_ld_url, context_url=settings.orion_ld_context)
-        try:
-            entities = await client.query_entities(
-                type="EOProduct",
-                q=f'hasAgriParcel=="urn:ngsi-ld:AgriParcel:{parcel_id}"|refAgriParcel=="urn:ngsi-ld:AgriParcel:{parcel_id}"',
-                limit=100,
-                options="keyValues",
-            )
-        finally:
-            await client.close()
-        if entities and isinstance(entities, list):
-            with_lst = [e for e in entities if e.get("lst") is not None]
-            if with_lst:
-                latest = max(with_lst, key=lambda e: str(e.get("sensingDate", "")))
-                lst = _extract_eoproduct_scalar(latest, "lst")
-                sensing_date = str(latest.get("sensingDate", ""))
-                if lst is not None:
-                    return lst, sensing_date
+        obs = await eo_reader.observations(tenant_id, parcel_id=parcel_id)
+        o = eo_reader.newest(obs, families=eo_reader.LST_FAMILIES, require={eo_reader.LST})
+        if o is not None:
+            lst = eo_reader.number(o, eo_reader.LST)
+            if lst is not None:
+                return lst, o.sensing_day.isoformat()
     except Exception as exc:
         logger.warning("_fetch_parcel_lst_with_date: failed for parcel %s: %s", parcel_id, exc)
     return None
 
 
 ZONE_PRODUCT_MAX_AGE_DAYS = 20
-_ZONE_PRODUCT_LIMIT = 20
 
 
-def _sensing_age_days(entity: dict, now: datetime) -> int | None:
-    """Whole days between the product's ``sensingDate`` and ``now`` (None if unparseable)."""
-    raw = entity.get("sensingDate")
-    if isinstance(raw, dict):
-        raw = raw.get("value")
-    if not raw:
-        return None
-    try:
-        text = str(raw)
-        d = datetime.fromisoformat(text.replace("Z", "+00:00")).date() if "T" in text \
-            else datetime.strptime(text[:10], "%Y-%m-%d").date()
-    except ValueError:
-        return None
-    return (now.date() - d).days
-
-
-async def _query_eoproducts(tenant_id: str, q: str, limit: int) -> list[dict]:
-    from app.config import get_settings
-    from nkz_platform_sdk.orion import OrionClient
-    settings = get_settings()
-    client = OrionClient(tenant_id, base_url=settings.orion_ld_url, context_url=settings.orion_ld_context)
-    try:
-        entities = await client.query_entities(type="EOProduct", q=q, limit=limit, options="keyValues")
-    finally:
-        await client.close()
-    return entities if isinstance(entities, list) else []
-
-
-async def _zone_eoproduct(tenant_id: str, zone_urn: str, attr: str, extra_q: str = "") -> dict | None:
-    """Newest per-zone EOProduct carrying ``attr``, sensed within ZONE_PRODUCT_MAX_AGE_DAYS.
-
-    Per-zone products carry ``hasAgriManagementZone`` and no ``hasAgriParcel``,
-    so the parcel query never sees them and this one never sees parcel products.
-    """
-    now = datetime.now(timezone.utc)
-    since = (now - timedelta(days=ZONE_PRODUCT_MAX_AGE_DAYS)).strftime("%Y-%m-%d")
-    # The date term keeps old products from filling the page; the age check below stays as a guard.
-    q = f'hasAgriManagementZone=="{zone_urn}";sensingDate>="{since}"' + extra_q
-    entities = await _query_eoproducts(tenant_id, q, _ZONE_PRODUCT_LIMIT)
-    fresh = []
-    for e in entities:
-        if e.get(attr) is None:
-            continue
-        age = _sensing_age_days(e, now)
-        if age is not None and age <= ZONE_PRODUCT_MAX_AGE_DAYS:
-            fresh.append(e)
-    if not fresh:
-        return None
-    return max(fresh, key=lambda e: str(e.get("sensingDate", "")))
+async def _zone_value(
+    tenant_id: str, zone_urn: str, families, require: set[str],
+):
+    """Newest zone observation carrying ``require``, sensed within ZONE_PRODUCT_MAX_AGE_DAYS."""
+    since = datetime.now(timezone.utc).date() - timedelta(days=ZONE_PRODUCT_MAX_AGE_DAYS)
+    obs = await eo_reader.observations(tenant_id, zone_urn=zone_urn)
+    return eo_reader.newest(obs, families=families, require=require, since=since)
 
 
 async def _fetch_parcel_ndvi(
@@ -3617,150 +3541,103 @@ async def _fetch_parcel_ndvi(
 ) -> tuple[float | None, str]:
     """Latest NDVI mean as ``(value, fidelity)``.
 
-    With ``zone_urn``: the zone's own EOProduct sensed within 20 days
+    With ``zone_urn``: the zone's own observation sensed within 20 days
     (``zone_specific``); otherwise the parcel's (``parcel_inherited``); nothing
-    found -> ``(None, "unavailable")``.
-
-    Canonical contract (vegetation-health CONTRACT.md): one EOProduct per
-    (parcel|zone, sensingDate); NDVI is the named lowercased `ndvi` Property whose
-    `value` is the zonal mean. There is no `productType` discriminator on
-    optical products. Newest by sensingDate wins; SAR EOProducts (no `ndvi`)
-    are skipped.
+    found -> ``(None, "unavailable")``. Single-scene optical only (``s2-indices``).
     """
     if zone_urn:
         try:
-            e = await _zone_eoproduct(tenant_id, zone_urn, "ndvi")
-            if e is not None:
-                v = _extract_eoproduct_scalar(e, "ndvi")
-                if v is not None:
-                    return v, "zone_specific"
+            o = await _zone_value(tenant_id, zone_urn, eo_reader.NDVI_FAMILIES, {eo_reader.NDVI})
+            v = eo_reader.number(o, eo_reader.NDVI) if o is not None else None
+            if v is not None:
+                return v, "zone_specific"
         except Exception as exc:
             logger.warning("_fetch_parcel_ndvi: zone %s failed, using parcel: %s", zone_urn, exc)
     try:
-        entities = await _query_eoproducts(
-            tenant_id,
-            f'hasAgriParcel=="urn:ngsi-ld:AgriParcel:{parcel_id}"|refAgriParcel=="urn:ngsi-ld:AgriParcel:{parcel_id}"',
-            100,
-        )
-        with_ndvi = [e for e in entities if e.get("ndvi") is not None]
-        if with_ndvi:
-            latest = max(with_ndvi, key=lambda e: str(e.get("sensingDate", "")))
-            ndvi = _extract_eoproduct_scalar(latest, "ndvi")
-            if ndvi is not None:
-                return ndvi, "parcel_inherited"
+        obs = await eo_reader.observations(tenant_id, parcel_id=parcel_id)
+        o = eo_reader.newest(obs, families=eo_reader.NDVI_FAMILIES, require={eo_reader.NDVI})
+        v = eo_reader.number(o, eo_reader.NDVI) if o is not None else None
+        if v is not None:
+            return v, "parcel_inherited"
     except Exception as exc:
         logger.warning("_fetch_parcel_ndvi: failed for parcel %s — returning None: %s", parcel_id, exc)
     return None, "unavailable"
 
 
-def _sensing_day(entity: dict) -> date | None:
-    raw = entity.get("sensingDate")
-    if isinstance(raw, dict):
-        raw = raw.get("value")
-    if not raw:
-        return None
-    try:
-        text = str(raw)
-        return datetime.fromisoformat(text.replace("Z", "+00:00")).date() if "T" in text \
-            else datetime.strptime(text[:10], "%Y-%m-%d").date()
-    except ValueError:
-        return None
-
-
 async def _fetch_ndvi_series(
     tenant_id: str, parcel_id: str, zone_urn: str | None, since: date,
 ) -> list[tuple[date, float]]:
-    """Season NDVI series ``[(sensing date, mean)]``, oldest first; ``[]`` on any failure.
+    """Season NDVI series ``[(sensing day, mean)]``, oldest first; ``[]`` on any failure.
 
-    With ``zone_urn`` only that zone's own products are read (no parcel fallback: a
-    parcel series must not confirm a zone's end of season). The ``sensingDate`` term is
-    a quoted string, as Orion needs for string dates.
+    With ``zone_urn`` only that zone's own observations are read (no parcel fallback: a
+    parcel series must not confirm a zone's end of season).
     """
-    since_s = since.isoformat()
-    if zone_urn:
-        q = f'hasAgriManagementZone=="{zone_urn}";sensingDate>="{since_s}"'
-    else:
-        urn = f"urn:ngsi-ld:AgriParcel:{parcel_id}"
-        q = f'(hasAgriParcel=="{urn}"|refAgriParcel=="{urn}");sensingDate>="{since_s}"'
     try:
-        entities = await _query_eoproducts(tenant_id, q, _NDVI_SERIES_LIMIT)
+        if zone_urn:
+            obs = await eo_reader.observations(tenant_id, zone_urn=zone_urn)
+        else:
+            obs = await eo_reader.observations(tenant_id, parcel_id=parcel_id)
     except Exception as exc:
         logger.warning("_fetch_ndvi_series: failed for parcel %s zone %s: %s", parcel_id, zone_urn, exc)
         return []
     out: list[tuple[date, float]] = []  # duplicates per date are resolved by the engine (max NDVI)
-    for e in entities:
-        day = _sensing_day(e)
-        if day is None or e.get("ndvi") is None:
-            continue
-        try:
-            v = _extract_eoproduct_scalar(e, "ndvi")
-        except (TypeError, ValueError):
-            continue
+    for o in eo_reader.pick(obs, families=eo_reader.NDVI_FAMILIES, require={eo_reader.NDVI}, since=since):
+        v = eo_reader.number(o, eo_reader.NDVI)
         if v is not None:
-            out.append((day, v))
-    out.sort(key=lambda p: p[0])
+            out.append((o.sensing_day, v))
     return out
 
 
 async def _fetch_parcel_smi(
     parcel_id: str, tenant_id: str, zone_urn: str | None = None,
 ) -> tuple[float | None, str]:
-    """Latest SAR SMI (0–1) from EOProduct.sarMoisture as ``(value, fidelity)``."""
+    """Latest Sentinel-1 soil moisture index (0–1) as ``(value, fidelity)``."""
     if zone_urn:
         try:
-            e = await _zone_eoproduct(tenant_id, zone_urn, "sarMoisture")
-            if e is not None:
-                v = _extract_eoproduct_scalar(e, "sarMoisture")
-                if v is not None:
-                    return v, "zone_specific"
+            o = await _zone_value(tenant_id, zone_urn, eo_reader.SMI_FAMILIES, {eo_reader.SMI})
+            v = eo_reader.number(o, eo_reader.SMI) if o is not None else None
+            if v is not None:
+                return v, "zone_specific"
         except Exception as exc:
             logger.warning("_fetch_parcel_smi: zone %s failed, using parcel: %s", zone_urn, exc)
     try:
-        entities = await _query_eoproducts(
-            tenant_id,
-            f'hasAgriParcel=="urn:ngsi-ld:AgriParcel:{parcel_id}"|refAgriParcel=="urn:ngsi-ld:AgriParcel:{parcel_id}"',
-            100,
-        )
-        with_smi = [e for e in entities if e.get("sarMoisture") is not None]
-        if with_smi:
-            latest = max(with_smi, key=lambda e: str(e.get("sensingDate", "")))
-            smi = _extract_eoproduct_scalar(latest, "sarMoisture")
-            if smi is not None:
-                return smi, "parcel_inherited"
+        obs = await eo_reader.observations(tenant_id, parcel_id=parcel_id)
+        o = eo_reader.newest(obs, families=eo_reader.SMI_FAMILIES, require={eo_reader.SMI})
+        v = eo_reader.number(o, eo_reader.SMI) if o is not None else None
+        if v is not None:
+            return v, "parcel_inherited"
     except Exception as exc:
         logger.warning("_fetch_parcel_smi: failed for %s: %s", parcel_id, exc)
     return None, "unavailable"
 
 
+def _backscatter(o) -> tuple[float, float] | None:
+    vv = eo_reader.number(o, eo_reader.VV) if o is not None else None
+    vh = eo_reader.number(o, eo_reader.VH) if o is not None else None
+    return (vv, vh) if vv is not None and vh is not None else None
+
+
 async def _fetch_parcel_sar(
     parcel_id: str, tenant_id: str, zone_urn: str | None = None,
 ) -> tuple[tuple[float, float] | None, str]:
-    """Latest SAR backscatter ``((VV, VH), fidelity)`` from GRD EOProducts.
+    """Latest Sentinel-1 backscatter ``((VV, VH), fidelity)``.
 
-    Zone product (within 20 days) -> ``zone_specific``; else the parcel's ->
+    Zone observation (within 20 days) -> ``zone_specific``; else the parcel's ->
     ``parcel_inherited``; none -> ``(None, "unavailable")``.
     """
+    both = {eo_reader.VV, eo_reader.VH}
     if zone_urn:
         try:
-            e = await _zone_eoproduct(tenant_id, zone_urn, "backscatterVV", ';productType=="GRD"')
-            if e is not None:
-                vv, vh = e.get("backscatterVV"), e.get("backscatterVH")
-                if vv is not None and vh is not None:
-                    return (float(vv), float(vh)), "zone_specific"
+            pair = _backscatter(await _zone_value(tenant_id, zone_urn, eo_reader.SAR_FAMILIES, both))
+            if pair is not None:
+                return pair, "zone_specific"
         except Exception as exc:
             logger.warning("_fetch_parcel_sar: zone %s failed, using parcel: %s", zone_urn, exc)
     try:
-        entities = await _query_eoproducts(
-            tenant_id,
-            f'(hasAgriParcel==\"urn:ngsi-ld:AgriParcel:{parcel_id}\"|refAgriParcel==\"urn:ngsi-ld:AgriParcel:{parcel_id}\");productType==\"GRD\"',
-            1,
-        )
-        if entities:
-            e = entities[0]
-            vv = e.get("backscatterVV")
-            vh = e.get("backscatterVH")
-            if vv is not None and vh is not None:
-                return (float(vv), float(vh)), "parcel_inherited"
+        obs = await eo_reader.observations(tenant_id, parcel_id=parcel_id)
+        pair = _backscatter(eo_reader.newest(obs, families=eo_reader.SAR_FAMILIES, require=both))
+        if pair is not None:
+            return pair, "parcel_inherited"
     except Exception as exc:
         logger.warning("_fetch_parcel_sar: failed for parcel %s — returning None: %s", parcel_id, exc)
     return None, "unavailable"

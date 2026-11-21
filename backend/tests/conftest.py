@@ -37,3 +37,13 @@ def _no_terrain_unit_lookup(monkeypatch):
         return []
 
     monkeypatch.setattr(pipeline, "fetch_terrain_units", _none)
+
+
+@pytest.fixture(autouse=True)
+def _fresh_eo_cache():
+    """Satellite observations are cached per target for a few minutes; each test starts empty."""
+    from app.services import eo_reader
+
+    eo_reader.clear_cache()
+    yield
+    eo_reader.clear_cache()

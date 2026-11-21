@@ -13,6 +13,7 @@ from app.services.observation_medium import base_attribute, effective_medium, lo
 from app.config import get_settings
 from app.services import vegetation_monitoring
 from app.services.parcel_link import PARCEL_PREFIX, parcel_link_targets
+from nkz_platform_sdk.device_measurement import read_device_measurement
 from nkz_platform_sdk.orion import OrionClient
 
 logger = logging.getLogger(__name__)
@@ -304,23 +305,20 @@ async def _detail_sources(request: Request, parcelId: str) -> dict:
             )
     devices_by_urn = {d.get("id"): d for d in parcel_devices if d.get("id")}
 
-    def _device_ref(m: dict):
-        ref = m.get("refDevice")
-        return ref.get("object", ref.get("value")) if isinstance(ref, dict) else ref
+    # One reading per DeviceMeasurement, keyed by its CHANNEL in either stored shape (the
+    # legacy one, channel in controlledProperty, or the Smart Data Models one, channel in
+    # name and catalogue property in controlledProperty).
+    readings = [(m, read_device_measurement(m)) for m in measurements]
 
     # Window-statistic series (airTemperatureMin...) are not sources of their own: drop
     # one only when the base series of the same device is present.
-    present = {
-        (_device_ref(m), m["controlledProperty"])
-        for m in measurements
-        if isinstance(m.get("controlledProperty"), str)
-    }
-    for m in measurements:
-        metric = m.get("controlledProperty")
-        if not isinstance(metric, str) or not metric:
+    present = {(r.device_id, r.channel) for _, r in readings if r.channel}
+    for m, r in readings:
+        metric = r.channel
+        if not metric:
             continue
         # Only sensors measuring the right medium count as a source for this metric.
-        ref = _device_ref(m)
+        ref = r.device_id
         base = base_attribute(metric)
         if base != metric and (ref, base) in present:
             continue
@@ -329,9 +327,7 @@ async def _detail_sources(request: Request, parcelId: str) -> dict:
             if device is not None:
                 log_ignored(tenant_id, ref, metric, effective_medium(device, metric))
             continue
-        val = m.get("numValue")
-        if val is None:
-            val = m.get("textValue")
+        val = r.value
         if val is None:
             continue
         unit = "°C" if "Temp" in metric else "µm" if "trunk" in metric.lower() else "%" if "Moisture" in metric else ""

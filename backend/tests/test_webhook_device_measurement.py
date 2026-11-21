@@ -315,3 +315,51 @@ def test_broker_failure_drops_reading_and_still_acks(fake_redis, triggers, recor
     _real_gate(monkeypatch, RuntimeError("broker down"))
     assert _post({"data": [_measurement()]}).status_code == 204
     assert fake_redis.readings == [] and triggers == [] and records == []
+
+
+# --- Smart Data Models shape (platform flag DEVICE_MEASUREMENT_SDM_SHAPE_ENABLED on) ---
+# `controlledProperty` becomes the catalogue property and `name` the channel. The metric is
+# the channel in both shapes (nkz_platform_sdk.read_device_measurement).
+
+
+def _sdm(channel, prop, statistic="instant", value=21.0):
+    return _measurement(
+        id=f"urn:ngsi-ld:DeviceMeasurement:acme:probe-01:{channel}",
+        controlledProperty={"type": "Property", "value": prop},
+        name={"type": "Property", "value": channel},
+        measurementType={"type": "Property", "value": statistic},
+        numValue={"type": "Property", "value": value, "unitCode": "CEL"},
+    )
+
+
+def test_sdm_shape_metric_is_the_channel(fake_redis, triggers):
+    resp = _post({"data": [_sdm("leafTemperature", "leafTemperature")]})
+    assert resp.status_code == 204
+    assert [t["metric_type"] for t in triggers] == ["leafTemperature"]
+    assert fake_redis.readings[0][1] == "leafTemperature"
+
+
+def test_sdm_shape_min_channel_is_not_merged_into_its_property(fake_redis, triggers, records):
+    """airTemperatureMin carries controlledProperty=airTemperature in the SDM shape: keying by
+    controlledProperty would record the window minimum as the air temperature."""
+    _post({"data": [_sdm("airTemperatureMin", "airTemperature", statistic="min", value=3.0)]})
+    assert triggers == []
+    assert fake_redis.readings == []
+    assert records == []
+
+
+def test_sdm_shape_channel_differs_from_catalogue_name(fake_redis, triggers, records):
+    """PAR channel photosyntheticPhotonFluxDensity has catalogue name
+    photosyntheticallyActiveRadiation: the tracked name is the channel."""
+    _post({"data": [_sdm("photosyntheticPhotonFluxDensity", "photosyntheticallyActiveRadiation",
+                         value=850.0)]})
+    assert [r[1] for r in fake_redis.readings] == ["photosyntheticPhotonFluxDensity"]
+
+
+def test_read_measurement_same_result_in_both_shapes():
+    from app.api.webhooks import _read_measurement
+
+    legacy = _dm("soilMoisture", 23.5, unit="P1")
+    sdm = _sdm("soilMoisture", "soilMoisture", value=23.5)
+    sdm["numValue"]["unitCode"] = "P1"
+    assert _read_measurement(legacy) == _read_measurement(sdm)

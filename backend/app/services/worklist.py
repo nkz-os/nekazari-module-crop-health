@@ -114,12 +114,19 @@ def _when(iso: Optional[str], today: date) -> Optional[str]:
 
 
 def _unvalidated_only(forecast: Optional[dict]) -> bool:
-    """True when the forecast has estimates and every one is labelled unvalidated."""
+    """True when the forecast has AquaCrop estimates and every one is labelled unvalidated.
+
+    Other providers (the validated provincial normal) are not a harvest date and are ignored.
+    """
     estimates = (forecast or {}).get("estimates")
-    if not isinstance(estimates, list) or not estimates:
+    if not isinstance(estimates, list):
         return False
-    for est in estimates:
-        validation = est.get("validation") if isinstance(est, dict) else None
+    # A future model provider in in-season must be added to this filter.
+    crop_rows = [e for e in estimates if isinstance(e, dict) and e.get("provider_id") == "aquacrop"]
+    if not crop_rows:
+        return False
+    for est in crop_rows:
+        validation = est.get("validation")
         if not isinstance(validation, dict) or validation.get("status") != "unvalidated":
             return False
     return True

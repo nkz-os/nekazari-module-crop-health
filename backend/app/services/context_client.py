@@ -1042,23 +1042,22 @@ async def get_lst_climatology(
     settings = get_settings()
     orion_url = settings.orion_ld_url
     if not orion_url:
-        return _climatology_unavailable_lst("ORION_LD_URL not configured")
+        return _climatology_unavailable_lst("ORION_LD_URL not configured", tenant_id=tenant_id, parcel_id=parcel_id)
 
     try:
         obs = await eo_reader.observations(tenant_id, parcel_id=parcel_id)
         with_lst = eo_reader.pick(obs, families=eo_reader.LST_FAMILIES, require={eo_reader.LST})
         if len(with_lst) < 3:
-            return _climatology_unavailable_lst(f"Only {len(with_lst)} LST records")
+            return _climatology_unavailable_lst(f"Only {len(with_lst)} LST records", tenant_id=tenant_id, parcel_id=parcel_id)
 
         month_obs = [o for o in with_lst if _in_month_window(o.sensing_day.month, target_month)]
         if len(month_obs) < 2:
             return _climatology_unavailable_lst(
-                f"Only {len(month_obs)} LST records in month {target_month}+-1"
-            )
+                f"Only {len(month_obs)} LST records in month {target_month}+-1", tenant_id=tenant_id, parcel_id=parcel_id)
 
         lst_vals = _in_range([eo_reader.number(o, eo_reader.LST) for o in month_obs], -20.0, 70.0)
         if not lst_vals or len(lst_vals) < 2:
-            return _climatology_unavailable_lst("No valid LST values in window")
+            return _climatology_unavailable_lst("No valid LST values in window", tenant_id=tenant_id, parcel_id=parcel_id)
 
         result = _build_lst_climatology_result(lst_vals, [o.sensing_day for o in month_obs])
         _lst_climatology_cache[cache_key] = result
@@ -1069,7 +1068,7 @@ async def get_lst_climatology(
         return result
 
     except Exception as exc:
-        return _climatology_unavailable_lst(f"Error: {exc}")
+        return _climatology_unavailable_lst(f"Error: {exc}", tenant_id=tenant_id, parcel_id=parcel_id)
 
 
 def _in_month_window(month: int, target_month: int) -> bool:
@@ -1101,8 +1100,8 @@ def _build_lst_climatology_result(values: list[float], dates: list) -> dict:
     }
 
 
-def _climatology_unavailable_lst(reason: str) -> dict:
-    logger.warning("LST climatology unavailable: %s", reason)
+def _climatology_unavailable_lst(reason: str, *, tenant_id: str = "", parcel_id: str = "") -> dict:
+    logger.warning("LST climatology unavailable tenant=%s parcel=%s: %s", tenant_id, parcel_id, reason)
     return {
         "lst_p05": None,
         "lst_p95": None,
@@ -1143,19 +1142,18 @@ async def get_ndvi_climatology(
     settings = get_settings()
     orion_url = settings.orion_ld_url
     if not orion_url:
-        return _climatology_unavailable("ORION_LD_URL not configured")
+        return _climatology_unavailable("ORION_LD_URL not configured", tenant_id=tenant_id, parcel_id=parcel_id)
 
     try:
         obs = await eo_reader.observations(tenant_id, parcel_id=parcel_id)
         with_ndvi = eo_reader.pick(obs, families=eo_reader.NDVI_FAMILIES, require={eo_reader.NDVI})
         if len(with_ndvi) < 3:
-            return _climatology_unavailable(f"Only {len(with_ndvi)} satellite NDVI records")
+            return _climatology_unavailable(f"Only {len(with_ndvi)} satellite NDVI records", tenant_id=tenant_id, parcel_id=parcel_id)
 
         month_obs = [o for o in with_ndvi if _in_month_window(o.sensing_day.month, target_month)]
         if len(month_obs) < 2:
             return _climatology_unavailable(
-                f"Only {len(month_obs)} records in month {target_month}+-1"
-            )
+                f"Only {len(month_obs)} records in month {target_month}+-1", tenant_id=tenant_id, parcel_id=parcel_id)
 
         # Same parcel, same months, any crop: a satellite observation carries no crop.
         ndvi_vals = _in_range([eo_reader.number(o, eo_reader.NDVI) for o in month_obs], 0.0, 1.0)
@@ -1172,15 +1170,14 @@ async def get_ndvi_climatology(
             return result
 
         return _climatology_unavailable(
-            f"No valid NDVI values in {len(month_obs)} records"
-        )
+            f"No valid NDVI values in {len(month_obs)} records", tenant_id=tenant_id, parcel_id=parcel_id)
 
     except httpx.TimeoutException:
-        return _climatology_unavailable("Orion-LD timeout")
+        return _climatology_unavailable("Orion-LD timeout", tenant_id=tenant_id, parcel_id=parcel_id)
     except httpx.ConnectError:
-        return _climatology_unavailable("Orion-LD unreachable")
+        return _climatology_unavailable("Orion-LD unreachable", tenant_id=tenant_id, parcel_id=parcel_id)
     except Exception as exc:
-        return _climatology_unavailable(f"Unexpected error: {exc}")
+        return _climatology_unavailable(f"Unexpected error: {exc}", tenant_id=tenant_id, parcel_id=parcel_id)
 
 
 def _build_climatology_result(
@@ -1204,8 +1201,8 @@ def _build_climatology_result(
     }
 
 
-def _climatology_unavailable(reason: str) -> dict:
-    logger.warning("NDVI climatology unavailable: %s", reason)
+def _climatology_unavailable(reason: str, *, tenant_id: str = "", parcel_id: str = "") -> dict:
+    logger.warning("NDVI climatology unavailable tenant=%s parcel=%s: %s", tenant_id, parcel_id, reason)
     return {
         "ndvi_p05": None,
         "ndvi_p95": None,

@@ -184,3 +184,35 @@ def test_pick_refuses_names_crop_health_does_not_read():
         eo_reader.pick([], families=eo_reader.NDVI_FAMILIES, require={"NDVI"})
     with pytest.raises(TypeError):
         eo_reader.pick([], families=eo_reader.NDVI_FAMILIES, require="ndvi")
+
+
+@pytest.mark.asyncio
+async def test_expired_entries_are_purged_and_the_cache_is_capped(monkeypatch):
+    monkeypatch.setattr(eo_reader, "_CACHE_MAX", 3)
+    fo = FakeOrion([])
+    with patch("nkz_platform_sdk.orion.OrionClient", return_value=fo):
+        for i in range(5):
+            await eo_reader.observations("acme", parcel_id=f"p{i}")
+        assert [k[1] for k in eo_reader._cache] == [eo_reader.parcel_urn(f"p{i}") for i in (2, 3, 4)]
+        for key in list(eo_reader._cache):  # all of them expire
+            eo_reader._cache[key] = (0.0, eo_reader._cache[key][1])
+        await eo_reader.observations("acme", parcel_id="p9")
+    assert list(eo_reader._cache) == [("acme", eo_reader.parcel_urn("p9"))]
+
+
+@pytest.mark.asyncio
+async def test_a_read_started_before_clear_cache_is_not_stored():
+    gate = asyncio.Event()
+
+    class Slow(FakeOrion):
+        async def query_entities(self, **kw):
+            await gate.wait()
+            return await super().query_entities(**kw)
+
+    with patch("nkz_platform_sdk.orion.OrionClient", return_value=Slow([])):
+        reader = asyncio.ensure_future(eo_reader.observations("acme", parcel_id="p1"))
+        await asyncio.sleep(0)
+        eo_reader.clear_cache()
+        gate.set()
+        await reader
+    assert not eo_reader._cache

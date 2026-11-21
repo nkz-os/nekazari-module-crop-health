@@ -599,4 +599,6 @@ def test_freshness_of_a_bare_day():
     assert _freshness(today.isoformat()) == "fresh"
     assert _freshness((today - timedelta(days=1)).isoformat()) == "fresh"  # whole days: a day has no hour
     assert _freshness((today - timedelta(days=3)).isoformat()) == "stale"
+    assert _freshness((today - timedelta(days=7)).isoformat()) == "stale"
+    assert _freshness((today - timedelta(days=8)).isoformat()) == "none"
     assert _freshness((today - timedelta(days=30)).isoformat()) == "none"

@@ -47,6 +47,7 @@ _CACHE_TTL_S = 300.0
 _CACHE_MAX = 64
 _cache: OrderedDict[tuple[str, str], tuple[float, list[EOObservation]]] = OrderedDict()
 _inflight: dict[tuple[str, str], asyncio.Task] = {}
+_generation = 0  # bumped by clear_cache: a read started before it is not stored
 
 
 def parcel_urn(parcel_id: str) -> str:
@@ -54,6 +55,8 @@ def parcel_urn(parcel_id: str) -> str:
 
 
 def clear_cache() -> None:
+    global _generation
+    _generation += 1
     _cache.clear()
     _inflight.clear()
 
@@ -88,15 +91,15 @@ async def observations(
         task = asyncio.ensure_future(_fetch(tenant_id, parcel_id=parcel_id, zone_urn=zone_urn))
         _inflight[key] = task
         # The read settles itself, even when every caller was cancelled meanwhile.
-        task.add_done_callback(lambda t, k=key: _settle(k, t))
+        task.add_done_callback(lambda t, k=key, g=_generation: _settle(k, t, g))
     return await asyncio.shield(task)
 
 
-def _settle(key: tuple[str, str], task: asyncio.Task) -> None:
+def _settle(key: tuple[str, str], task: asyncio.Task, generation: int) -> None:
     """Store a finished read (counted from its end) and forget it as in flight."""
     if _inflight.get(key) is task:
         _inflight.pop(key, None)
-    if task.cancelled() or task.exception() is not None:
+    if task.cancelled() or task.exception() is not None or generation != _generation:
         return
     now = time.monotonic()
     for k in [k for k, (expires, _) in _cache.items() if expires <= now]:

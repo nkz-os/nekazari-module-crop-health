@@ -19,6 +19,7 @@ import os
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, Response
+from nkz_platform_sdk.device_measurement import read_device_measurement
 from nkz_platform_sdk.notify_auth import accept_master_from_env, verify_notification
 
 from app.schemas import MetricType
@@ -124,7 +125,7 @@ async def receive_sensor_data(
         device_id, metric_name, value, observed_ts, unit_code = _read_measurement(entity)
         if device_id is None:
             logger.debug(
-                "Skipping %s: missing refDevice, controlledProperty or reading",
+                "Skipping %s: missing refDevice, channel or reading",
                 entity.get("id", "<no id>"),
             )
             continue
@@ -204,45 +205,28 @@ def _read_measurement(
 ) -> tuple[str | None, str | None, float | None, float | None, str | None]:
     """Pull (device_id, metric_name, value, observed_ts, unit_code) out of a `DeviceMeasurement`.
 
-    `DeviceMeasurement` inverts the shape used by entities that carry their
-    readings as attributes: the measured property's name is the VALUE of
-    ``controlledProperty`` rather than an attribute key, the reading sits in
-    ``numValue`` or ``textValue`` (never both), the device is the ``refDevice``
-    relationship — NOT the last segment of this entity's own id, which is the
-    property name — and the instant is ``dateObserved``, a plain Property, not
-    per-attribute ``observedAt`` metadata.
+    `metric_name` is the reading's CHANNEL (``airTemperature``, ``airTemperatureMin``), read
+    with ``nkz_platform_sdk.read_device_measurement`` so both stored shapes give the same
+    name: the legacy one (the channel in ``controlledProperty``) and the Smart Data Models
+    one (the channel in ``name``, the catalogue property in ``controlledProperty``). The
+    reading sits in ``numValue`` or ``textValue``, the device is the ``refDevice``
+    relationship — NOT the last segment of this entity's own id — and the instant is
+    ``dateObserved``, a plain Property, not per-attribute ``observedAt`` metadata.
 
     ``unit_code`` is the ``unitCode`` of the ``numValue`` attribute (None when
     absent or the reading came from ``textValue``).
 
-    Returns all-``None`` when the device or the reading is
+    Returns all-``None`` when the device, the channel or the reading is
     missing, so the caller skips the entity rather than persisting a guessed
     device id.
     """
-    ref_device = entity.get("refDevice")
-    if not isinstance(ref_device, dict):
+    reading = read_device_measurement(entity)
+    device_id = reading.device_id
+    metric_name = reading.channel
+    if device_id is None or metric_name is None:
         return None, None, None, None, None
-    device_id = ref_device.get("object")
-    if not isinstance(device_id, str) or not device_id:
-        return None, None, None, None, None
-
-    controlled_property = entity.get("controlledProperty")
-    if not isinstance(controlled_property, dict):
-        return None, None, None, None, None
-    metric_name = controlled_property.get("value")
-    if not isinstance(metric_name, str) or not metric_name:
-        return None, None, None, None, None
-
-    value = None
-    unit_code = None
-    for value_key in ("numValue", "textValue"):
-        value_attr = entity.get(value_key)
-        if isinstance(value_attr, dict) and value_attr.get("value") is not None:
-            value = value_attr["value"]
-            if value_key == "numValue":
-                raw_unit = value_attr.get("unitCode")
-                unit_code = raw_unit if isinstance(raw_unit, str) and raw_unit else None
-            break
+    value = reading.value
+    unit_code = reading.unit_code
     if value is None:
         return None, None, None, None, None
     try:

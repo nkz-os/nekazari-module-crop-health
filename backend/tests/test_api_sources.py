@@ -532,3 +532,35 @@ async def test_sources_detail_pages_measurements_and_hides_derived_series():
         assert "lonelyMax" in metrics  # base absent on the device: kept
         assert sum(m.startswith("filler") for m in metrics) == 49
         assert sum(m.startswith("extra") for m in metrics) == 7
+
+
+@pytest.mark.anyio
+async def test_sources_sdm_shape_keys_by_channel_and_hides_derived_series():
+    """SDM shape: controlledProperty is the catalogue property and name the channel. The
+    Min/Max series of a device still hide behind their base channel, never merge into it."""
+    dev_urn = "urn:ngsi-ld:Device:acme:d1"
+
+    def _m(channel, prop, statistic, value):
+        return {"id": f"urn:ngsi-ld:DeviceMeasurement:acme:d1:{channel}", "refDevice": dev_urn,
+                "controlledProperty": prop, "name": channel, "measurementType": statistic,
+                "numValue": value, "dateObserved": "2026-06-07T10:25:00Z"}
+
+    with respx.mock as mock:
+        mock.get(url__regex=r".*type=CropHealthAssessment.*").respond(json=[])
+        mock.get(url__regex=r".*type=Device(&|%).*").respond(json=[
+            {"id": dev_urn, "controlledAsset": "urn:ngsi-ld:AgriParcel:p-sdm",
+             "observationContext": {"medium": "ambientAir"}},
+        ])
+        mock.get(url__regex=r".*type=DeviceMeasurement.*").respond(json=[
+            _m("airTemperatureMin", "airTemperature", "min", 1.0),
+            _m("airTemperature", "airTemperature", "instant", 15.0),
+            _m("airTemperatureMax", "airTemperature", "max", 20.0),
+        ])
+        mock.get().respond(json=[])
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test", headers=GATEWAY_HEADERS) as client:
+            resp = await client.get("/api/crop-health/sources?parcelId=p-sdm")
+        assert resp.status_code == 200
+        got = [(s["metric"], s["lastValue"]) for s in resp.json()["sources"]["iot"]["sensors"]]
+        assert got == [("airTemperature", 15.0)]

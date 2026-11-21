@@ -61,10 +61,9 @@ def test_zone_entity_points_to_management_zone():
     assert e["nkz:zoneLevel"]["value"] == "high" and e["nkz:zoningRunId"]["value"] == RUN
 
 
-def test_terrain_zone_entity_keeps_parcel_zone_relationship():
-    e = assessment(zone_id="zabc-e1-N", zone_urn="urn:ngsi-ld:AgriParcelZone:t:p1:zabc-e1-N").to_zone_ngsi_ld()
-    assert "hasAgriParcelZone" in e and "hasAgriManagementZone" not in e
-    assert "nkz:zoneLevel" not in e and "nkz:zoningRunId" not in e
+def test_zone_entity_without_management_zone_urn_is_refused():
+    with pytest.raises(ValueError):
+        assessment(zone_id="high", zone_level="high").to_zone_ngsi_ld()
 
 
 @pytest.mark.parametrize("key", ["hasAgriManagementZone", "nkz:hasAgriManagementZone", NS + "hasAgriManagementZone"])
@@ -73,9 +72,8 @@ def test_extract_zone_urn_reads_three_forms(key):
     assert extract_zone_urn({key: AMZ_URN}) == AMZ_URN
 
 
-def test_extract_zone_urn_falls_back_to_terrain_relation():
-    urn = "urn:ngsi-ld:AgriParcelZone:t:p1:z1"
-    assert extract_zone_urn({"hasAgriParcelZone": urn}) == urn
+def test_extract_zone_urn_ignores_terrain_relation():
+    assert extract_zone_urn({"hasAgriParcelZone": "urn:ngsi-ld:AgriParcelZone:t:p1:z1"}) == ""
     assert extract_zone_urn({}) == ""
 
 

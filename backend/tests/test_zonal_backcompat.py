@@ -13,6 +13,7 @@ def test_zone_and_rollup_have_distinct_types_and_ids():
         parcel_id="p1",
         assessed_at=datetime(2026, 6, 21, tzinfo=timezone.utc),
         zone_id="z2",
+        zone_urn="urn:ngsi-ld:AgriManagementZone:t:p1:z2",
     )
     zone = a.to_zone_ngsi_ld()
     rollup = a.to_ngsi_ld()
@@ -21,8 +22,8 @@ def test_zone_and_rollup_have_distinct_types_and_ids():
     assert rollup["type"] == "CropHealthAssessment"
     assert zone["type"] == "CropHealthZoneAssessment"
     # rollup carries no zone relationship; zone does
-    assert "hasAgriParcelZone" not in rollup
-    assert "hasAgriParcelZone" in zone
+    assert "hasAgriManagementZone" not in rollup
+    assert "hasAgriManagementZone" in zone
     # ids live in disjoint URN namespaces
     assert rollup["id"].startswith("urn:ngsi-ld:CropHealthAssessment:")
     assert zone["id"].startswith("urn:ngsi-ld:CropHealthZoneAssessment:")

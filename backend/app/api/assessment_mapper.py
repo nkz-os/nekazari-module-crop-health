@@ -64,12 +64,11 @@ _ZONE_REF_KEYS = (
     "hasAgriManagementZone",
     "nkz:hasAgriManagementZone",
     _NKZ_NS + "hasAgriManagementZone",
-    "hasAgriParcelZone",
 )
 
 
 def extract_zone_urn(entity: dict[str, Any]) -> str:
-    """Zone URN: the AgriManagementZone relationship (three forms), else the legacy terrain one."""
+    """Zone URN: the AgriManagementZone relationship (three forms), else ``""``."""
     for key in _ZONE_REF_KEYS:
         ref = entity.get(key)
         if isinstance(ref, dict):
@@ -87,11 +86,10 @@ def extract_zone_id(entity: dict[str, Any]) -> str:
     zid = prop_value(entity, "zoneId")
     if zid:
         return str(zid)
-    urn = extract_zone_urn(entity)
-    if ":AgriManagementZone:" in urn:
+    if extract_zone_urn(entity):
         level = nkz_value(entity, "zoneLevel")
         return str(level) if level else ""
-    return urn.split(":")[-1] if urn else ""
+    return ""
 
 
 def _soil_stress_level(ratio: float | None) -> str:
@@ -354,7 +352,7 @@ def map_entity_to_zone_assessment(
     geometry: dict[str, Any] | None = None,
     sensor_nearby: bool | None = None,
 ) -> dict[str, Any]:
-    """Build a zone-scoped assessment dict with optional AgriParcelZone geometry."""
+    """Build a zone-scoped assessment dict with optional zone geometry."""
     result = map_entity_to_assessment(entity)
     result["zoneId"] = extract_zone_id(entity)
     result["zoneUrn"] = extract_zone_urn(entity)

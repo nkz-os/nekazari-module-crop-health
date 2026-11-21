@@ -287,7 +287,7 @@ async def test_parcel_inherited_twi_writes_nothing_on_the_zone():
     twi = {"z1": {"fidelity": "parcel_inherited", "twiMean": 8.0, "wetFraction": 0.7}}
     zi = await _gather(twi=twi)
     assert zi.twi is None and zi.fidelity["twi"] == "parcel_inherited"
-    za = pipeline.CropHealthAssessment(parcel_id="p1", assessed_at=NOW, zone_id="z1")
+    za = pipeline.CropHealthAssessment(parcel_id="p1", assessed_at=NOW, zone_id="z1", zone_urn="urn:ngsi-ld:AgriManagementZone:t:p1:z1")
     entity = za.to_zone_ngsi_ld()
     assert "nkz:twiMean" not in entity and "nkz:wetnessClass" not in entity
 

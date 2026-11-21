@@ -256,7 +256,7 @@ async def test_zonal_trigger_breach_from_recomputed_severity(monkeypatch):
         events.append(event)
 
     real_emit = pipeline._emit_assessment_side_effects  # captured before the harness stubs it
-    published, _ = _setup(monkeypatch, zones=[Zone("z0", _Z0), Zone("z1", _Z1)])
+    published, _ = _setup(monkeypatch, zones=[Zone("z0", _Z0, urn="urn:ngsi-ld:AgriManagementZone:t:p1:z0"), Zone("z1", _Z1, urn="urn:ngsi-ld:AgriManagementZone:t:p1:z1")])
     monkeypatch.setattr(pipeline, "_emit_assessment_side_effects", real_emit)
     monkeypatch.setattr(pipeline, "_publish_redis_event", _pub)
 

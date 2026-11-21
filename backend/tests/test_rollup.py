@@ -14,7 +14,7 @@ NOW = datetime(2026, 6, 21, tzinfo=timezone.utc)
 
 def _za(zone_id, composite, sev, action=RecommendedAction.NO_ACTION, rank=None):
     return CropHealthAssessment(
-        parcel_id="p1", assessed_at=NOW, zone_id=zone_id, zone_rank=rank,
+        parcel_id="p1", assessed_at=NOW, zone_id=zone_id, zone_urn=f"urn:ngsi-ld:AgriManagementZone:t:p1:{zone_id}", zone_rank=rank,
         overall_severity=sev, recommended_action=action,
         composite_stress=CompositeStressResult(composite_index=composite),
     )
@@ -95,7 +95,7 @@ def test_no_fidelity_keeps_existing_rule():
 def test_mapper_passes_fidelity_rank_version_wetness_through():
     entity = {
         "id": "urn:ngsi-ld:CropHealthZoneAssessment:p1-z0-20260621", "type": "CropHealthZoneAssessment",
-        "hasAgriParcelZone": {"type": "Relationship", "object": "urn:ngsi-ld:AgriParcelZone:acme:p1:z0"},
+        "hasAgriManagementZone": {"type": "Relationship", "object": "urn:ngsi-ld:AgriManagementZone:acme:p1:z0"},
         "assessedAt": {"type": "Property", "value": NOW.isoformat()},
         "nkz:inputFidelity": {"type": "Property", "value": {"ndvi": "zone_specific"}},
         "https://nkz-os.org/ns/zoneRank": {"type": "Property", "value": 2},

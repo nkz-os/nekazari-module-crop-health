@@ -587,15 +587,13 @@ class CropHealthAssessment(BaseModel):
     # level with them once the parcel balance exists.
     water_stress_stage_flags: StageWaterFlags | None = None
     # ── Zone (management-zone) context ──
-    # When set, the assessment represents a single AgriParcelZone of the parcel
-    # and is serialised via ``to_zone_ngsi_ld`` under the SEPARATE
+    # When set, the assessment represents one level of the parcel's current zoning
+    # (an ``AgriManagementZone``) and is serialised via ``to_zone_ngsi_ld`` under the SEPARATE
     # ``CropHealthZoneAssessment`` type. ``None`` → parcel-level rollup (legacy).
     zone_id: str | None = None
     zone_geometry: dict | None = None
-    # Full AgriParcelZone URN of the source zone (weather-map mints it as
-    # ``urn:ngsi-ld:AgriParcelZone:{tenant}:{parcel}:{zoneId}``). When present it
-    # is used verbatim for the ``hasAgriParcelZone`` relationship so the ref
-    # matches the real entity; otherwise a best-effort URN is reconstructed.
+    # Full ``AgriManagementZone`` URN of the zone; required to serialise a zone
+    # entity (``hasAgriManagementZone``).
     zone_urn: str | None = None
     # Zone entities: where each input came from (``zone_specific`` / ``parcel_inherited``
     # / ``unavailable``), plus the zonation version and rank the assessment used.
@@ -884,13 +882,13 @@ class CropHealthAssessment(BaseModel):
             f"urn:ngsi-ld:CropHealthZoneAssessment:{self.parcel_id}-{zone}-{date_str}"
         )
         entity["type"] = "CropHealthZoneAssessment"
-        zone_urn = self.zone_urn or f"urn:ngsi-ld:AgriParcelZone:{self.parcel_id}-{zone}"
-        # A current-zoning level points at its AgriManagementZone; legacy terrain units
-        # keep the AgriParcelZone relationship.
-        relation = "hasAgriManagementZone" if ":AgriManagementZone:" in zone_urn else "hasAgriParcelZone"
-        entity[relation] = {
+        # Zones are the levels of the current zoning (resolve_zones), each with its
+        # AgriManagementZone id; a zone entity without it would point at nothing.
+        if not self.zone_urn:
+            raise ValueError(f"zone assessment {self.parcel_id}/{zone} has no AgriManagementZone URN")
+        entity["hasAgriManagementZone"] = {
             "type": "Relationship",
-            "object": zone_urn,
+            "object": self.zone_urn,
         }
         entity["zoneId"] = {"type": "Property", "value": zone}
         if self.input_fidelity:

@@ -330,3 +330,37 @@ async def test_all_zones_flags_sensor_with_one_device_listing(monkeypatch):
     assert flag[("p-1", "high")] is True
     assert flag[("p-1", "medium")] is False
     assert flag[("p-2", "high")] is False
+
+
+def _terrain_assessment(zid, parcel="p-1"):
+    """Assessment written before zones came from the current zoning: terrain relation, no run."""
+    return {
+        "id": f"urn:ngsi-ld:CropHealthZoneAssessment:{parcel}-{zid}-20261110",
+        "hasAgriParcel": f"urn:ngsi-ld:AgriParcel:{parcel}",
+        "hasAgriParcelZone": {"type": "Relationship", "object": f"urn:ngsi-ld:AgriParcelZone:t:{parcel}:{zid}"},
+        "zoneId": zid,
+        "cwsiValue": 0.9,
+        "compositeStressIndex": 95,
+        "overallSeverity": "CRITICAL",
+        "assessedAt": "2026-11-20T10:00:00Z",
+    }
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("path", ["/api/crop-health/assessments/zones", "/api/crop-health/assessments/zones/all"])
+async def test_terrain_assessments_are_ignored_by_zone_listings(path):
+    # Same zoneId as a live level and newer: still never shown, and no error.
+    with respx.mock as mock:
+        _mock_orion(
+            mock,
+            [_zone("high")],
+            [_zone_assessment("high", 0.5, 61), _terrain_assessment("high"), _terrain_assessment("zabc-e1-N")],
+            [_parcel_assessment()],
+        )
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test", headers=GATEWAY_HEADERS) as client:
+            resp = await client.get(path, params={"parcelId": "p-1"} if path.endswith("/zones") else None)
+    assert resp.status_code == 200
+    zones = resp.json()["zones"]
+    assert [z["zoneId"] for z in zones] == ["high"]
+    assert zones[0]["cwsiValue"] == 0.5

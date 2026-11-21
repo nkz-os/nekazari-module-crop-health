@@ -142,7 +142,7 @@ async def test_unresolvable_owner_skips_pipeline(monkeypatch):
 @pytest.mark.asyncio
 async def test_zonal_rollup_carries_under_panel_index(monkeypatch):
     published, _ = _setup(
-        monkeypatch, soil=SOIL, eppo="ZZZZZ", zones=[Zone("z0", _Z0), Zone("z1", _Z1)])
+        monkeypatch, soil=SOIL, eppo="ZZZZZ", zones=[Zone("z0", _Z0, urn="urn:ngsi-ld:AgriManagementZone:t:p1:z0"), Zone("z1", _Z1, urn="urn:ngsi-ld:AgriManagementZone:t:p1:z1")])
 
     async def _nocoords(*a, **k):
         return None

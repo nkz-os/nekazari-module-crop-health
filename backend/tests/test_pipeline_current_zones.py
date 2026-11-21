@@ -131,11 +131,9 @@ async def test_zone_product_query_uses_management_zone_relation():
     with patch("nkz_platform_sdk.orion.OrionClient", return_value=fo):
         await pipeline._fetch_parcel_ndvi("p1", "acme", f"{AMZ}1")
         await pipeline._fetch_ndvi_series("acme", "p1", f"{AMZ}1", date(2026, 5, 1))
-        await pipeline._fetch_parcel_ndvi("p1", "acme", "urn:ngsi-ld:AgriParcelZone:acme:p1:z1")
     assert fo.queries[0].startswith('hasAgriManagementZone=="urn:ngsi-ld:AgriManagementZone:')
     # queries[1] is the parcel fallback of the first call
     assert fo.queries[2].startswith('hasAgriManagementZone=="urn:ngsi-ld:AgriManagementZone:')
-    assert fo.queries[3].startswith('hasAgriParcelZone=="urn:ngsi-ld:AgriParcelZone:')
 
 
 def test_sensor_in_hole_belongs_to_inner_zone():

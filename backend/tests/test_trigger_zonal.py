@@ -119,8 +119,8 @@ async def test_whole_parcel_unchanged_keeps_sensor_path(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_zonal_attributes_sensor_to_device_zone(monkeypatch):
-    zones = [Zone("z0", _Z0, urn="urn:ngsi-ld:AgriParcelZone:t:p1:z0"),
-             Zone("z1", _Z1, urn="urn:ngsi-ld:AgriParcelZone:t:p1:z1")]
+    zones = [Zone("z0", _Z0, urn="urn:ngsi-ld:AgriManagementZone:t:p1:z0"),
+             Zone("z1", _Z1, urn="urn:ngsi-ld:AgriManagementZone:t:p1:z1")]
     # device sits in z0 (5,5)
     calls, published = _patch_trigger(monkeypatch, zones=zones, device_coords=(5, 5))
     out = await pipeline.trigger(
@@ -165,8 +165,8 @@ async def test_weather_comes_from_the_parcel_meteo_context(monkeypatch):
 @pytest.mark.asyncio
 async def test_zonal_trigger_labels_inherited_values_and_writes_rank_with_id(monkeypatch):
     """The upsert merges: the webhook run must not leave the daily run's zone_specific labels."""
-    zones = [Zone("z0", _Z0, urn="urn:ngsi-ld:AgriParcelZone:t:p1:z0", zone_version="v1", zone_rank=1),
-             Zone("z1", _Z1, urn="urn:ngsi-ld:AgriParcelZone:t:p1:z1", zone_version="v7", zone_rank=2)]
+    zones = [Zone("z0", _Z0, urn="urn:ngsi-ld:AgriManagementZone:t:p1:z0", zone_version="v1", zone_rank=1),
+             Zone("z1", _Z1, urn="urn:ngsi-ld:AgriManagementZone:t:p1:z1", zone_version="v7", zone_rank=2)]
     _calls, published = _patch_trigger(monkeypatch, zones=zones, device_coords=(5, 5))
 
     async def _air(*a, **k):
@@ -178,7 +178,7 @@ async def test_zonal_trigger_labels_inherited_values_and_writes_rank_with_id(mon
         metric_type=MetricType.LEAF_TEMPERATURE.value,
         redis_state=_Redis(), parcel_id="p1", tenant_id="t",
     )
-    zone_entities = {e["hasAgriParcelZone"]["object"].rsplit(":", 1)[-1]: e
+    zone_entities = {e["hasAgriManagementZone"]["object"].rsplit(":", 1)[-1]: e
                      for e in published if e["type"] == "CropHealthZoneAssessment"}
     for zid, rank, version in (("z0", 1, "v1"), ("z1", 2, "v7")):
         e = zone_entities[zid]
@@ -197,8 +197,8 @@ async def test_zonal_trigger_labels_inherited_values_and_writes_rank_with_id(mon
 @pytest.mark.asyncio
 @pytest.mark.parametrize("zones", [
     [Zone("parcel", _Z0)],
-    [Zone("z0", _Z0, urn="urn:ngsi-ld:AgriParcelZone:t:p1:z0"),
-     Zone("z1", _Z1, urn="urn:ngsi-ld:AgriParcelZone:t:p1:z1")],
+    [Zone("z0", _Z0, urn="urn:ngsi-ld:AgriManagementZone:t:p1:z0"),
+     Zone("z1", _Z1, urn="urn:ngsi-ld:AgriManagementZone:t:p1:z1")],
 ])
 async def test_every_assessment_of_a_rainfed_parcel_carries_the_regime(monkeypatch, zones):
     """The regime is on the assessment when the engines run, so severity never sees it missing."""

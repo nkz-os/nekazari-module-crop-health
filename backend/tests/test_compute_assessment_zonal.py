@@ -65,8 +65,8 @@ async def test_two_zones_emit_two_zone_assessments_plus_rollup(monkeypatch):
         return True
 
     async def _zones(pid, tid, geom):
-        return [Zone("z0", _Z0, urn="urn:ngsi-ld:AgriParcelZone:t:p1:z0"),
-                Zone("z1", _Z1, urn="urn:ngsi-ld:AgriParcelZone:t:p1:z1")]
+        return [Zone("z0", _Z0, urn="urn:ngsi-ld:AgriManagementZone:t:p1:z0"),
+                Zone("z1", _Z1, urn="urn:ngsi-ld:AgriManagementZone:t:p1:z1")]
 
     monkeypatch.setattr(pipeline, "_publish_assessment", _pub, raising=False)
     monkeypatch.setattr(pipeline, "resolve_zones", _zones, raising=False)
@@ -80,9 +80,9 @@ async def test_two_zones_emit_two_zone_assessments_plus_rollup(monkeypatch):
     assert out.zone_id is None
     # zone entities carry the real zone URN ref
     zone_entities = [e for e in published if e["type"] == "CropHealthZoneAssessment"]
-    assert {e["hasAgriParcelZone"]["object"] for e in zone_entities} == {
-        "urn:ngsi-ld:AgriParcelZone:t:p1:z0",
-        "urn:ngsi-ld:AgriParcelZone:t:p1:z1",
+    assert {e["hasAgriManagementZone"]["object"] for e in zone_entities} == {
+        "urn:ngsi-ld:AgriManagementZone:t:p1:z0",
+        "urn:ngsi-ld:AgriManagementZone:t:p1:z1",
     }
 
 
@@ -130,8 +130,8 @@ async def test_zone_sensor_ctx_wiring_and_parcel_fallback(monkeypatch):
         return True
 
     async def _zones(pid, tid, geom):
-        return [Zone("zA", _Z0, urn="urn:ngsi-ld:AgriParcelZone:t:p1:zA"),
-                Zone("zB", _Z1, urn="urn:ngsi-ld:AgriParcelZone:t:p1:zB")]
+        return [Zone("zA", _Z0, urn="urn:ngsi-ld:AgriManagementZone:t:p1:zA"),
+                Zone("zB", _Z1, urn="urn:ngsi-ld:AgriManagementZone:t:p1:zB")]
 
     async def _sensors(pid, tid):
         return [{"device_id": "d1", "lon": 0.5, "lat": 0.5, "readings": {"air_temp_c": 24.0},
@@ -203,8 +203,8 @@ async def _run_gdd(monkeypatch, zones, daily):
 
 @pytest.mark.asyncio
 async def test_zone_gdd_is_parcel_plus_delta(monkeypatch):
-    zones = [Zone("zA", _S0, urn="urn:ngsi-ld:AgriParcelZone:t:p1:zA", area_ha=1.0),
-             Zone("zB", _S1, urn="urn:ngsi-ld:AgriParcelZone:t:p1:zB", area_ha=1.0)]
+    zones = [Zone("zA", _S0, urn="urn:ngsi-ld:AgriManagementZone:t:p1:zA", area_ha=1.0),
+             Zone("zB", _S1, urn="urn:ngsi-ld:AgriManagementZone:t:p1:zB", area_ha=1.0)]
     seen = await _run_gdd(monkeypatch, zones,
                           {"zA": _day_rows(10, 8, 22), "zB": _day_rows(10, 9, 23)})
     assert seen["zA"].gdd_accumulated == pytest.approx(295.0)  # parcel 300 - 5
@@ -219,8 +219,8 @@ async def test_whole_parcel_gdd_unchanged(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_non_numeric_tmin_does_not_sink_the_assessment(monkeypatch):
-    zones = [Zone("zA", _S0, urn="urn:ngsi-ld:AgriParcelZone:t:p1:zA", area_ha=1.0),
-             Zone("zB", _S1, urn="urn:ngsi-ld:AgriParcelZone:t:p1:zB", area_ha=1.0)]
+    zones = [Zone("zA", _S0, urn="urn:ngsi-ld:AgriManagementZone:t:p1:zA", area_ha=1.0),
+             Zone("zB", _S1, urn="urn:ngsi-ld:AgriManagementZone:t:p1:zB", area_ha=1.0)]
     bad = [{"date": "2026-05-01", "tMin": "n/a", "tMax": 22}] * 10
     seen = await _run_gdd(monkeypatch, zones, {"zA": bad, "zB": _day_rows(10, 9, 23)})
     assert seen["zA"].gdd_accumulated == pytest.approx(300.0)
@@ -233,7 +233,7 @@ async def test_zone_gdd_clamped_at_zero(monkeypatch):
     from app.services import zone_gdd
 
     monkeypatch.setattr(zone_gdd, "zone_gdd_delta", lambda *a, **k: {"zA": -500.0})
-    zones = [Zone("zA", _S0, urn="urn:ngsi-ld:AgriParcelZone:t:p1:zA", area_ha=1.0),
-             Zone("zB", _S1, urn="urn:ngsi-ld:AgriParcelZone:t:p1:zB", area_ha=1.0)]
+    zones = [Zone("zA", _S0, urn="urn:ngsi-ld:AgriManagementZone:t:p1:zA", area_ha=1.0),
+             Zone("zB", _S1, urn="urn:ngsi-ld:AgriManagementZone:t:p1:zB", area_ha=1.0)]
     seen = await _run_gdd(monkeypatch, zones, {"zA": _day_rows(10, 8, 22), "zB": _day_rows(10, 9, 23)})
     assert seen["zA"].gdd_accumulated == 0.0

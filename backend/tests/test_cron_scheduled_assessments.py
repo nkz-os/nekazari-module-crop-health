@@ -79,3 +79,55 @@ async def test_exit_is_zero_when_all_pages_succeed(monkeypatch):
     monkeypatch.setenv("INTERNAL_SERVICE_SECRET", "s")
     monkeypatch.setenv("SCHEDULED_TENANTS", "a")
     assert await cron.main() is None
+
+
+@pytest.mark.anyio
+async def test_connect_error_is_retried_before_the_page_fails(monkeypatch):
+    import httpx
+
+    calls = []
+
+    async def once(tenant, cursor, base_url, secret):
+        calls.append(cursor)
+        if len(calls) < 3:
+            raise httpx.ConnectError("All connection attempts failed")
+        return {"processed": 1, "written": 1, "errors": [], "next_cursor": None}
+
+    monkeypatch.setattr(cron, "_post_once", once)
+    monkeypatch.setattr(cron, "CONNECT_RETRY_DELAYS_S", (0, 0, 0))
+    page = await cron._post_page("tenant-a", None, "http://self", "s")
+    assert page["written"] == 1 and calls == [None, None, None]
+
+
+@pytest.mark.anyio
+async def test_connect_error_gives_up_after_the_retries(monkeypatch):
+    import httpx
+
+    calls = []
+
+    async def once(tenant, cursor, base_url, secret):
+        calls.append(cursor)
+        raise httpx.ConnectError("All connection attempts failed")
+
+    monkeypatch.setattr(cron, "_post_once", once)
+    monkeypatch.setattr(cron, "CONNECT_RETRY_DELAYS_S", (0, 0))
+    with pytest.raises(httpx.ConnectError):
+        await cron._post_page("tenant-a", None, "http://self", "s")
+    assert len(calls) == 3
+
+
+@pytest.mark.anyio
+async def test_other_errors_are_not_retried(monkeypatch):
+    import httpx
+
+    calls = []
+
+    async def once(tenant, cursor, base_url, secret):
+        calls.append(cursor)
+        raise httpx.ReadTimeout("slow")
+
+    monkeypatch.setattr(cron, "_post_once", once)
+    monkeypatch.setattr(cron, "CONNECT_RETRY_DELAYS_S", (0, 0))
+    with pytest.raises(httpx.ReadTimeout):
+        await cron._post_page("tenant-a", None, "http://self", "s")
+    assert len(calls) == 1

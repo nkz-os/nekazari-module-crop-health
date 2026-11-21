@@ -23,7 +23,7 @@ from app.api.assessment_mapper import (
     prop_value,
 )
 from app.config import get_settings
-from app.services import vegetation_monitoring, worklist
+from app.services import eo_reader, vegetation_monitoring, worklist
 from app.services.parcel_link import PARCEL_PREFIX
 from app.services.zonation import is_whole_parcel, mark_sensor_nearby, resolve_zones
 from nkz_platform_sdk.orion import OrionClient
@@ -576,31 +576,21 @@ async def ndvi_cwsi_correlation(
 ):
     """Return paired NDVI/CWSI data points for correlation analysis.
 
-    Queries EOProduct (canonical NDVI) from Orion-LD and CropHealthAssessment
-    from telemetry_events, aligns by date.
+    Reads the parcel's last 30 satellite NDVI observations (both stored shapes) and the
+    CropHealthAssessment series from timeseries-reader, aligned by day.
     """
     if not parcelId:
         return {"pairs": []}
 
     pairs = []
     try:
-        # Query VegetationIndex from Orion-LD
         tenant_id = getattr(request.state, "tenant_id", "")
-        settings = get_settings()
-        client = OrionClient(tenant_id, base_url=settings.orion_ld_url, context_url=settings.orion_ld_context)
         try:
-            vi_data = await client.query_entities(
-                type="EOProduct",
-                q=f'hasAgriParcel=="urn:ngsi-ld:AgriParcel:{parcelId}"|refAgriParcel=="urn:ngsi-ld:AgriParcel:{parcelId}"',
-                limit=30,
-                options="keyValues",
-            )
+            obs = await eo_reader.observations(tenant_id, parcel_id=parcelId)
+            ndvi_obs = eo_reader.pick(obs, families=eo_reader.NDVI_FAMILIES, require={eo_reader.NDVI})[-30:]
         except Exception as e:
-            logger.warning("ndvi_cwsi_correlation Orion query failed: %s", e)
-            vi_data = []
-        finally:
-            # Ensure OrionClient is always closed
-            await client.close()
+            logger.warning("ndvi_cwsi_correlation satellite read failed tenant=%s parcel=%s: %s", tenant_id, parcelId, e)
+            ndvi_obs = []
 
         # Query CropHealthAssessment from timeseries-reader (no direct DB)
         settings = get_settings()
@@ -620,19 +610,13 @@ async def ndvi_cwsi_correlation(
                 if date_str and cwsi_val is not None:
                     cwsi_by_date[date_str] = float(cwsi_val)
 
-            # Align satellite and ground data (EOProduct: ndvi Property + sensingDate)
-            for vi in vi_data:
-                if vi.get("ndvi") is None:
-                    continue  # skip non-optical EOProducts (e.g. SAR/GRD)
-                date_str = str(vi.get("sensingDate", ""))[:10]
-                ndvi_val = vi.get("ndvi")
-                if isinstance(ndvi_val, dict):
-                    ndvi_val = ndvi_val.get("value")
-                cwsi_val = cwsi_by_date.get(date_str)
+            # Align satellite and ground data by sensing day
+            for o in ndvi_obs:
+                date_str = o.sensing_day.isoformat()
                 pairs.append({
                     "date": date_str,
-                    "ndvi": float(ndvi_val) if ndvi_val else None,
-                    "cwsi": cwsi_val,
+                    "ndvi": eo_reader.number(o, eo_reader.NDVI),
+                    "cwsi": cwsi_by_date.get(date_str),
                 })
 
     except Exception as e:

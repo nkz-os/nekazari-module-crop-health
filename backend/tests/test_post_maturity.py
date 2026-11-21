@@ -225,8 +225,10 @@ async def test_series_query_zone_and_parcel():
         parcel = await _REAL_SERIES("acme", PARCEL, None, START)
     assert zone == [(START, 0.2), (START + timedelta(days=20), 0.5)]
     assert parcel == [(START + timedelta(days=10), 0.9)]
-    assert f'sensingDate>="{START.isoformat()}"' in fo.queries[0] and "hasAgriManagementZone" in fo.queries[0]
-    assert "hasAgriManagementZone" not in fo.queries[1]
+    # The zone is asked by its own relation; the parcel without its zones.
+    assert f'hasAgriManagementZone=="{ZONE_URN}"' in fo.queries
+    assert f'hasAgriParcel=="{PARCEL_URN}"' in fo.queries
+    assert f'hasAgriParcel=="{PARCEL_URN}";!hasAgriManagementZone' in fo.queries
 
 
 @pytest.mark.asyncio

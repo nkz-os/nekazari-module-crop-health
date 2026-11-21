@@ -4,14 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from fastapi import APIRouter, Query, Request
 
 from app.api.assessments import _fetch_assessment_entities
 from app.services.observation_medium import base_attribute, effective_medium, log_ignored, reading_allowed
 from app.config import get_settings
-from app.services import vegetation_monitoring
+from app.services import eo_reader, vegetation_monitoring
 from app.services.parcel_link import PARCEL_PREFIX, parcel_link_targets
 from nkz_platform_sdk.device_measurement import read_device_measurement
 from nkz_platform_sdk.orion import OrionClient
@@ -35,11 +35,19 @@ def _dt(value):
     return value
 
 
+def _sensed_at(o) -> str:
+    """The day a satellite observation was taken (YYYY-MM-DD) in both stored shapes; no time is invented."""
+    return o.sensing_day.isoformat()
+
+
 def _freshness(iso_ts: str | None) -> str:
     iso_ts = _dt(iso_ts)
     if not iso_ts:
         return "none"
     try:
+        if len(iso_ts) == 10:  # a bare day (satellite products): counted in whole days
+            age_d = (datetime.now(timezone.utc).date() - date.fromisoformat(iso_ts)).days
+            return "fresh" if age_d <= 1 else "stale" if age_d <= 7 else "none"
         dt = datetime.fromisoformat(iso_ts.replace("Z", "+00:00"))
         age_h = (datetime.now(timezone.utc) - dt).total_seconds() / 3600
         if age_h < 24:
@@ -226,29 +234,33 @@ async def _detail_sources(request: Request, parcelId: str) -> dict:
         f'|hasAgriParcel=="{parcel_urn}"'
         f'|refAgriParcel=="{parcel_urn}")'
     )
+    async def _satellite() -> list:
+        # Both stored shapes of the parcel's satellite products (zones left out).
+        try:
+            return await eo_reader.observations(tenant_id, parcel_id=parcelId)
+        except Exception as e:  # noqa: BLE001 -- one source failing must not sink the panel
+            logger.warning("Source query failed for satellite observations tenant=%s parcel=%s: %s",
+                           tenant_id, parcelId, e)
+            return []
+
     results = await asyncio.gather(
         # Every assessment of the parcel: the broker returns them oldest first, in pages.
         _fetch_assessment_entities(tenant_id, parcelId),
         _query("Device", device_q, 20),
-        # Canonical optical vegetation: one EOProduct per acquisition (no
-        # productType discriminator). Fetch the recent set and pick the latest
-        # one that carries an `ndvi` attribute (SAR EOProducts have none).
-        _query("EOProduct", rel_q, 100),
+        _satellite(),
         _query("AgriCrop", rel_q, 10),
         _query("WeatherObserved", f'locatedAt=="{parcel_urn}"', 5),
-        _query("EOProduct", f'{rel_q};productType=="GRD"', 1),
         return_exceptions=True,
     )
 
     assessments = results[0] if not isinstance(results[0], BaseException) else []
     parcel_devices = results[1] if not isinstance(results[1], BaseException) else []
-    veg_indices = results[2] if not isinstance(results[2], BaseException) else []
+    satellite_obs = results[2] if not isinstance(results[2], BaseException) else []
     agri_crops = results[3] if not isinstance(results[3], BaseException) else []
     weather_obs = results[4] if not isinstance(results[4], BaseException) else []
     # Skip the per-parcel closed-day entity (dailySummary true): this picker
     # wants the running current-conditions station (#1043).
     weather_obs = [e for e in weather_obs if e.get("dailySummary") is not True]
-    sar_products = results[5] if not isinstance(results[5], BaseException) else []
 
     assessment = max(assessments, key=lambda e: str(e.get("assessedAt") or ""), default={})
 
@@ -388,15 +400,13 @@ async def _detail_sources(request: Request, parcelId: str) -> dict:
     # ── Satellite ──────────────────────────────────────────────────────
     ndvi_val = None
     ndvi_ts = None
-    # Latest EOProduct acquisition that carries an `ndvi` Property (value = mean).
-    with_ndvi = [e for e in veg_indices if e.get("ndvi") is not None]
-    if with_ndvi:
-        latest = max(with_ndvi, key=lambda e: str(e.get("sensingDate", "")))
-        nd = latest.get("ndvi")
-        if isinstance(nd, dict):  # non-keyValues fallback
-            nd = nd.get("value")
-        ndvi_val = nd
-        ndvi_ts = _dt(latest.get("sensingDate"))
+    # Latest single-scene optical observation that carries NDVI (value = mean).
+    latest_ndvi = eo_reader.newest(
+        satellite_obs, families=eo_reader.NDVI_FAMILIES, require={eo_reader.NDVI},
+    )
+    if latest_ndvi is not None:
+        ndvi_val = eo_reader.number(latest_ndvi, eo_reader.NDVI)
+        ndvi_ts = _sensed_at(latest_ndvi)
     ndvi = {
         "status": "ok" if ndvi_val is not None else "unavailable",
         "freshness": _freshness(ndvi_ts) if isinstance(ndvi_ts, str) else "none",
@@ -424,16 +434,22 @@ async def _detail_sources(request: Request, parcelId: str) -> dict:
     # SAR (Sentinel-1 GRD products)
     sar_val = None
     sar_ts = None
-    if sar_products:
-        sp = sar_products[0]
-        sar_val = sp.get("backscatterVH") or sp.get("backscatterVV") or sp.get("value")
-        sar_ts = _dt(sp.get("dateObserved") or sp.get("sensingDate"))
+    any_sar = eo_reader.pick(satellite_obs, families=eo_reader.SAR_FAMILIES, require=())
+    with_value = [
+        o for o in any_sar
+        if eo_reader.number(o, eo_reader.VH) is not None or eo_reader.number(o, eo_reader.VV) is not None
+    ]
+    latest_sar = with_value[-1] if with_value else None
+    if latest_sar is not None:
+        vh = eo_reader.number(latest_sar, eo_reader.VH)
+        sar_val = vh if vh is not None else eo_reader.number(latest_sar, eo_reader.VV)
+        sar_ts = _sensed_at(latest_sar)
     sar = {
         "status": "ok" if sar_val is not None else "unavailable",
         "freshness": _freshness(sar_ts) if isinstance(sar_ts, str) else "none",
         "lastDataAt": sar_ts if isinstance(sar_ts, str) else None,
         "lastValue": sar_val,
-        "reason": None if sar_val is not None else ("no_entity" if sar_products else "no_parcel_data"),
+        "reason": None if sar_val is not None else ("no_entity" if any_sar else "no_parcel_data"),
     }
 
     # ── Crop ───────────────────────────────────────────────────────────

@@ -22,6 +22,7 @@ import httpx
 from cachetools import TTLCache
 
 from app.config import get_settings
+from app.services import eo_reader
 from nkz_platform_sdk.crop_timeline import fetch_crop_timeline
 from nkz_platform_sdk.orion import OrionClient
 from app.schemas import (
@@ -1024,15 +1025,14 @@ async def get_lst_climatology(
     tenant_id: str,
     target_month: int,
 ) -> dict:
-    """Fetch LST climatology for a parcel and month from EOProduct.lst history.
+    """LST climatology of a parcel for a month, from its satellite LST history.
 
     Returns percentiles (p05 = typical min, p95 = typical max) for TCI
-    computation. Uses all EOProduct records carrying an ``lst`` attribute.
+    computation. Uses every Landsat or CLMS observation of the parcel with an ``lst``.
 
     Returns:
         dict with keys: lst_p05, lst_p95, sample_count, is_reliable, reason
     """
-    from datetime import datetime as dt
 
     cache_key = f"{tenant_id}:{parcel_id}:{target_month}"
     cached = _lst_climatology_cache.get(cache_key)
@@ -1042,79 +1042,44 @@ async def get_lst_climatology(
     settings = get_settings()
     orion_url = settings.orion_ld_url
     if not orion_url:
-        return _climatology_unavailable_lst("ORION_LD_URL not configured")
+        return _climatology_unavailable_lst("ORION_LD_URL not configured", tenant_id=tenant_id, parcel_id=parcel_id)
 
-    client = OrionClient(tenant_id, base_url=orion_url, context_url=settings.orion_ld_context)
     try:
-        entities = await client.query_entities(
-            type="EOProduct",
-            q=f'hasAgriParcel=="urn:ngsi-ld:AgriParcel:{parcel_id}"|refAgriParcel=="urn:ngsi-ld:AgriParcel:{parcel_id}"',
-            limit=500,
-            options="keyValues",
-        )
-        if isinstance(entities, list):
-            entities = [e for e in entities if e.get("lst") is not None]
-        if not isinstance(entities, list) or len(entities) < 3:
+        obs = await eo_reader.observations(tenant_id, parcel_id=parcel_id)
+        with_lst = eo_reader.pick(obs, families=eo_reader.LST_FAMILIES, require={eo_reader.LST})
+        if len(with_lst) < 3:
+            return _climatology_unavailable_lst(f"Only {len(with_lst)} LST records", tenant_id=tenant_id, parcel_id=parcel_id)
+
+        month_obs = [o for o in with_lst if _in_month_window(o.sensing_day.month, target_month)]
+        if len(month_obs) < 2:
             return _climatology_unavailable_lst(
-                f"Only {len(entities) if isinstance(entities, list) else 0} LST records"
-            )
+                f"Only {len(month_obs)} LST records in month {target_month}+-1", tenant_id=tenant_id, parcel_id=parcel_id)
 
-        # Filter by month +-1
-        month_entities = []
-        for e in entities:
-            sensed = e.get("sensingDate") or e.get("observedAt")
-            if isinstance(sensed, dict):
-                sensed = sensed.get("value")
-            if not sensed:
-                continue
-            try:
-                d = dt.fromisoformat(str(sensed).replace("Z", "+00:00"))
-            except (ValueError, TypeError):
-                continue
-            if abs(d.month - target_month) <= 1 or (
-                target_month == 1 and d.month == 12
-            ) or (target_month == 12 and d.month == 1):
-                month_entities.append((d, e))
-
-        if len(month_entities) < 2:
-            return _climatology_unavailable_lst(
-                f"Only {len(month_entities)} LST records in month {target_month}+-1"
-            )
-
-        lst_vals = _extract_lst_values(month_entities)
+        lst_vals = _in_range([eo_reader.number(o, eo_reader.LST) for o in month_obs], -20.0, 70.0)
         if not lst_vals or len(lst_vals) < 2:
-            return _climatology_unavailable_lst("No valid LST values in window")
+            return _climatology_unavailable_lst("No valid LST values in window", tenant_id=tenant_id, parcel_id=parcel_id)
 
-        dates = [d for d, _ in month_entities]
-        result = _build_lst_climatology_result(lst_vals, dates)
+        result = _build_lst_climatology_result(lst_vals, [o.sensing_day for o in month_obs])
         _lst_climatology_cache[cache_key] = result
         logger.info(
             "LST climatology for %s: %d records (month %d)",
-            parcel_id, len(month_entities), target_month,
+            parcel_id, len(month_obs), target_month,
         )
         return result
 
     except Exception as exc:
-        return _climatology_unavailable_lst(f"Error: {exc}")
-    finally:
-        await client.close()
+        return _climatology_unavailable_lst(f"Error: {exc}", tenant_id=tenant_id, parcel_id=parcel_id)
 
 
-def _extract_lst_values(entities: list) -> list[float]:
-    """Extract LST (°C) values from EOProduct entities."""
-    values = []
-    for _, e in entities:
-        lst = e.get("LST") or e.get("lst")
-        if isinstance(lst, dict):
-            lst = lst.get("value")
-        if lst is not None:
-            try:
-                val = float(lst)
-                if -20.0 <= val <= 70.0:
-                    values.append(val)
-            except (ValueError, TypeError):
-                pass
-    return values
+def _in_month_window(month: int, target_month: int) -> bool:
+    """``month`` is the target month or a neighbour (December and January are neighbours)."""
+    return abs(month - target_month) <= 1 or (target_month == 1 and month == 12) or (
+        target_month == 12 and month == 1
+    )
+
+
+def _in_range(values: list, low: float, high: float) -> list[float]:
+    return [v for v in values if v is not None and low <= v <= high]
 
 
 def _build_lst_climatology_result(values: list[float], dates: list) -> dict:
@@ -1135,8 +1100,8 @@ def _build_lst_climatology_result(values: list[float], dates: list) -> dict:
     }
 
 
-def _climatology_unavailable_lst(reason: str) -> dict:
-    logger.warning("LST climatology unavailable: %s", reason)
+def _climatology_unavailable_lst(reason: str, *, tenant_id: str = "", parcel_id: str = "") -> dict:
+    logger.warning("LST climatology unavailable tenant=%s parcel=%s: %s", tenant_id, parcel_id, reason)
     return {
         "lst_p05": None,
         "lst_p95": None,
@@ -1161,16 +1126,13 @@ async def get_ndvi_climatology(
 ) -> dict:
     """Fetch NDVI climatology for a parcel and month.
 
-    Priority cascade:
-    1. Same parcel + same crop EPPO -> best
-    2. Same parcel, same month (any crop) -> acceptable
-    3. Not enough data -> unreliable
+    Same parcel, target month +-1, any crop (a satellite observation carries no
+    crop; ``eppo_code`` only keys the cache). Not enough data -> unreliable.
 
     Returns:
         dict with keys: ndvi_p05, ndvi_p95, sample_count, filter_criteria,
         period_start, period_end, is_reliable, reason
     """
-    from datetime import datetime as dt, timedelta
 
     cache_key = f"{tenant_id}:{parcel_id}:{target_month}:{eppo_code or ''}"
     cached = _ndvi_climatology_cache.get(cache_key)
@@ -1180,112 +1142,42 @@ async def get_ndvi_climatology(
     settings = get_settings()
     orion_url = settings.orion_ld_url
     if not orion_url:
-        return _climatology_unavailable("ORION_LD_URL not configured")
+        return _climatology_unavailable("ORION_LD_URL not configured", tenant_id=tenant_id, parcel_id=parcel_id)
 
-    client = OrionClient(tenant_id, base_url=orion_url, context_url=settings.orion_ld_context)
     try:
-        entities = await client.query_entities(
-            type="EOProduct",
-            q=f'hasAgriParcel=="urn:ngsi-ld:AgriParcel:{parcel_id}"|refAgriParcel=="urn:ngsi-ld:AgriParcel:{parcel_id}"',
-            limit=500,
-            options="keyValues",
-        )
-        # Keep only optical acquisitions that actually carry an ndvi value
-        # (SAR EOProducts share the type but have no `ndvi` attribute).
-        if isinstance(entities, list):
-            entities = [e for e in entities if e.get("ndvi") is not None]
-        if not isinstance(entities, list) or len(entities) < 3:
+        obs = await eo_reader.observations(tenant_id, parcel_id=parcel_id)
+        with_ndvi = eo_reader.pick(obs, families=eo_reader.NDVI_FAMILIES, require={eo_reader.NDVI})
+        if len(with_ndvi) < 3:
+            return _climatology_unavailable(f"Only {len(with_ndvi)} satellite NDVI records", tenant_id=tenant_id, parcel_id=parcel_id)
+
+        month_obs = [o for o in with_ndvi if _in_month_window(o.sensing_day.month, target_month)]
+        if len(month_obs) < 2:
             return _climatology_unavailable(
-                f"Only {len(entities) if isinstance(entities, list) else 0} EOProduct NDVI records"
-            )
+                f"Only {len(month_obs)} records in month {target_month}+-1", tenant_id=tenant_id, parcel_id=parcel_id)
 
-        # Filter by month +-1 (EOProduct carries the acquisition as sensingDate)
-        month_entities = []
-        for e in entities:
-            assessed = e.get("sensingDate") or e.get("dateObserved") or e.get("observedAt")
-            if isinstance(assessed, dict):
-                assessed = assessed.get("value")
-            if not assessed:
-                continue
-            try:
-                d = dt.fromisoformat(str(assessed).replace("Z", "+00:00"))
-            except (ValueError, TypeError):
-                continue
-            if abs(d.month - target_month) <= 1 or (
-                target_month == 1 and d.month == 12
-            ) or (target_month == 12 and d.month == 1):
-                month_entities.append((d, e))
-
-        if len(month_entities) < 2:
-            return _climatology_unavailable(
-                f"Only {len(month_entities)} records in month {target_month}+-1"
-            )
-
-        # Priority 1: filter by crop EPPO
-        if eppo_code:
-            crop_filtered = [
-                (d, e) for d, e in month_entities
-                if e.get("cropEPPO", "") == eppo_code
-            ]
-            if len(crop_filtered) >= 2:
-                ndvi_vals = _extract_ndvi_values(crop_filtered)
-                if ndvi_vals:
-                    dates = [d for d, _ in crop_filtered]
-                    result = _build_climatology_result(
-                        ndvi_vals, dates,
-                        f"parcel_specific:same_crop_{eppo_code}",
-                    )
-                    _ndvi_climatology_cache[cache_key] = result
-                    logger.info(
-                        "NDVI climatology for %s: %d same-crop records (month %d)",
-                        parcel_id, len(crop_filtered), target_month,
-                    )
-                    return result
-
-        # Priority 2: all records in month range (any crop)
-        ndvi_vals = _extract_ndvi_values(month_entities)
+        # Same parcel, same months, any crop: a satellite observation carries no crop.
+        ndvi_vals = _in_range([eo_reader.number(o, eo_reader.NDVI) for o in month_obs], 0.0, 1.0)
         if ndvi_vals and len(ndvi_vals) >= 2:
-            dates = [d for d, _ in month_entities]
             result = _build_climatology_result(
-                ndvi_vals, dates,
+                ndvi_vals, [o.sensing_day for o in month_obs],
                 "parcel_specific:same_month",
             )
             _ndvi_climatology_cache[cache_key] = result
             logger.info(
                 "NDVI climatology for %s: %d same-month records (month %d)",
-                parcel_id, len(month_entities), target_month,
+                parcel_id, len(month_obs), target_month,
             )
             return result
 
         return _climatology_unavailable(
-            f"No valid NDVI values in {len(month_entities)} records"
-        )
+            f"No valid NDVI values in {len(month_obs)} records", tenant_id=tenant_id, parcel_id=parcel_id)
 
     except httpx.TimeoutException:
-        return _climatology_unavailable("Orion-LD timeout")
+        return _climatology_unavailable("Orion-LD timeout", tenant_id=tenant_id, parcel_id=parcel_id)
     except httpx.ConnectError:
-        return _climatology_unavailable("Orion-LD unreachable")
+        return _climatology_unavailable("Orion-LD unreachable", tenant_id=tenant_id, parcel_id=parcel_id)
     except Exception as exc:
-        return _climatology_unavailable(f"Unexpected error: {exc}")
-    finally:
-        await client.close()
-
-
-def _extract_ndvi_values(entities: list) -> list[float]:
-    """Extract NDVI values from EOProduct entities (keyValues `ndvi` scalar)."""
-    values = []
-    for _, e in entities:
-        ndvi = e.get("NDVI") or e.get("ndvi")
-        if isinstance(ndvi, dict):
-            ndvi = ndvi.get("value")
-        if ndvi is not None:
-            try:
-                val = float(ndvi)
-                if 0.0 <= val <= 1.0:
-                    values.append(val)
-            except (ValueError, TypeError):
-                pass
-    return values
+        return _climatology_unavailable(f"Unexpected error: {exc}", tenant_id=tenant_id, parcel_id=parcel_id)
 
 
 def _build_climatology_result(
@@ -1309,8 +1201,8 @@ def _build_climatology_result(
     }
 
 
-def _climatology_unavailable(reason: str) -> dict:
-    logger.warning("NDVI climatology unavailable: %s", reason)
+def _climatology_unavailable(reason: str, *, tenant_id: str = "", parcel_id: str = "") -> dict:
+    logger.warning("NDVI climatology unavailable tenant=%s parcel=%s: %s", tenant_id, parcel_id, reason)
     return {
         "ndvi_p05": None,
         "ndvi_p95": None,

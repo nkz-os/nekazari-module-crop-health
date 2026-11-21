@@ -15,6 +15,9 @@ def _day(days_ago: int) -> str:
     return (datetime.now(timezone.utc) - timedelta(days=days_ago)).strftime("%Y-%m-%d")
 
 
+_SAME_IRI = {"hasAgriParcel": "refAgriParcel", "refAgriParcel": "hasAgriParcel"}
+
+
 def _match(entity: dict, q: str) -> bool:
     """Tiny NGSI-LD q evaluator: ``a=="v"``, ``a>="v"``, ``a<"v"``, ``!a``; ``|`` (or), ``;`` (and)."""
     def term(t: str) -> bool:
@@ -30,6 +33,8 @@ def _match(entity: dict, q: str) -> bool:
         attr, _, val = t.partition("==")
         val = val.strip('"')
         got = entity.get(attr)
+        if got is None and attr in _SAME_IRI:  # both names expand to one IRI in the platform context
+            got = entity.get(_SAME_IRI[attr])
         if isinstance(got, dict):
             got = got.get("object", got.get("value"))
         return got == val

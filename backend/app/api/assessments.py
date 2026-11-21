@@ -589,7 +589,7 @@ async def ndvi_cwsi_correlation(
             obs = await eo_reader.observations(tenant_id, parcel_id=parcelId)
             ndvi_obs = eo_reader.pick(obs, families=eo_reader.NDVI_FAMILIES, require={eo_reader.NDVI})[-30:]
         except Exception as e:
-            logger.warning("ndvi_cwsi_correlation satellite read failed: %s", e)
+            logger.warning("ndvi_cwsi_correlation satellite read failed tenant=%s parcel=%s: %s", tenant_id, parcelId, e)
             ndvi_obs = []
 
         # Query CropHealthAssessment from timeseries-reader (no direct DB)

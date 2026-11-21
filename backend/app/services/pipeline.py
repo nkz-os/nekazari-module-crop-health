@@ -3520,7 +3520,7 @@ async def _fetch_parcel_lst_with_date(
             if lst is not None:
                 return lst, o.sensing_day.isoformat()
     except Exception as exc:
-        logger.warning("_fetch_parcel_lst_with_date: failed for parcel %s: %s", parcel_id, exc)
+        logger.warning("_fetch_parcel_lst_with_date: failed tenant=%s parcel=%s: %s", tenant_id, parcel_id, exc)
     return None
 
 
@@ -3552,7 +3552,7 @@ async def _fetch_parcel_ndvi(
             if v is not None:
                 return v, "zone_specific"
         except Exception as exc:
-            logger.warning("_fetch_parcel_ndvi: zone %s failed, using parcel: %s", zone_urn, exc)
+            logger.warning("_fetch_parcel_ndvi: tenant=%s zone %s failed, using parcel: %s", tenant_id, zone_urn, exc)
     try:
         obs = await eo_reader.observations(tenant_id, parcel_id=parcel_id)
         o = eo_reader.newest(obs, families=eo_reader.NDVI_FAMILIES, require={eo_reader.NDVI})
@@ -3560,7 +3560,7 @@ async def _fetch_parcel_ndvi(
         if v is not None:
             return v, "parcel_inherited"
     except Exception as exc:
-        logger.warning("_fetch_parcel_ndvi: failed for parcel %s — returning None: %s", parcel_id, exc)
+        logger.warning("_fetch_parcel_ndvi: failed tenant=%s parcel=%s — returning None: %s", tenant_id, parcel_id, exc)
     return None, "unavailable"
 
 
@@ -3578,7 +3578,7 @@ async def _fetch_ndvi_series(
         else:
             obs = await eo_reader.observations(tenant_id, parcel_id=parcel_id)
     except Exception as exc:
-        logger.warning("_fetch_ndvi_series: failed for parcel %s zone %s: %s", parcel_id, zone_urn, exc)
+        logger.warning("_fetch_ndvi_series: failed tenant=%s parcel=%s zone=%s: %s", tenant_id, parcel_id, zone_urn, exc)
         return []
     out: list[tuple[date, float]] = []  # duplicates per date are resolved by the engine (max NDVI)
     for o in eo_reader.pick(obs, families=eo_reader.NDVI_FAMILIES, require={eo_reader.NDVI}, since=since):
@@ -3599,7 +3599,7 @@ async def _fetch_parcel_smi(
             if v is not None:
                 return v, "zone_specific"
         except Exception as exc:
-            logger.warning("_fetch_parcel_smi: zone %s failed, using parcel: %s", zone_urn, exc)
+            logger.warning("_fetch_parcel_smi: tenant=%s zone %s failed, using parcel: %s", tenant_id, zone_urn, exc)
     try:
         obs = await eo_reader.observations(tenant_id, parcel_id=parcel_id)
         o = eo_reader.newest(obs, families=eo_reader.SMI_FAMILIES, require={eo_reader.SMI})
@@ -3607,7 +3607,7 @@ async def _fetch_parcel_smi(
         if v is not None:
             return v, "parcel_inherited"
     except Exception as exc:
-        logger.warning("_fetch_parcel_smi: failed for %s: %s", parcel_id, exc)
+        logger.warning("_fetch_parcel_smi: failed tenant=%s parcel=%s: %s", tenant_id, parcel_id, exc)
     return None, "unavailable"
 
 
@@ -3632,14 +3632,14 @@ async def _fetch_parcel_sar(
             if pair is not None:
                 return pair, "zone_specific"
         except Exception as exc:
-            logger.warning("_fetch_parcel_sar: zone %s failed, using parcel: %s", zone_urn, exc)
+            logger.warning("_fetch_parcel_sar: tenant=%s zone %s failed, using parcel: %s", tenant_id, zone_urn, exc)
     try:
         obs = await eo_reader.observations(tenant_id, parcel_id=parcel_id)
         pair = _backscatter(eo_reader.newest(obs, families=eo_reader.SAR_FAMILIES, require=both))
         if pair is not None:
             return pair, "parcel_inherited"
     except Exception as exc:
-        logger.warning("_fetch_parcel_sar: failed for parcel %s — returning None: %s", parcel_id, exc)
+        logger.warning("_fetch_parcel_sar: failed tenant=%s parcel=%s — returning None: %s", tenant_id, parcel_id, exc)
     return None, "unavailable"
 
 

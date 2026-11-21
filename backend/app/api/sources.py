@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from fastapi import APIRouter, Query, Request
 
@@ -36,8 +36,8 @@ def _dt(value):
 
 
 def _sensed_at(o) -> str:
-    """When a satellite observation was taken: its time if stored, else its day (no time is invented)."""
-    return o.sensing_time.isoformat() if o.sensing_time is not None else o.sensing_day.isoformat()
+    """The day a satellite observation was taken (YYYY-MM-DD) in both stored shapes; no time is invented."""
+    return o.sensing_day.isoformat()
 
 
 def _freshness(iso_ts: str | None) -> str:
@@ -45,9 +45,10 @@ def _freshness(iso_ts: str | None) -> str:
     if not iso_ts:
         return "none"
     try:
+        if len(iso_ts) == 10:  # a bare day (satellite products): counted in whole days
+            age_d = (datetime.now(timezone.utc).date() - date.fromisoformat(iso_ts)).days
+            return "fresh" if age_d <= 1 else "stale" if age_d <= 7 else "none"
         dt = datetime.fromisoformat(iso_ts.replace("Z", "+00:00"))
-        if dt.tzinfo is None:  # a bare day (satellite products have no time): its start, UTC
-            dt = dt.replace(tzinfo=timezone.utc)
         age_h = (datetime.now(timezone.utc) - dt).total_seconds() / 3600
         if age_h < 24:
             return "fresh"
@@ -238,7 +239,8 @@ async def _detail_sources(request: Request, parcelId: str) -> dict:
         try:
             return await eo_reader.observations(tenant_id, parcel_id=parcelId)
         except Exception as e:  # noqa: BLE001 -- one source failing must not sink the panel
-            logger.warning("Source query failed for satellite observations: %s", e)
+            logger.warning("Source query failed for satellite observations tenant=%s parcel=%s: %s",
+                           tenant_id, parcelId, e)
             return []
 
     results = await asyncio.gather(
@@ -432,7 +434,12 @@ async def _detail_sources(request: Request, parcelId: str) -> dict:
     # SAR (Sentinel-1 GRD products)
     sar_val = None
     sar_ts = None
-    latest_sar = eo_reader.newest(satellite_obs, families=eo_reader.SAR_FAMILIES, require=())
+    any_sar = eo_reader.pick(satellite_obs, families=eo_reader.SAR_FAMILIES, require=())
+    with_value = [
+        o for o in any_sar
+        if eo_reader.number(o, eo_reader.VH) is not None or eo_reader.number(o, eo_reader.VV) is not None
+    ]
+    latest_sar = with_value[-1] if with_value else None
     if latest_sar is not None:
         vh = eo_reader.number(latest_sar, eo_reader.VH)
         sar_val = vh if vh is not None else eo_reader.number(latest_sar, eo_reader.VV)
@@ -442,7 +449,7 @@ async def _detail_sources(request: Request, parcelId: str) -> dict:
         "freshness": _freshness(sar_ts) if isinstance(sar_ts, str) else "none",
         "lastDataAt": sar_ts if isinstance(sar_ts, str) else None,
         "lastValue": sar_val,
-        "reason": None if sar_val is not None else ("no_entity" if latest_sar is not None else "no_parcel_data"),
+        "reason": None if sar_val is not None else ("no_entity" if any_sar else "no_parcel_data"),
     }
 
     # ── Crop ───────────────────────────────────────────────────────────

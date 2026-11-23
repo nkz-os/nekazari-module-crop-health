@@ -135,3 +135,42 @@ def test_emitted_water_deficit_is_weighted():
     b.crop_requirements = CropRequirements(water_deficit_mm=50.0)
     r = pipeline._aggregate_rollup("p1", [a, b], {"z0": 0.75, "z1": 0.25})
     assert r.to_ngsi_ld()["waterDeficitMm"]["value"] == pytest.approx(20.0)
+
+
+# ── zone attributes of the day's parcel entity ───────────────────────────────
+
+_ZONE_ROLLUP = ("nkz:worstZoneId", "nkz:worstZoneRank", "nkz:zoneSpread")
+
+
+async def _cleared(monkeypatch, entity):
+    deletes = []
+
+    class FakeOrion:
+        def __init__(self, *a, **k):
+            pass
+
+        async def delete_entity_attr(self, entity_id, attr):
+            deletes.append((entity_id, attr))
+
+        async def close(self):
+            pass
+
+    monkeypatch.setattr("nkz_platform_sdk.orion.OrionClient", FakeOrion)
+    await pipeline._clear_stale_water_stress(entity, "tenant-a")
+    return {attr for eid, attr in deletes if eid == entity["id"]}
+
+
+@pytest.mark.asyncio
+async def test_whole_parcel_write_clears_the_days_earlier_worst_zone(monkeypatch):
+    """The upsert merges: a parcel that lost its zoning today must not keep naming a zone."""
+    whole = CropHealthAssessment(parcel_id="p1", assessed_at=NOW).to_ngsi_ld()
+    assert not set(_ZONE_ROLLUP) & set(whole)
+    assert set(_ZONE_ROLLUP) <= await _cleared(monkeypatch, whole)
+
+
+@pytest.mark.asyncio
+async def test_zonal_rollup_keeps_its_worst_zone(monkeypatch):
+    zones = [_za("z0", 20.0, Severity.LOW, rank=1), _za("z1", 60.0, Severity.HIGH, rank=2)]
+    rollup = pipeline._aggregate_rollup("p1", zones).to_ngsi_ld()
+    assert set(_ZONE_ROLLUP) <= set(rollup)
+    assert not set(_ZONE_ROLLUP) & await _cleared(monkeypatch, rollup)

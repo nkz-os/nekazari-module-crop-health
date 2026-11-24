@@ -101,7 +101,9 @@ async def test_ndvi_cwsi_correlation_reads_eoproduct():
     from app.api import assessments
 
     stored = [{"id": "urn:ngsi-ld:EOProduct:test-tenant:p:2026-06-05", "type": "EOProduct",
-               "hasAgriParcel": "urn:ngsi-ld:AgriParcel:p", "sensingDate": "2026-06-05", "ndvi": 0.72}]
+               "refAgriParcel": {"type": "Relationship", "object": "urn:ngsi-ld:AgriParcel:p"},
+               "sensingDate": {"type": "Property", "value": "2026-06-05"},
+               "ndvi": {"type": "Property", "value": 0.72}}]
     orion = AsyncMock()
     orion.query_entities = AsyncMock(side_effect=lambda **kw: stored if kw["type"] == "EOProduct" else [])
     orion.close = AsyncMock()

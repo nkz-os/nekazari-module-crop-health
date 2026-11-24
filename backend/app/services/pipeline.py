@@ -604,8 +604,8 @@ def _resolve_root_depth(species: str, gdd: float | None, crop_context: any) -> f
 
 
 _PARCEL_READING_MAX_AGE_S = 3600.0
-# Optional water stress attributes: omitted from the payload when unknown, and the
-# upsert is a merge, so a stale value from an earlier write must be deleted.
+# Optional water stress and zone rollup attributes: omitted from the payload when unknown,
+# and the upsert is a merge, so a stale value from an earlier write must be deleted.
 _WATER_STRESS_OPTIONAL_ATTRS = (
     "waterStressIndex", "waterStressObservedAt", "shadeFraction", "shadeObservedAt",
     "underPanelWaterStressIndex", "underPanelWaterStressFidelity",
@@ -615,13 +615,15 @@ _WATER_STRESS_OPTIONAL_ATTRS = (
     "cwsiValue", "vpdKpa", "cwsiDataFidelity", "cwsiTempSource",
     # A parcel re-assessed as rainfed (or with no known regime) must not keep an earlier need or regime.
     "irrigationMm", "irrigationRegime",
+    # A parcel assessed whole after a zonal run of the same day must not keep naming a zone.
+    "nkz:worstZoneId", "nkz:worstZoneRank", "nkz:zoneSpread",
 )
 _AIR_TEMP_RANGE_C = (-50.0, 60.0)
 _RH_RANGE_PCT = (0.0, 100.0)
 
 
 async def _clear_stale_water_stress(entity: dict, tenant_id: str) -> None:
-    """Delete the optional water stress attributes the payload omitted (best-effort).
+    """Delete the optional attributes the payload omitted (best-effort).
 
     Orion merges on upsert, so an omitted attribute would keep its earlier value
     next to a newer fidelity. 404 (already absent) is success; any other failure

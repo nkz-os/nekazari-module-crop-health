@@ -225,10 +225,14 @@ async def phenology_status_sync(parcel_id: str, request: Request):
 
     This is the ONLY write path for phenology status — the GET handler above
     never calls this. Fail-safe: returns ``{"status": "no_crop"}`` when the
-    parcel has no assigned crop (never 500s).
+    parcel has no assigned crop, ``{"status": "unavailable"}`` when its crop
+    cannot be read (never 500s).
     """
     tenant_id = request.state.tenant_id
-    assessment = await compute_assessment(parcel_id, tenant_id)
+    try:
+        assessment = await compute_assessment(parcel_id, tenant_id)
+    except context_client.CropUnavailable:
+        return {"status": "unavailable", "parcelId": parcel_id}
     if assessment is None:
         return {"status": "no_crop", "parcelId": parcel_id}
 

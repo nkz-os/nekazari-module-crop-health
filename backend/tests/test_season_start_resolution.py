@@ -34,12 +34,13 @@ async def test_not_sown_yet_has_no_season_start(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_broker_unavailable_has_no_season_start(monkeypatch):
+async def test_an_unreadable_crop_cycle_is_not_a_crop_that_was_not_sown(monkeypatch):
     async def fake(*a, **k):
         return None
 
     monkeypatch.setattr(cc, "fetch_crop_timeline", fake)
-    assert await cc.resolve_season_start("urn:ngsi-ld:AgriParcel:p1", "t") is None
+    with pytest.raises(cc.CropUnavailable):
+        await cc.resolve_season_start("urn:ngsi-ld:AgriParcel:p1", "t")
 
 
 def test_no_core_endpoint_left():
@@ -50,10 +51,10 @@ def test_no_core_endpoint_left():
 
 
 @pytest.mark.asyncio
-async def test_unexpected_error_is_no_season_start(monkeypatch):
-    """The assessment must not fail because the season start could not be resolved."""
+async def test_an_unexpected_error_is_an_unreadable_crop_cycle(monkeypatch):
     async def boom(*a, **k):
         raise RuntimeError("unexpected")
 
     monkeypatch.setattr(cc, "fetch_crop_timeline", boom)
-    assert await cc.resolve_season_start("p1", "t") is None
+    with pytest.raises(cc.CropUnavailable):
+        await cc.resolve_season_start("p1", "t")

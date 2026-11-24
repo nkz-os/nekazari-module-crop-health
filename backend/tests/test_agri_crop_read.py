@@ -102,3 +102,24 @@ def test_the_nightly_run_reports_an_unreadable_crop_as_an_error(monkeypatch):
 
     assert body["written"] == 0
     assert [e["parcel"] for e in body["errors"]] == [urn]
+
+
+@pytest.mark.asyncio
+async def test_compute_assessment_publishes_nothing_when_the_crop_cycle_cannot_be_read(monkeypatch):
+    FakeOrion.answers = {"tenant-a": [{"id": "urn:a", "species": "TRZAX"}]}
+    published = []
+
+    async def _no_timeline(*_a, **_k):
+        return None
+
+    async def _publish(entity, tenant_id):
+        published.append(entity)
+        return True
+
+    monkeypatch.setattr(context_client, "fetch_crop_timeline", _no_timeline)
+    monkeypatch.setattr(pipeline, "_publish_assessment", _publish)
+
+    with pytest.raises(context_client.CropUnavailable):
+        await pipeline.compute_assessment(f"urn:ngsi-ld:AgriParcel:{PARCEL}", "tenant-a")
+
+    assert published == []

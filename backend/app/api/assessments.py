@@ -855,7 +855,7 @@ async def build_parcel_rows(request: Request | None, tenant_id: str, *,
         except Exception as exc:  # noqa: BLE001 — one malformed parcel degrades to defaults
             logger.warning("worklist: row degraded tenant=%s parcel=%s: %s", tenant_id, p["parcelId"], exc)
             fresh = worklist.freshness(p.get("assessedAt"), now)
-            p.update({"cropStatus": "none", "freshness": fresh, "stale": fresh == "stale",
+            p.update({"cropStatus": "unknown", "freshness": fresh, "stale": fresh == "stale",
                       "nextJob": None, "jobs": [], "surprise": None, "plannedCrop": None,
                       "lastAssessment": None})
             if strict:

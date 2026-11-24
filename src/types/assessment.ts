@@ -245,7 +245,7 @@ export interface ZonesResponse {
   >;
 }
 
-export type CropStatus = 'active' | 'none';
+export type CropStatus = 'active' | 'none' | 'unknown';
 export type Freshness = 'none' | 'fresh' | 'aging' | 'stale';
 
 export interface NextJob {

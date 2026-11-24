@@ -127,7 +127,8 @@ def test_none_until_with_and_without_date():
 def test_planned_current_cycle_is_not_active():
     assert crop_status({"current": {"start": {"date": "2026-11-01", "provenance": "planned"}}}) == "none"
     assert crop_status({"current": {"start": {"provenance": "actual"}}}) == "none"
-    assert crop_status(None) == "none"
+    assert crop_status(None) == "unknown"
+    assert crop_status({"current": None}) == "none"
     assert crop_status({"current": {"start": {"date": "2026-03-01", "provenance": "declared"}}}) == "active"
     assert crop_status(_active()) == "active"
 

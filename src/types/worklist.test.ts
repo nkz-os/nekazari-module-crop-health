@@ -18,6 +18,7 @@ const job = (kind: NextJob['kind'], when: NextJob['when']): NextJob => ({ kind, 
 
 describe('semaphore', () => {
   it('grey when no crop', () => expect(semaphore(row({ cropStatus: 'none' }))).toBe('grey'));
+  it('grey when the crop could not be read', () => expect(semaphore(row({ cropStatus: 'unknown' }))).toBe('grey'));
   it('grey when no data', () => expect(semaphore(row({ hasData: false }))).toBe('grey'));
   it('red on surprise', () =>
     expect(semaphore(row({ surprise: { code: 'x', detail: {} } }))).toBe('red'));

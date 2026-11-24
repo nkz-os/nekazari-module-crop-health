@@ -118,3 +118,19 @@ def test_sync_returns_no_crop_when_assessment_is_none(client, monkeypatch):
     )
     assert r.status_code == 200
     assert r.json()["status"] == "no_crop"
+
+
+def test_sync_says_unavailable_when_the_crop_cannot_be_read(client, monkeypatch):
+    from app.api import phenology
+
+    async def _compute(parcel_id, tenant_id, **kwargs):
+        raise phenology.context_client.CropUnavailable("broker")
+
+    monkeypatch.setattr(phenology, "compute_assessment", _compute)
+
+    r = client.post(
+        "/api/crop-health/parcels/urn:ngsi-ld:AgriParcel:t:p1/phenology-status/sync",
+        headers={"X-Tenant-ID": "tenant-t", "X-User-ID": "test-user"},
+    )
+    assert r.status_code == 200
+    assert r.json()["status"] == "unavailable"

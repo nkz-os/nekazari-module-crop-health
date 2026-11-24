@@ -1920,14 +1920,11 @@ async def _read_assigned_crop(parcel_id: str, tenant_id: str) -> dict | None:
     Returns ``{"species", "plantingDate", "variety"}`` or ``None`` when the
     parcel has no assigned AgriCrop. Reuses ``context_client.get_agri_crop``
     (which resolves ``hasAgriParcel``/``refAgriParcel`` and keyValues), then
-    extracts the species from the AgriCrop. Never raises.
+    extracts the species from the AgriCrop. Raises ``CropUnavailable`` when the
+    crop cannot be read: an unreadable crop is not a parcel without crop.
     """
     parcel_short = parcel_id.split(":")[-1] if parcel_id.startswith("urn:") else parcel_id
-    try:
-        agri_crop = await context_client.get_agri_crop(parcel_short, tenant_id)
-    except Exception as exc:  # noqa: BLE001 — fail-safe
-        logger.warning("_read_assigned_crop: get_agri_crop failed for %s: %s", parcel_id, exc)
-        return None
+    agri_crop = await context_client.get_agri_crop(parcel_short, tenant_id)
     if not agri_crop:
         return None
 
@@ -2648,6 +2645,7 @@ async def compute_assessment(
     zone publishes a ``CropHealthZoneAssessment``; the parcel rollup
     (worst zone) publishes the legacy ``CropHealthAssessment`` so existing
     consumers are untouched. Returns the rollup, or ``None`` when no crop.
+    Raises ``CropUnavailable`` when the crop cannot be read.
 
     In whole-parcel mode (no zones) behaviour is identical to the legacy
     parcel-level path: exactly one ``CropHealthAssessment`` write, no zone

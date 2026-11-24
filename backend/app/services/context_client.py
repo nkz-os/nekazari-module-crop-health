@@ -304,7 +304,11 @@ async def get_phenology_params(
     return _DEFAULT_PARAMS
 
 
-# Key: parcel_id, Value: AgriCrop dict
+class CropUnavailable(Exception):
+    """The broker could not say which crop the parcel has (not the same as having none)."""
+
+
+# Key: "tenant:parcel", Value: AgriCrop dict, or None when the parcel has no crop
 _agri_crop_cache: TTLCache[str, dict | None] = TTLCache(
     maxsize=256,
     ttl=300,  # 5 min
@@ -320,9 +324,13 @@ async def get_agri_crop(
     Returns:
         Dict with AgriCrop fields (plantingDate, harvestDate, variety, etc.)
         or None if no AgriCrop exists for this parcel.
+
+    Raises:
+        CropUnavailable: the read failed; nothing is cached.
     """
-    if parcel_id in _agri_crop_cache:
-        return _agri_crop_cache[parcel_id]
+    cache_key = f"{tenant_id}:{parcel_id}"
+    if cache_key in _agri_crop_cache:
+        return _agri_crop_cache[cache_key]
 
     settings = get_settings()
     if not settings.orion_ld_url:
@@ -341,14 +349,15 @@ async def get_agri_crop(
             # — they are subscription shims, not a real crop assignment.
             real = next((e for e in entities if e.get("provenance") != "placeholder"), None)
             if real:
-                _agri_crop_cache[parcel_id] = real
+                _agri_crop_cache[cache_key] = real
                 return real
     except Exception as exc:
-        logger.warning("Failed to fetch AgriCrop for parcel %s: %s", parcel_id, exc)
+        logger.warning("Failed to fetch AgriCrop tenant=%s parcel=%s: %r", tenant_id, parcel_id, exc)
+        raise CropUnavailable(f"AgriCrop of {parcel_id}: {exc!r}") from exc
     finally:
         await client.close()
 
-    _agri_crop_cache[parcel_id] = None
+    _agri_crop_cache[cache_key] = None
     return None
 
 

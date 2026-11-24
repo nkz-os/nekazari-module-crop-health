@@ -79,10 +79,24 @@ describe('YieldForecastView', () => {
     expect(h).toContain('yieldForecast.seasonEnded');
     expect(h).toContain('yieldForecast.validation.validated');
   });
-  it('failed shows code and refresh', () => {
-    const h = html(r({ status: 'failed', code: '503' }));
-    expect(h).toContain('yieldForecast.failed');
+  it('failed shows the localised reason and refresh', () => {
+    const h = html(r({ status: 'failed', reason: 'cycles_unavailable', code: 'cycles_unavailable' })).replace(/&quot;/g, '"');
+    expect(h).toContain('yieldForecast.failed:{"reason":"yieldForecast.reason.cycles_unavailable');
     expect(h).toContain('yieldForecast.refresh');
+  });
+  it('failed keeps the code for the reasons that show it', () => {
+    const h = html(r({ status: 'failed', reason: 'engine_error', code: 'E42' }));
+    expect(h).toContain('yieldForecast.reason.engine_error');
+    expect(h).toContain('E42');
+  });
+  it('failed without a reason falls back to the generic text', () => {
+    const h = html(r({ status: 'failed', code: 'x' }));
+    expect(h).toContain('yieldForecast.reason.generic');
+  });
+  it('a kept forecast says the localised reason of the last failed attempt', () => {
+    const h = html(r({ estimates: [], last_error: { reason: 'cycles_unavailable', code: null, at: '2026-11-24T05:00:00Z' } }))
+      .replace(/&quot;/g, '"');
+    expect(h).toContain('yieldForecast.lastError:{"reason":"yieldForecast.reason.cycles_unavailable');
   });
   it('refreshing keeps content and says so', () => {
     expect(html(r({ refreshing: true, estimates: [] }))).toContain('yieldForecast.refreshing');

@@ -25,6 +25,9 @@ export function YieldForecastView({ parcelId, record, loading, onRefresh, onRegi
   const label = (group: string, key: string, vars: Record<string, string>) =>
     t(`yieldForecast.${group}.${key}`, { defaultValue: t(`yieldForecast.${group}.generic`, vars), ...vars });
 
+  const reasonText = (reason?: string | null, code?: string | null) =>
+    label('reason', reason ?? 'generic', { reason: reason ?? '', code: code ?? '' });
+
   const header = (
     <span className="text-xs text-nkz-text-secondary font-medium uppercase tracking-wider block mb-1">
       {t('yieldForecast.title')}
@@ -64,7 +67,7 @@ export function YieldForecastView({ parcelId, record, loading, onRefresh, onRegi
           <div className="space-y-1">
             {rowList}
             {normalNote}
-            <p className="text-xs text-nkz-text-muted">{t('yieldForecast.failed', { code: record.code ?? '' })} · {refresh}</p>
+            <p className="text-xs text-nkz-text-muted">{t('yieldForecast.failed', { reason: reasonText(record.reason, record.code) })} · {refresh}</p>
           </div>
         );
       case 'unavailable':
@@ -73,7 +76,7 @@ export function YieldForecastView({ parcelId, record, loading, onRefresh, onRegi
             {rowList}
             {normalNote}
             <p className="text-xs text-nkz-text-muted">
-              {t('yieldForecast.none', { reason: label('reason', record.reason ?? 'generic', { reason: record.reason ?? '', code: record.code ?? '' }) })}
+              {t('yieldForecast.none', { reason: reasonText(record.reason, record.code) })}
             </p>
             {record.reason === 'no_regime' && (
               <div className="flex items-center gap-2">
@@ -98,7 +101,7 @@ export function YieldForecastView({ parcelId, record, loading, onRefresh, onRegi
             )}
             {(record.unavailable ?? []).map((u) => (
               <p key={`${u.provider_id ?? ''}-${u.reason}`} className="text-xs text-nkz-text-muted">
-                {label('reason', u.reason, { reason: u.reason, code: u.code ?? '' })}
+                {reasonText(u.reason, u.code)}
               </p>
             ))}
             {season && (
@@ -108,7 +111,7 @@ export function YieldForecastView({ parcelId, record, loading, onRefresh, onRegi
               </p>
             )}
             {record.computed_at && <p className="text-xs text-nkz-text-muted">{t('yieldForecast.computedAt', { date: date(record.computed_at) })}</p>}
-            {record.last_error && <p className="text-xs text-nkz-text-muted">{t('yieldForecast.lastError', { reason: record.last_error.reason })}</p>}
+            {record.last_error && <p className="text-xs text-nkz-text-muted">{t('yieldForecast.lastError', { reason: reasonText(record.last_error.reason, record.last_error.code) })}</p>}
             <div className="flex gap-3">
               {refresh}
               <button type="button" className={BTN} onClick={() => navigateTo(detailLink(parcelId, season))}>{t('yieldForecast.detail')}</button>

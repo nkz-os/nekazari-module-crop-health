@@ -47,3 +47,18 @@ def _fresh_eo_cache():
     eo_reader.clear_cache()
     yield
     eo_reader.clear_cache()
+
+
+@pytest.fixture(autouse=True)
+def _crop_on_every_parcel(request, monkeypatch):
+    """The sensor path assesses only parcels with a crop, read from the broker; tests that
+    exercise that read provide it, the others get one."""
+    if request.module.__name__.endswith("test_agri_crop_read"):
+        return
+
+    from app.services import context_client
+
+    async def _crop(parcel_id, tenant_id=""):
+        return {"species": "TRZAX"}
+
+    monkeypatch.setattr(context_client, "get_agri_crop", _crop)

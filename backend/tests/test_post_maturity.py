@@ -50,7 +50,7 @@ def _offline_context(monkeypatch):
         "get_lst_climatology": cc._climatology_unavailable_lst("stub"),
         "get_ndvi_climatology": cc._climatology_unavailable("stub"),
         "get_soil_susceptibility": None, "get_multiyear_vigor_anomaly": None,
-        "get_penetrometer_data": None, "get_agri_crop": None,
+        "get_penetrometer_data": None, "get_agri_crop": {"species": "TRZAX"},
         "get_soil_properties": SoilProperties(),
     }.items():
         monkeypatch.setattr(cc, name, _const(value))

@@ -16,6 +16,8 @@ import sys
 
 import httpx
 
+from scripts.scheduled_tenants import scheduled_tenants
+
 BATCH = 1
 MAX_CONSECUTIVE_FAILURES = 3  # the backend itself is down: stop this tenant
 CONNECT_RETRY_DELAYS: tuple[float, ...] = (2.0, 4.0, 8.0)  # waits between the 4 attempts of a page
@@ -96,10 +98,10 @@ async def run_tenant(tenant: str, base_url: str, secret: str) -> dict:
 async def main() -> None:
     base_url = os.environ.get("SELF_URL", "http://crop-health-api-service:8000")
     secret = os.environ["INTERNAL_SERVICE_SECRET"]
-    tenants = [t.strip() for t in os.environ.get("SCHEDULED_TENANTS", "").split(",") if t.strip()]
     if not await _wait_ready(base_url):
         print("[yield-forecasts] backend not ready, no page posted", file=sys.stderr)
         sys.exit(1)
+    tenants = await scheduled_tenants()
     failed_tenants = 0
     for tenant in tenants:
         try:

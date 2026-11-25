@@ -15,6 +15,8 @@ import sys
 
 import httpx
 
+from scripts.scheduled_tenants import scheduled_tenants
+
 BATCH = 200
 MAX_CONSECUTIVE_FAILURES = 3  # the backend itself is down: stop this tenant
 # A fresh job pod can try to connect before its network is ready. A connect error
@@ -72,7 +74,7 @@ async def run_tenant(tenant: str, base_url: str, secret: str) -> dict:
 async def main() -> None:
     base_url = os.environ.get("SELF_URL", "http://crop-health-api-service:8000")
     secret = os.environ["INTERNAL_SERVICE_SECRET"]
-    tenants = [t.strip() for t in os.environ.get("SCHEDULED_TENANTS", "").split(",") if t.strip()]
+    tenants = await scheduled_tenants()
     failed_tenants = 0
     for tenant in tenants:
         try:

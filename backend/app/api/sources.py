@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from datetime import date, datetime, timezone
 
 from fastapi import APIRouter, Query, Request
@@ -23,6 +24,7 @@ router = APIRouter(prefix="/sources", tags=["sources"])
 # Cache for detail responses: key=parcelId, value=(timestamp, data)
 _detail_cache: dict[tuple[str, str], tuple[float, dict]] = {}  # (tenant, parcel)
 _DETAIL_CACHE_TTL = 45  # seconds
+_EPPO_CODE = re.compile(r"[A-Z0-9]{5,6}")
 _MEASUREMENT_PAGE = 50  # DeviceMeasurement page size
 _MEASUREMENT_MAX_PAGES = 20  # hard cap on pages per request
 
@@ -77,6 +79,17 @@ def _health_indicator(
     if sources_active >= 1:
         return "yellow"
     return "red"
+
+
+def _crop_code(crop: dict) -> str | None:
+    """EPPO code of a crop entity: its species when that is a code, else an explicit code.
+
+    Only a value shaped like an EPPO code counts (a concept URL is not one).
+    """
+    for value in (crop.get("species"), crop.get("eppoCode")):
+        if isinstance(value, str) and _EPPO_CODE.fullmatch(value):
+            return value
+    return None
 
 
 # ── Public route (dispatches to list or detail) ──────────────────────────
@@ -456,17 +469,18 @@ async def _detail_sources(request: Request, parcelId: str) -> dict:
     # Prefer the ACTIVE crop with a species over any empty placeholder
     # (e.g. a legacy '...-default' AgriCrop with no species).
     ac = next(
-        (a for a in agri_crops if a.get("species") or a.get("eppoCode")),
+        (a for a in agri_crops if a.get("species") or _crop_code(a)),
         agri_crops[0] if agri_crops else {},
     )
-    crop_ok = bool(ac.get("species") or ac.get("eppoCode"))
+    crop_code = _crop_code(ac)
+    crop_ok = bool(ac.get("species") or crop_code)
     phenology_stage = assessment.get("phenologyStage")
     crop = {
         "status": "ok" if crop_ok else "unavailable",
         "freshness": "fresh" if crop_ok else "none",
         "lastDataAt": ac.get("plantingDate"),
         "species": ac.get("species"),
-        "eppoCode": ac.get("eppoCode"),
+        "eppoCode": crop_code,
         "variety": ac.get("variety"),
         "plantingDate": ac.get("plantingDate"),
         "harvestDate": ac.get("harvestDate"),

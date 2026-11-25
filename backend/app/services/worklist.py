@@ -62,7 +62,10 @@ def planned_cycle(timeline: Optional[dict], today: Optional[date] = None) -> Opt
 
 
 def crop_status(timeline: Optional[dict]) -> str:
-    current = (timeline or {}).get("current") or {}
+    """"active", "none", or "unknown" when the timeline could not be read (None)."""
+    if timeline is None:
+        return "unknown"
+    current = timeline.get("current") or {}
     start = current.get("start") or {}
     if start.get("provenance") in ACTIVE_PROVENANCES and start.get("date"):
         return "active"

@@ -21,7 +21,7 @@ export function freshnessTone(f: Freshness): 'muted' | 'warning' | 'danger' {
 }
 
 export function semaphore(row: ParcelSummary): 'red' | 'amber' | 'green' | 'grey' {
-  if (row.cropStatus === 'none' || !row.hasData) return 'grey';
+  if (row.cropStatus !== 'active' || !row.hasData) return 'grey';
   const sev = (row.overallSeverity ?? '').toUpperCase();
   if (row.surprise || sev === 'CRITICAL' || sev === 'HIGH') return 'red';
   if (row.nextJob?.when === 'today' || sev === 'MEDIUM') return 'amber';

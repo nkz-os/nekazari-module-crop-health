@@ -305,7 +305,7 @@ async def get_phenology_params(
 
 
 class CropUnavailable(Exception):
-    """The broker could not say which crop the parcel has (not the same as having none)."""
+    """The parcel's crop or crop cycle could not be read (not the same as having none)."""
 
 
 # Key: "tenant:parcel", Value: AgriCrop dict, or None when the parcel has no crop
@@ -367,9 +367,12 @@ async def resolve_season_start(parcel_id: str, tenant_id: str) -> str | None:
 
     The platform rule (SDK ``crop_cycles``) resolved over the broker by the SDK
     (``fetch_crop_timeline``) — no core service in between. None when no crop
-    is growing (not sown yet, nothing assigned, or the broker unreachable): a
-    crop that is not in the ground has accumulated nothing, and a calendar
-    default would model it from January.
+    is growing (not sown yet or nothing assigned): a crop that is not in the
+    ground has accumulated nothing, and a calendar default would model it from
+    January.
+
+    Raises:
+        CropUnavailable: the cycle could not be read, so nobody knows if it was sown.
     """
     settings = get_settings()
     urn = parcel_id if parcel_id.startswith("urn:") else f"urn:ngsi-ld:AgriParcel:{parcel_id}"
@@ -377,10 +380,12 @@ async def resolve_season_start(parcel_id: str, tenant_id: str) -> str | None:
         timeline = await fetch_crop_timeline(
             tenant_id, urn, base_url=settings.orion_ld_url, context_url=settings.orion_ld_context,
         )
-    except Exception as e:  # noqa: BLE001 — an assessment never fails on its season start
-        logger.warning("season start unavailable for %s: %s", urn, e)
-        return None
-    if not timeline or not timeline.get("current"):
+    except Exception as e:
+        logger.warning("crop cycle unreadable tenant=%s parcel=%s: %r", tenant_id, urn, e)
+        raise CropUnavailable(f"crop cycle of {urn}: {e!r}") from e
+    if timeline is None:
+        raise CropUnavailable(f"crop cycle of {urn}: no answer")
+    if not timeline.get("current"):
         return None
     return (timeline.get("accumulation") or {}).get("start")
 

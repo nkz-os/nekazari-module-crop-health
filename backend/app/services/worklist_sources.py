@@ -118,4 +118,6 @@ async def gather_parcel_inputs(request, state, tenant_id: str, parcel_short: str
             logger.warning("worklist: %s failed tenant=%s parcel=%s: %s", name, tenant_id, parcel_short, res)
             continue
         out[name] = res
+    if out["timeline"] is None:
+        out["_degraded"] = True  # an unreadable crop cycle is not a parcel without work
     return out

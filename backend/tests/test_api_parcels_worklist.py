@@ -167,7 +167,7 @@ async def test_malformed_timeline_degrades_row_not_endpoint():
         resp = await _get("/api/crop-health/parcels")
     assert resp.status_code == 200
     row = resp.json()["parcels"][0]
-    assert (row["cropStatus"], row["nextJob"], row["surprise"], row["freshness"]) == ("none", None, None, "fresh")
+    assert (row["cropStatus"], row["nextJob"], row["surprise"], row["freshness"]) == ("unknown", None, None, "fresh")
 
 
 @pytest.mark.anyio
@@ -225,7 +225,7 @@ async def test_hanging_timeline_fetch_answers_within_deadline():
         _setup(mock, [_assessment("p1")], ["p1"])
         resp = await asyncio.wait_for(_get("/api/crop-health/parcels"), timeout=5)
     assert resp.status_code == 200
-    assert resp.json()["parcels"][0]["cropStatus"] == "none"
+    assert resp.json()["parcels"][0]["cropStatus"] == "unknown"
 
 
 @pytest.mark.anyio
@@ -326,3 +326,12 @@ async def test_candidates_error_never_fails_the_endpoint():
         _setup(mock, [_assessment("p1")], list(tls))
         resp = await _get("/api/crop-health/parcels")
     assert resp.status_code == 200 and resp.json()["parcels"][0]["jobs"] == []
+
+
+@pytest.mark.anyio
+async def test_unreadable_timeline_is_not_reported_as_a_parcel_without_crop():
+    a = _assessment("p1", hours=2, recommendedAction="IRRIGATE_IMMEDIATE")
+    with respx.mock as mock, patch("app.services.worklist_sources.fetch_crop_timeline", _timelines({"p1": None})):
+        _setup(mock, [a], ["p1"])
+        row = (await _get("/api/crop-health/parcels")).json()["parcels"][0]
+    assert (row["cropStatus"], row["nextJob"], row["lastAssessment"], row["stale"]) == ("unknown", None, None, False)

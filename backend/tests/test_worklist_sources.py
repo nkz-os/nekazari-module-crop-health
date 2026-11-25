@@ -101,7 +101,7 @@ async def test_gather_maps_exceptions_and_skips_history():
          patch.object(ws, "fetch_forecast", AsyncMock(side_effect=ValueError)), \
          patch.object(ws, "fetch_history", AsyncMock(side_effect=KeyError)) as h:
         out = await ws.gather_parcel_inputs("req", object(), TENANT, SHORT, with_history=True)
-        assert out == {"timeline": None, "agro": {"a": 1}, "forecast": None, "history": []}
+        assert out == {"timeline": None, "agro": {"a": 1}, "forecast": None, "history": [], "_degraded": True}
         h.reset_mock()
         out = await ws.gather_parcel_inputs("req", object(), TENANT, SHORT, with_history=False)
         assert out["history"] == [] and not h.called
@@ -167,3 +167,19 @@ async def test_agro_status_cache_is_per_tenant():
     await ws.fetch_agro_status(TENANT, SHORT)
     await ws.fetch_agro_status("tenant-b", SHORT)
     assert route.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_gather_marks_an_unreadable_timeline_as_degraded():
+    with patch.object(ws, "fetch_crop_timeline", AsyncMock(return_value=None)), \
+         patch.object(ws, "fetch_agro_status", AsyncMock(return_value={})):
+        out = await ws.gather_parcel_inputs("req", None, TENANT, SHORT, with_history=False)
+    assert out["_degraded"] is True
+
+
+@pytest.mark.asyncio
+async def test_gather_of_a_readable_timeline_is_not_degraded():
+    with patch.object(ws, "fetch_crop_timeline", AsyncMock(return_value={"current": None})), \
+         patch.object(ws, "fetch_agro_status", AsyncMock(return_value=None)):
+        out = await ws.gather_parcel_inputs("req", None, TENANT, SHORT, with_history=False)
+    assert "_degraded" not in out

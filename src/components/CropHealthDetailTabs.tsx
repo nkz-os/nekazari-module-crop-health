@@ -422,7 +422,7 @@ const CropHealthDetailTabs: React.FC<CropHealthDetailTabsProps> = ({
       )}
 
       {/* Thermal detail */}
-      {(assessment.thermalCondition || assessment.heatStressHours != null) && (
+      {assessment.thermalCondition && (
         <MetricSection>
           <span className="text-xs text-nkz-text-secondary font-medium uppercase tracking-wider block mb-1">
             {t('thermal')}
@@ -431,12 +431,8 @@ const CropHealthDetailTabs: React.FC<CropHealthDetailTabsProps> = ({
             {assessment.thermalSeverity && <SeverityBadge severity={assessment.thermalSeverity} />}
             <span className="text-nkz-text-primary">{assessment.thermalCondition}</span>
           </div>
-          {(assessment.heatStressHours != null || assessment.frostHours != null) && (
-            <p className="text-xs text-nkz-text-muted mt-1">
-              {assessment.heatStressHours != null && `Heat ${assessment.heatStressHours.toFixed(0)}h`}
-              {assessment.frostHours != null && ` · Frost ${assessment.frostHours.toFixed(0)}h`}
-              {assessment.thermalDataFidelity && ` · ${assessment.thermalDataFidelity}`}
-            </p>
+          {assessment.thermalDataFidelity && (
+            <p className="text-xs text-nkz-text-muted mt-1">{assessment.thermalDataFidelity}</p>
           )}
         </MetricSection>
       )}

@@ -369,6 +369,13 @@ def _determine_overall_severity(assessment: CropHealthAssessment) -> Severity:
     return max(severities, key=lambda s: order[s])
 
 
+def thermal_stress_severity(thermal: ThermalStressResult | None) -> str | None:
+    """Severity of a thermal stress for the composite index; None when there is none."""
+    if thermal is None or thermal.condition == "no_stress":
+        return None
+    return thermal.severity
+
+
 POST_MATURITY_STAGE = "post_maturity"
 # ASSUMPTION: with no known season start the NDVI window looks back 240 days.
 _NDVI_SEASON_FALLBACK_DAYS = 240
@@ -1420,13 +1427,12 @@ async def _run_engines(
                 air_temp=weather.temp_air,
                 fidelity="onsite_uncalibrated" if leaf_temp is not None else "regional_proxy",
             )
-            assessment.thermal = ThermalStressResult(
-                heat_stress_hours=tr.heat_stress_hours,
-                frost_hours=tr.frost_hours,
-                condition=tr.condition,
-                severity=tr.severity,
-                data_fidelity=tr.data_fidelity,
-            )
+            if tr is not None:
+                assessment.thermal = ThermalStressResult(
+                    condition=tr.condition,
+                    severity=tr.severity,
+                    data_fidelity=tr.data_fidelity,
+                )
         except Exception as exc:
             logger.warning("pipeline: thermal stress evaluation failed for parcel %s — skipped: %s", effective_parcel, exc)
 
@@ -1640,7 +1646,7 @@ async def _run_engines(
 
     try:
         from app.engines.composite import evaluate_composite_stress
-        thermal_sev = assessment.thermal.severity if assessment.thermal else None
+        thermal_sev = thermal_stress_severity(assessment.thermal)
         vigor_idx = assessment.vigor.vigor_index if assessment.vigor else None
         mds_ratio_val = assessment.mds.ratio if assessment.mds else None
         wb_mm = assessment.water_balance.balance_mm if assessment.water_balance else None

@@ -399,8 +399,6 @@ class WaterloggingRiskResult(BaseModel):
 
 class ThermalStressResult(BaseModel):
     """Heat stress and frost risk evaluation result."""
-    heat_stress_hours: float = 0.0
-    frost_hours: float = 0.0
     condition: str = "no_stress"  # no_stress | heat_warning | heat_stress | frost_warning | frost_damage
     severity: str = "LOW"
     data_fidelity: str = "regional_proxy"
@@ -668,8 +666,6 @@ class CropHealthAssessment(BaseModel):
         if self.thermal:
             entity["thermalCondition"] = {"type": "Property", "value": self.thermal.condition}
             entity["thermalSeverity"] = {"type": "Property", "value": self.thermal.severity}
-            entity["heatStressHours"] = {"type": "Property", "value": self.thermal.heat_stress_hours, "unitCode": "HUR"}
-            entity["frostHours"] = {"type": "Property", "value": self.thermal.frost_hours, "unitCode": "HUR"}
             entity["thermalDataFidelity"] = {"type": "Property", "value": self.thermal.data_fidelity}
         if self.vigor:
             entity["vigorIndex"] = {"type": "Property", "value": round(self.vigor.vigor_index, 3)}

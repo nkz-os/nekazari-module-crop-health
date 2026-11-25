@@ -18,8 +18,6 @@ class ThermalThresholds:
 
 @dataclass
 class ThermalResult:
-    heat_stress_hours: float = 0.0
-    frost_hours: float = 0.0
     condition: str = "no_stress"  # no_stress | heat_warning | heat_stress | frost_warning | frost_damage
     severity: str = "LOW"         # LOW | MEDIUM | HIGH | CRITICAL
     data_fidelity: str = "regional_proxy"
@@ -31,7 +29,7 @@ def evaluate_thermal_stress(
     air_temp_min_24h: float | None = None,
     thresholds: ThermalThresholds | None = None,
     fidelity: str = "regional_proxy",
-) -> ThermalResult:
+) -> ThermalResult | None:
     """Evaluate heat and frost stress from temperature data.
 
     Args:
@@ -42,14 +40,16 @@ def evaluate_thermal_stress(
         fidelity: dataFidelity level from input sources
 
     Returns:
-        ThermalResult with condition and severity
+        ThermalResult with condition and severity, or None when there is neither a canopy
+        temperature nor a minimum to evaluate (not the same as no stress)
     """
+    if leaf_temp is None and air_temp_min_24h is None:
+        return None
     th = thresholds or ThermalThresholds()
     result = ThermalResult(data_fidelity=fidelity)
 
     if leaf_temp is not None:
         if leaf_temp > th.heat_damage_c:
-            result.heat_stress_hours = 1.0  # current reading; accumulation needs timeseries
             excess = leaf_temp - th.heat_damage_c
             if excess > 5:
                 result.condition = "heat_stress"
@@ -62,7 +62,6 @@ def evaluate_thermal_stress(
                 result.severity = "MEDIUM"
 
     if air_temp_min_24h is not None and air_temp_min_24h < th.frost_damage_c:
-        result.frost_hours = 1.0  # placeholder; real accumulation needs timeseries
         deficit = th.frost_damage_c - air_temp_min_24h
         if deficit > 5:
             frost_condition = "frost_damage"

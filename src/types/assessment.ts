@@ -111,8 +111,6 @@ export interface AssessmentData {
   yieldGapConfidence?: string;
   thermalCondition?: string;
   thermalSeverity?: string;
-  heatStressHours?: number;
-  frostHours?: number;
   thermalDataFidelity?: string;
   vigorIndex?: number;
   vigorCondition?: string;

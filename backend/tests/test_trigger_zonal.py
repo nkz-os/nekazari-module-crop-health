@@ -31,7 +31,7 @@ def _patch_trigger(monkeypatch, *, zones, device_coords):
         return StageTable(stages={"vegetative": (90.0, 520.0)})
 
     async def _crop(*a, **k):
-        return {"plantingDate": "2026-04-15"}
+        return {"species": "TRZAX", "plantingDate": "2026-04-15"}
 
     async def _gdd(*a, **k):
         return {"gdd_total": 300.0}
@@ -227,3 +227,39 @@ async def test_every_assessment_of_a_rainfed_parcel_carries_the_regime(monkeypat
     assert seen and set(seen) == {"rainfed"}
     assert out.irrigation_regime == "rainfed"
     assert all(e["irrigationRegime"]["value"] == "rainfed" for e in published)
+
+
+async def _trigger():
+    return await pipeline.trigger(
+        entity_id="urn:ngsi-ld:DeviceMeasurement:d1",
+        metric_type=MetricType.LEAF_TEMPERATURE.value,
+        redis_state=_Redis(),
+        parcel_id="p1",
+        tenant_id="t",
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_parcel_without_crop_is_not_assessed_by_its_sensors(monkeypatch):
+    calls, published = _patch_trigger(monkeypatch, zones=[Zone("parcel", _Z0)], device_coords=(5, 5))
+
+    async def _no_crop(*a, **k):
+        return None
+
+    monkeypatch.setattr(pipeline.context_client, "get_agri_crop", _no_crop)
+
+    assert await _trigger() is None
+    assert (calls, published) == ([], [])
+
+
+@pytest.mark.asyncio
+async def test_a_parcel_whose_crop_cannot_be_read_is_not_assessed_by_its_sensors(monkeypatch):
+    calls, published = _patch_trigger(monkeypatch, zones=[Zone("parcel", _Z0)], device_coords=(5, 5))
+
+    async def _unreadable(*a, **k):
+        raise pipeline.context_client.CropUnavailable("broker")
+
+    monkeypatch.setattr(pipeline.context_client, "get_agri_crop", _unreadable)
+
+    assert await _trigger() is None
+    assert (calls, published) == ([], [])

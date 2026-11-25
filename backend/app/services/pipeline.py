@@ -955,7 +955,7 @@ async def trigger(
         tenant_id: Tenant ID for weather DB query.
 
     Returns:
-        CropHealthAssessment if computed, None on error.
+        CropHealthAssessment if computed, None on error or when the parcel has no crop.
     """
     sensor_context: str | None = None
     if parcel_id:
@@ -970,6 +970,18 @@ async def trigger(
         effective_parcel, sensor_context = owner if owner else (None, None)
     if not effective_parcel:
         logger.warning("Cannot resolve parcel for device %s — skipping", entity_id)
+        return None
+
+    # Same rule as the scheduled run: nothing to assess without a crop, and an unreadable
+    # crop is not guessed. The next reading tries again.
+    try:
+        assigned_crop = await _read_assigned_crop(effective_parcel, tenant_id)
+    except context_client.CropUnavailable as exc:
+        logger.warning("pipeline: crop unreadable tenant=%s parcel=%s — not assessed: %s",
+                       tenant_id, effective_parcel, exc)
+        return None
+    if not assigned_crop:
+        logger.info("pipeline: no crop on tenant=%s parcel=%s — not assessed", tenant_id, effective_parcel)
         return None
 
     logger.info(

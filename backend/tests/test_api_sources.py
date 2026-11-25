@@ -631,3 +631,30 @@ async def test_a_concept_url_is_not_a_crop_code():
     crop = await _crop_source({"id": "urn:ngsi-ld:AgriCrop:acme:code3",
                                "eppoCode": "http://aims.fao.org/aos/agrovoc/c_7951"})
     assert (crop["status"], crop["eppoCode"]) == ("unavailable", None)
+
+
+@pytest.mark.anyio
+async def test_sources_detail_asks_the_readings_of_every_device_as_one_value_list():
+    urns = [f"urn:ngsi-ld:Device:acme:d{i}" for i in range(20)]
+    asked = []
+
+    def _measurements(request):
+        asked.append(request.url.params["q"])
+        return httpx.Response(200, json=[
+            {"id": "urn:ngsi-ld:DeviceMeasurement:acme:d19:airTemperature", "refDevice": urns[19],
+             "controlledProperty": "airTemperature", "numValue": 15.0, "dateObserved": "2026-06-07T10:25:00Z"}])
+
+    with respx.mock as mock:
+        mock.get(url__regex=r".*type=CropHealthAssessment.*").respond(json=[])
+        mock.get(url__regex=r".*type=Device(&|%).*").respond(json=[
+            {"id": u, "controlledAsset": "urn:ngsi-ld:AgriParcel:p-many",
+             "observationContext": {"medium": "ambientAir"}} for u in urns])
+        mock.get(url__regex=r".*type=DeviceMeasurement.*").mock(side_effect=_measurements)
+        mock.get().respond(json=[])
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test", headers=GATEWAY_HEADERS) as client:
+            resp = await client.get("/api/crop-health/sources?parcelId=p-many")
+
+    assert asked == ["refDevice==" + ",".join(f'"{u}"' for u in urns)]
+    assert [s["metric"] for s in resp.json()["sources"]["iot"]["sensors"]] == ["airTemperature"]

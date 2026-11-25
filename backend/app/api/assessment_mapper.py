@@ -250,8 +250,6 @@ def map_entity_to_assessment(entity: dict[str, Any]) -> dict[str, Any]:
         "irrigationRegime": prop_value(entity, "irrigationRegime"),
         "thermalCondition": prop_value(entity, "thermalCondition"),
         "thermalSeverity": prop_value(entity, "thermalSeverity"),
-        "heatStressHours": prop_value(entity, "heatStressHours"),
-        "frostHours": prop_value(entity, "frostHours"),
         "thermalDataFidelity": prop_value(entity, "thermalDataFidelity"),
         "vigorIndex": prop_value(entity, "vigorIndex"),
         "vigorCondition": prop_value(entity, "vigorCondition"),

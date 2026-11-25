@@ -57,6 +57,14 @@ class TestThermal:
         assert "frost" in result.condition
 
 
+    def test_nothing_to_evaluate_is_not_no_stress(self):
+        assert evaluate_thermal_stress(leaf_temp=None, air_temp=22.0) is None
+
+    def test_a_minimum_alone_is_enough(self):
+        result = evaluate_thermal_stress(leaf_temp=None, air_temp=None, air_temp_min_24h=5.0)
+        assert result.condition == "no_stress"
+
+
 class TestVigor:
     def test_healthy_vigor(self):
         result = evaluate_vigor(ndvi=0.8, cwsi=0.1, stage="vegetative")

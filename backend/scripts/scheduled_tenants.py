@@ -1,4 +1,5 @@
 """The tenants of SCHEDULED_TENANTS that the platform says are active."""
+import asyncio
 import os
 import sys
 
@@ -6,6 +7,8 @@ from nkz_platform_sdk import installed_tenants
 from nkz_platform_sdk.installations import InstalledTenantsUnavailable
 
 MODULE_ID = "crop-health"
+# A fresh job pod can ask before its network is ready.
+CONNECT_RETRY_DELAYS_S = (2, 5, 10, 20)
 
 
 async def scheduled_tenants() -> list[str]:
@@ -18,11 +21,17 @@ async def scheduled_tenants() -> list[str]:
     configured = [t.strip() for t in os.environ.get("SCHEDULED_TENANTS", "").split(",") if t.strip()]
     if not configured:
         return []
-    try:
-        states = await installed_tenants(MODULE_ID)
-    except InstalledTenantsUnavailable as exc:
-        print(f"[scheduled-tenants] platform unavailable, nothing skipped: {exc}", file=sys.stderr)
-        return configured
+    states = None
+    for delay in (*CONNECT_RETRY_DELAYS_S, None):
+        try:
+            states = await installed_tenants(MODULE_ID)
+            break
+        except InstalledTenantsUnavailable as exc:
+            if delay is None:
+                print(f"[scheduled-tenants] platform unavailable, nothing skipped: {exc}",
+                      file=sys.stderr)
+                return configured
+            await asyncio.sleep(delay)
     active = {*states.enabled, *states.disabled, *states.not_installed}
     for tenant in configured:
         if tenant not in active:

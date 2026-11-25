@@ -98,10 +98,10 @@ async def run_tenant(tenant: str, base_url: str, secret: str) -> dict:
 async def main() -> None:
     base_url = os.environ.get("SELF_URL", "http://crop-health-api-service:8000")
     secret = os.environ["INTERNAL_SERVICE_SECRET"]
-    tenants = await scheduled_tenants()
     if not await _wait_ready(base_url):
         print("[yield-forecasts] backend not ready, no page posted", file=sys.stderr)
         sys.exit(1)
+    tenants = await scheduled_tenants()
     failed_tenants = 0
     for tenant in tenants:
         try:

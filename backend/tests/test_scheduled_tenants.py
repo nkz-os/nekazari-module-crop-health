@@ -12,14 +12,28 @@ def anyio_backend():
     return "asyncio"
 
 
-def _platform(monkeypatch, enabled=(), disabled=(), not_installed=(), error=None):
+def _platform(monkeypatch, enabled=(), disabled=(), not_installed=(), error=None, failures=None):
+    calls = []
+
+    async def no_wait(seconds):
+        calls.append(seconds)
+
     async def fake(module_id):
         assert module_id == "crop-health"
-        if error:
+        if error and (failures is None or len(calls) < failures):
             raise error
         return TenantInstallations(module_id, tuple(enabled), tuple(disabled), tuple(not_installed))
 
     monkeypatch.setattr(mod, "installed_tenants", fake)
+    monkeypatch.setattr(mod.asyncio, "sleep", no_wait)
+    return calls
+
+
+@pytest.mark.anyio
+async def test_a_fresh_pod_asks_again(monkeypatch):
+    monkeypatch.setenv("SCHEDULED_TENANTS", "a,gone")
+    waits = _platform(monkeypatch, enabled=["a"], error=InstalledTenantsUnavailable("x"), failures=2)
+    assert await mod.scheduled_tenants() == ["a"] and waits == [2, 5]
 
 
 @pytest.mark.anyio

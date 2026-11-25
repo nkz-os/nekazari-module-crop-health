@@ -33,6 +33,10 @@ async def scheduled_tenants() -> list[str]:
                 return configured
             await asyncio.sleep(delay)
     active = {*states.enabled, *states.disabled, *states.not_installed}
+    if not active:
+        print("[scheduled-tenants] platform reported no tenant at all, nothing skipped",
+              file=sys.stderr)
+        return configured
     for tenant in configured:
         if tenant not in active:
             print(f"[scheduled-tenants] tenant={tenant} skipped: not active")

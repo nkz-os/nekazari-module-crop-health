@@ -51,6 +51,21 @@ async def test_an_unreachable_platform_skips_nobody(monkeypatch):
 
 
 @pytest.mark.anyio
+async def test_an_answer_with_no_tenant_at_all_is_not_trusted(monkeypatch, capsys):
+    monkeypatch.setenv("SCHEDULED_TENANTS", "a,b")
+    _platform(monkeypatch)
+    assert await mod.scheduled_tenants() == ["a", "b"]
+    assert "nothing skipped" in capsys.readouterr().err
+
+
+@pytest.mark.anyio
+async def test_every_configured_tenant_may_be_suspended(monkeypatch):
+    monkeypatch.setenv("SCHEDULED_TENANTS", "a,b")
+    _platform(monkeypatch, enabled=["x"])
+    assert await mod.scheduled_tenants() == []
+
+
+@pytest.mark.anyio
 async def test_nothing_configured_asks_nothing(monkeypatch):
     monkeypatch.delenv("SCHEDULED_TENANTS", raising=False)
     _platform(monkeypatch, error=AssertionError("asked"))

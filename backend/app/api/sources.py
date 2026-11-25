@@ -304,7 +304,8 @@ async def _detail_sources(request: Request, parcelId: str) -> dict:
     device_urns = [d.get("id", "") for d in parcel_devices if d.get("id")]
     measurements = []
     if device_urns:
-        measurement_q = "|".join(f'refDevice=="{urn}"' for urn in device_urns)
+        # One term with a value list, whatever the number of devices.
+        measurement_q = "refDevice==" + ",".join(f'"{urn}"' for urn in device_urns)
         for page_no in range(_MEASUREMENT_MAX_PAGES):
             page = await _query("DeviceMeasurement", measurement_q, _MEASUREMENT_PAGE, page_no * _MEASUREMENT_PAGE)
             measurements.extend(page)

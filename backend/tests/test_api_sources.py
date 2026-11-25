@@ -604,6 +604,35 @@ def test_freshness_of_a_bare_day():
     assert _freshness((today - timedelta(days=30)).isoformat()) == "none"
 
 
+async def _crop_source(agri_crop):
+    with respx.mock as mock:
+        mock.get(url__regex=r".*type=AgriCrop.*hasAgriParcel.*").respond(json=[agri_crop])
+        mock.get().respond(json=[])
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test", headers=GATEWAY_HEADERS) as client:
+            resp = await client.get(f"/api/crop-health/sources?parcelId={agri_crop['id'].rsplit(':', 1)[-1]}")
+    return resp.json()["sources"]["crop"]
+
+
+@pytest.mark.anyio
+async def test_crop_code_comes_from_the_species_code():
+    crop = await _crop_source({"id": "urn:ngsi-ld:AgriCrop:acme:code1", "species": "TRZAX"})
+    assert (crop["status"], crop["eppoCode"]) == ("ok", "TRZAX")
+
+
+@pytest.mark.anyio
+async def test_crop_code_keeps_an_explicit_code_next_to_a_name():
+    crop = await _crop_source({"id": "urn:ngsi-ld:AgriCrop:acme:code2", "species": "wheat", "eppoCode": "TRZAX"})
+    assert (crop["species"], crop["eppoCode"]) == ("wheat", "TRZAX")
+
+
+@pytest.mark.anyio
+async def test_a_concept_url_is_not_a_crop_code():
+    crop = await _crop_source({"id": "urn:ngsi-ld:AgriCrop:acme:code3",
+                               "eppoCode": "http://aims.fao.org/aos/agrovoc/c_7951"})
+    assert (crop["status"], crop["eppoCode"]) == ("unavailable", None)
+
+
 @pytest.mark.anyio
 async def test_sources_detail_asks_the_readings_of_every_device_as_one_value_list():
     urns = [f"urn:ngsi-ld:Device:acme:d{i}" for i in range(20)]

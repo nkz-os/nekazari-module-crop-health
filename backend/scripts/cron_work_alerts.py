@@ -11,6 +11,8 @@ import sys
 import httpx
 from nkz_platform_sdk import installed_tenants
 
+from scripts.scheduled_tenants import scheduled_tenants
+
 MODULE_ID = "crop-health"
 
 
@@ -40,9 +42,8 @@ async def run_tenants(tenants: list[str], base_url: str, secret: str) -> int:
 
 
 async def _tenants() -> list[str]:
-    override = [t.strip() for t in os.environ.get("SCHEDULED_TENANTS", "").split(",") if t.strip()]
-    if override:
-        return override
+    if os.environ.get("SCHEDULED_TENANTS", "").strip():
+        return await scheduled_tenants()
     return list((await installed_tenants(MODULE_ID)).enabled)
 
 
